@@ -12,7 +12,7 @@ export const schemas={
   login:z.object({username,password:z.string().min(1).max(128)}),
   client:z.object({...command,name:text,legalName:z.string().trim().max(500).optional(),taxId:z.string().trim().max(80).optional(),contactName:z.string().trim().max(200).optional(),phone:z.string().trim().max(80).optional(),email:z.union([z.literal(''),z.email().max(254)]).optional(),address:z.string().trim().max(500).optional(),city:z.string().trim().max(160).optional(),notes:z.string().trim().max(2000).optional()}),
   driver:z.object({...command,name:text,username,password}),
-  user:z.object({...command,name:text,username,password,role:z.enum(['OPERATIONS','DEPOT'])}),
+  user:z.object({...command,name:text,username,password,role:z.enum(['ADMIN','OPERATIONS','DEPOT'])}),
   vehicle:z.object({...command,plate:text,capacityWeightGrams:positive,capacityVolumeCm3:positive,odometer:z.number().int().nonnegative()}),
   shipment:z.object({...command,clientId:id,reference:text,originText:text,destinationText:text,recipientName:text,recipientPhone:z.string().trim().max(80).default(''),parcelCount:z.number().int().min(1).max(200),weightGrams:positive.nullable(),volumeCm3:positive.nullable(),proofPolicy:z.enum(['RECEIVER','RECEIVER_PHOTO'])}),
   receipt:z.object({...command,shipmentId:id,codes:z.array(text).min(1).max(200),location:text}),

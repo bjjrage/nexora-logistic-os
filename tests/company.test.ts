@@ -91,3 +91,17 @@ test('HTTP: empresa y edición de clientes requieren sesión, CSRF y rol corresp
  const bootstrap=await (await fetch(base+'/api/bootstrap',{headers:{Cookie:cookie}})).json();
  assert.equal(bootstrap.organization.name,'Nexora Logistic');assert.equal(bootstrap.clients[0].name,'Universo');
 });
+
+test('HTTP: Administración puede crear otra cuenta de Administración que luego inicia sesión',async t=>{
+ const {store}=await fixture(t);
+ const server=createApp(store).listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
+ t.after(()=>new Promise<void>((r,j)=>server.close(e=>e?j(e):r())));
+ const base='http://127.0.0.1:'+(server.address() as {port:number}).port;let cookie='';
+ const post=async(path:string,body:unknown)=>fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'logistics-os',Cookie:cookie},body:JSON.stringify(body)});
+ const login=async(username:string)=>{const response=await post('/api/login',{username,password:'QA-Company-2026!'});assert.equal(response.status,200);cookie=response.headers.get('set-cookie')!.split(';')[0];};
+ await login('qa.admin');
+ const created=await post('/api/users',{...command(),name:'Segunda Administración',username:'qa.admin2',password:'QA-Company-2026!',role:'ADMIN'});
+ assert.equal(created.status,200);
+ await login('qa.admin2');
+ assert.equal((await (await fetch(base+'/api/session',{headers:{Cookie:cookie}})).json()).user.role,'ADMIN');
+});
