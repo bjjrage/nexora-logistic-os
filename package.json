@@ -16,6 +16,7 @@
     "test:isolated": "node scripts/prepare-test-postgres.ts && node scripts/run-isolated-tests.ts",
     "test:e2e": "playwright test",
     "backup:os": "node --env-file=.env scripts/backup-os.ts",
+    "release:check": "node scripts/check-release.ts",
     "test:postgres": "node --env-file=.env --test --test-concurrency=1 tests/postgres.integration.ts tests/postgres.traccar.ts tests/postgres.company.ts tests/postgres.client-profiles.ts",
     "check:secrets": "node scripts/check-secrets.mjs",
     "check:migrations": "node scripts/check-migrations.ts",

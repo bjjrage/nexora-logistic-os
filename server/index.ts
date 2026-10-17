@@ -8,9 +8,11 @@ import type { Database } from './database.ts';
 import {Diagnostics} from './observability.ts';
 
 if (existsSync('.env')) loadEnvFile('.env');
+if(!process.env.RELEASE_SHA&&process.env.RAILWAY_GIT_COMMIT_SHA)process.env.RELEASE_SHA=process.env.RAILWAY_GIT_COMMIT_SHA;
 
 const databasePath=process.env.DATABASE_PATH??resolve('.local/logistics.sqlite');
 const provider=process.env.DATABASE_PROVIDER??'sqlite';
+if(process.env.NODE_ENV==='production'&&provider!=='postgres')throw new Error('Producción requiere PostgreSQL; no se permite una base SQLite temporal.');
 if(!['sqlite','postgres'].includes(provider)) throw new Error('DATABASE_PROVIDER inválido.');
 const store:Database=provider==='postgres'?new PostgresStore(process.env.DATABASE_URL??'',process.env.DATABASE_SCHEMA??'nexora'):new Store(databasePath);
 if(store instanceof PostgresStore) await store.verify();

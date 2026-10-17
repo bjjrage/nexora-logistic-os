@@ -55,6 +55,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
         ensure(loginAttempts.allow(req.ip??req.socket.remoteAddress??'local'),'FORBIDDEN','Demasiados intentos. Esperá un minuto.',429);
     };
     app.get('/api/health', async (_req, res) => { await store.one('SELECT 1 AS connected'); res.json({ application: 'logistics-os-local', status: 'ok', database: store.kind, tracking: tracking.status().status, providers: { quadminds: tracking.status().status, traccar: await traccar.health() }, previewInstanceId: process.env.PREVIEW_INSTANCE_ID ?? null }); });
+    app.get('/api/version',(_req,res)=>res.json({release:process.env.RELEASE_SHA??'local'}));
     app.get('/api/ready',async(_req,res)=>{
       await store.one('SELECT 1 AS connected');
       const gps=await traccar.health();const ready=process.env.TRACCAR_ENABLED!=='true'||gps.configured&&gps.connected;

@@ -33,3 +33,5 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - run: docker build --tag nexora-os:ci .
+      - run: docker run --rm --entrypoint node nexora-os:ci --version
