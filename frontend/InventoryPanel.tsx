@@ -663,7 +663,7 @@ export default function InventoryPanel({ section, role, clients, initialClientId
 
   const createCustomerAccess = async (event: FormEvent) => {
     event.preventDefault();
-    if (accessForm.password.length < 12) { setError("La contraseña debe tener al menos 12 caracteres."); return; }
+    if (accessForm.password.length < 6) { setError("La contraseña debe tener al menos 6 caracteres."); return; }
     const ok = await runMutation("/api/customer-access", accessForm, "Acceso de cliente creado.", "access");
     if (ok) setAccessForm((form) => ({ ...form, name: "", username: "", password: "" }));
   };
@@ -901,7 +901,7 @@ export default function InventoryPanel({ section, role, clients, initialClientId
                   <label className="field"><span>Cliente</span><select required value={accessForm.clientId} onChange={(event) => setAccessForm({ ...accessForm, clientId: event.target.value })}><option value="">Seleccionar</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label>
                   <label className="field"><span>Nombre visible</span><input required value={accessForm.name} onChange={(event) => setAccessForm({ ...accessForm, name: event.target.value })} /></label>
                   <label className="field"><span>Usuario</span><input required autoComplete="off" value={accessForm.username} onChange={(event) => setAccessForm({ ...accessForm, username: event.target.value })} /></label>
-                  <label className="field"><span>Contraseña inicial</span><input required minLength={12} type="password" autoComplete="new-password" value={accessForm.password} onChange={(event) => setAccessForm({ ...accessForm, password: event.target.value })} /><small>Mínimo 12 caracteres.</small></label>
+                  <label className="field"><span>Contraseña inicial</span><input required minLength={6} type="password" autoComplete="new-password" value={accessForm.password} onChange={(event) => setAccessForm({ ...accessForm, password: event.target.value })} /><small>Mínimo 6 caracteres.</small></label>
                 </div>
                 <button className="button button-primary" type="submit" disabled={busy}><Shield aria-hidden="true" />Crear usuario</button>
               </form>

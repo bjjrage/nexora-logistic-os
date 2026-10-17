@@ -335,7 +335,7 @@ function AuthScreen({ setupRequired, busy, error, onAuth }: {
             <Field label="Usuario">
               <input required value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
             </Field>
-            <Field label="Contraseña" hint={setupRequired ? "Mínimo 12 caracteres." : undefined}>
+            <Field label="Contraseña" hint={setupRequired ? "Mínimo 6 caracteres." : undefined}>
               <input
                 required
                 minLength={setupRequired ? 12 : undefined}
@@ -1192,7 +1192,7 @@ function FleetView({ data, action, busy, uploadEvidence, role }: {
       <SectionTitle eyebrow="RECURSOS Y CONTROLES" title="Flota" description="Vehículos y choferes, con sus controles." />
       <nav className="workspace-tabs" aria-label="Secciones de flota">{[['vehicles','Vehículos'],['drivers','Choferes'],['documents','Documentos'],['inspections','Inspecciones'],['maintenance','Mantenimiento']].map(([key,label])=><button type="button" key={key} aria-pressed={fleetTab===key} onClick={()=>setFleetTab(key)}>{label}</button>)}</nav>
       {canManage && fleetTab === "drivers" && <TaskDisclosure label="Agregar chofer">
-        <Panel title="Nuevo chofer"><form className="stack" onSubmit={submitDriver}><fieldset disabled={busy}><Field label="Nombre"><input required value={driverName} onChange={(event) => setDriverName(event.target.value)} /></Field><div className="form-grid"><Field label="Usuario"><input required value={driverUsername} onChange={(event) => setDriverUsername(event.target.value)} autoComplete="off" /></Field><Field label="Contraseña inicial" hint="Mínimo 12 caracteres."><input required minLength={12} type="password" value={driverPassword} onChange={(event) => setDriverPassword(event.target.value)} autoComplete="new-password" /></Field></div></fieldset><button className="button button-primary" disabled={busy || driverPassword.length < 12}>Registrar chofer</button></form></Panel>
+        <Panel title="Nuevo chofer"><form className="stack" onSubmit={submitDriver}><fieldset disabled={busy}><Field label="Nombre"><input required value={driverName} onChange={(event) => setDriverName(event.target.value)} /></Field><div className="form-grid"><Field label="Usuario"><input required value={driverUsername} onChange={(event) => setDriverUsername(event.target.value)} autoComplete="off" /></Field><Field label="Contraseña inicial" hint="Mínimo 6 caracteres."><input required minLength={6} type="password" value={driverPassword} onChange={(event) => setDriverPassword(event.target.value)} autoComplete="new-password" /></Field></div></fieldset><button className="button button-primary" disabled={busy || driverPassword.length < 6}>Registrar chofer</button></form></Panel>
       </TaskDisclosure>}
       {canManage && fleetTab === "vehicles" && <TaskDisclosure label="Agregar vehículo"><Panel title="Nuevo vehículo"><form className="stack" onSubmit={submitVehicle}><fieldset disabled={busy}><div className="form-grid">
           <Field label="Matrícula"><input required value={plate} onChange={(event) => setPlate(event.target.value)} /></Field>

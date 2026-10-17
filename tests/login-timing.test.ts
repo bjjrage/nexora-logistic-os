@@ -11,3 +11,10 @@ test('login: usuario desconocido ejecuta la misma verificación scrypt y siempre
  const known=time(()=>checkLogin('incorrecta',stored)),unknown=time(()=>checkLogin('incorrecta',undefined));
  assert.ok(unknown>known*0.5,`el camino de usuario inexistente es demasiado rápido (${unknown}ms vs ${known}ms)`);
 });
+
+test('contraseñas de 6 caracteres se aceptan y de 5 se rechazan (mínimo temporal para pruebas)',async()=>{
+ const {schemas}=await import('../server/validation.ts');
+ const base={commandId:crypto.randomUUID(),name:'QA',username:'qa.corta',role:'DEPOT'};
+ assert.ok(schemas.user.safeParse({...base,password:'123456'}).success);
+ assert.ok(!schemas.user.safeParse({...base,password:'12345'}).success);
+});

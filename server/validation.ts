@@ -5,7 +5,7 @@ const command={commandId:id};
 const version={...command,expectedVersion:z.number().int().positive()};
 const positive=z.number().int().positive().max(1_000_000_000);
 const datetime=z.string().datetime({offset:true}).transform(value=>new Date(value).toISOString());
-const password=z.string().min(12).max(128);
+const password=z.string().min(6).max(128);
 const username=z.string().trim().min(3).max(80).regex(/^[a-zA-Z0-9_.@-]+$/);
 export const schemas={
   setup:z.object({organizationName:text,timezone:text,username,password}),
