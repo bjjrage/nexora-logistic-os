@@ -15,9 +15,11 @@ test('interactive manual: every function completes, saves only progress, and nev
   for(const guide of lessons){
     await page.goto('/manual.html#guia/'+guide.id+'/1');
     for(let i=0;i<guide.steps;i++){
+      await expect(page.locator('.coach-step'),`${guide.id}: esperar el paso ${i+1}`).toContainText(`${i+1} de ${guide.steps}`);
       await expect(page.locator('#practice-action')).toBeVisible();
       const example=page.getByRole('button',{name:'Usar datos de ejemplo'});
       if(await example.count())await example.click();
+      expect(await page.locator('#practice-form input:invalid').count(),`${guide.id}, paso ${i+1}: datos de ejemplo válidos`).toBe(0);
       await page.locator('#practice-action').click();
       await expect(page.locator('#step-result')).toBeVisible();
       await expect(page.locator('#next')).toBeEnabled();
