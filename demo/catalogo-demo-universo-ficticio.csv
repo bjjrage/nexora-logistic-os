@@ -1,0 +1,5 @@
+﻿SKU,Nombre,CodigoBarras,Seguimiento,Unidad,PesoKg,VolumenM3
+DEMO-UNI-001,Producto de prueba 1 ? caja peque?a,1233456,Cantidad,unidad,0.5,0.003
+DEMO-UNI-002,Producto de prueba 2 ? paquete,7891234567001,Cantidad,paquete,1,0.004
+DEMO-UNI-003,Producto de prueba 3 ? caja mediana,7891234567002,Cantidad,caja,2,0.008
+DEMO-UNI-004,Producto de prueba 4 ? caja grande,7891234567003,Cantidad,caja,5,0.02

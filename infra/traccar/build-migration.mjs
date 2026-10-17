@@ -1,0 +1,13 @@
+import {readFileSync,writeFileSync,readdirSync} from 'node:fs';
+const file=readdirSync('supabase/migrations').find(f=>f.endsWith('_traccar_tracking.sql'));
+if(!file)throw new Error('Creá primero la migración con Supabase CLI.');
+const tables=['traccar_devices','traccar_vehicle_bindings','traccar_latest','route_tracking_settings','client_delivery_policies','tracking_source_state'];
+let sql='SET search_path TO nexora, pg_catalog;\n'+readFileSync('server/migrations/008_traccar.sql','utf8').replace(/\bREAL\b/g,'DOUBLE PRECISION').replace(/\b(created_at|updated_at|measured_at|received_at|checked_at) TEXT\b/g,'$1 TIMESTAMPTZ');
+for(const table of tables)sql+=`\nALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;\nREVOKE ALL ON ${table} FROM PUBLIC,anon,authenticated;\nGRANT SELECT,INSERT,UPDATE,DELETE ON ${table} TO nexora_runtime;\nCREATE POLICY runtime_access ON ${table} TO nexora_runtime USING(true) WITH CHECK(true);\n`;
+sql+='\nGRANT USAGE ON SCHEMA nexora TO nexora_tracking_worker;\nGRANT SELECT(id) ON organizations TO nexora_tracking_worker;\nCREATE POLICY tracking_worker_org_lookup ON organizations FOR SELECT TO nexora_tracking_worker USING(true);\n';
+for(const table of ['traccar_devices','traccar_vehicle_bindings','traccar_latest','tracking_source_state'])sql+=`GRANT SELECT ON ${table} TO nexora_tracking_worker;\nCREATE POLICY worker_read ON ${table} FOR SELECT TO nexora_tracking_worker USING(true);\n`;
+for(const table of ['traccar_devices','traccar_latest','tracking_source_state'])sql+=`GRANT INSERT ON ${table} TO nexora_tracking_worker;\nCREATE POLICY worker_insert ON ${table} FOR INSERT TO nexora_tracking_worker WITH CHECK(true);\n`;
+for(const table of ['traccar_latest','tracking_source_state'])sql+=`GRANT UPDATE ON ${table} TO nexora_tracking_worker;\nCREATE POLICY worker_update ON ${table} FOR UPDATE TO nexora_tracking_worker USING(true) WITH CHECK(true);\n`;
+sql+="INSERT INTO schema_migrations(version,applied_at) VALUES(8,now());\n";
+sql+=readFileSync('infra/traccar/public-gps.sql','utf8');
+writeFileSync('supabase/migrations/'+file,sql);console.log('Migración privada preparada: '+file);

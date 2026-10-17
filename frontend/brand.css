@@ -1,0 +1,78 @@
+.nexora-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  color: #071c38;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.nexora-brand__symbol,
+.nexora-brand__wordmark {
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  overflow: hidden;
+}
+
+.nexora-brand__symbol {
+  width: 50px;
+  height: 34px;
+}
+
+.nexora-brand__wordmark {
+  width: 136px;
+  height: 35px;
+}
+
+.nexora-brand__symbol img,
+.nexora-brand__wordmark img {
+  position: absolute;
+  display: block;
+  max-width: none;
+  height: auto;
+  object-fit: initial;
+  mix-blend-mode: multiply;
+}
+
+.nexora-brand__symbol img {
+  width: 129px;
+  left: -40px;
+  top: -10px;
+}
+
+.nexora-brand__wordmark img {
+  width: 197px;
+  left: -31px;
+  top: -69px;
+}
+
+.nexora-brand__os {
+  align-self: flex-end;
+  margin: 0 0 3px 2px;
+  color: #e82834;
+  font-family: "Manrope", Arial, sans-serif;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+}
+
+.nexora-brand--compact .nexora-brand__wordmark,
+.nexora-brand--compact .nexora-brand__os {
+  display: none;
+}
+
+.nexora-brand--on-dark {
+  color: #fff;
+}
+
+.nexora-brand--on-dark .nexora-brand__symbol img,
+.nexora-brand--on-dark .nexora-brand__wordmark img {
+  filter: grayscale(1) invert(1);
+  mix-blend-mode: screen;
+}
+
+.nexora-brand--on-dark .nexora-brand__os {
+  color: #fff;
+}

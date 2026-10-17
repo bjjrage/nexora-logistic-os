@@ -1,0 +1,46 @@
+{
+  "name": "logistics-os-local",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.20.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "node --watch server/index.ts",
+    "dev:web": "vite --configLoader native --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build --configLoader native",
+    "start": "node server/index.ts",
+    "test": "node --test tests/*.test.ts",
+    "test:postgres": "node --env-file=.env --test tests/postgres.integration.ts",
+    "seed:demo": "node scripts/seed-demo.ts",
+    "preview": "node scripts/preview.ts start",
+    "preview:restart": "node scripts/preview.ts restart",
+    "preview:status": "node scripts/preview.ts status",
+    "preview:stop": "node scripts/preview.ts stop",
+    "preview:demo": "node scripts/preview.ts start --demo",
+    "preview:demo:restart": "node scripts/preview.ts restart --demo",
+    "preview:demo:stop": "node scripts/preview.ts stop --demo"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "lucide-react": "^0.468.0",
+    "pg": "8.16.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^24.0.0",
+    "@types/pg": "8.15.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "concurrently": "^9.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.0.0"
+  }
+}

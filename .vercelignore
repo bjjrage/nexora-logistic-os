@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+.local/
+web-publica/
+tests/
+docs/evidencias/
+*.sqlite*
+node_modules/
+.git/

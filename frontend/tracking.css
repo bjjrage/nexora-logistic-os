@@ -1,0 +1,49 @@
+.tracking-workspace { display:grid; gap:20px; min-width:0; }
+.tracking-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; }
+.tracking-heading h2 { margin:0; color:var(--navy); font-size:22px; }
+.tracking-heading p { margin:6px 0 0; color:var(--muted); font-size:14px; max-width:60ch; }
+.tracking-heading-actions { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.tracking-status { display:inline-flex; align-items:center; gap:7px; font-size:12px; font-weight:600; color:#78571e; white-space:nowrap; }
+.tracking-status::before { content:''; width:7px; height:7px; background:currentColor; border-radius:50%; }
+.tracking-status.is-connected { color:#14734b; }
+.tracking-back { display:inline-flex; align-items:center; gap:7px; margin:0 0 12px; padding:0; border:0; background:none; color:var(--muted); font-size:13px; cursor:pointer; }
+.tracking-back:hover { color:var(--navy); }
+.tracking-task-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; max-width:1000px; }
+.tracking-task { display:flex; align-items:center; gap:16px; min-height:105px; padding:22px; border:1px solid var(--line); border-radius:12px; background:#fff; color:var(--navy); text-align:left; cursor:pointer; transition:border-color .15s,box-shadow .15s; }
+.tracking-task:hover { border-color:var(--red); box-shadow:0 4px 16px #071c3810; }
+.tracking-task > svg { width:23px; height:23px; flex-shrink:0; color:var(--red); }
+.tracking-task > span:nth-child(2) { display:grid; gap:5px; flex:1; min-width:0; }
+.tracking-task strong { font-size:16px; }
+.tracking-task small { font-size:13px; color:var(--muted); font-weight:400; }
+.tracking-secondary-actions { display:flex; align-items:center; flex-wrap:wrap; gap:12px 22px; }
+.tracking-feedback { padding:12px 16px; border:1px solid #dce3eb; border-radius:10px; background:#f2f5f9; color:#344259; font-size:13px; }
+.tracking-form-area:empty { display:none; }
+.tracking-form-card { width:min(100%,640px); display:grid; gap:18px; }
+.tracking-workspace form label { display:grid; gap:7px; font-size:14px; font-weight:600; }
+.tracking-workspace form input,.tracking-workspace form select { width:100%; min-height:44px; border:1px solid var(--line); border-radius:8px; padding:9px 12px; background:#fff; }
+.tracking-workspace form small { display:block; font-size:12px; font-weight:400; color:var(--muted); }
+.tracking-workspace .button { min-height:40px; }
+.tracking-help { color:var(--muted); font-size:13px; }
+.tracking-help summary { cursor:pointer; }
+.tracking-help p { margin-top:8px; max-width:65ch; }
+.tracking-empty { margin:0; padding:15px 0; color:var(--muted); font-size:14px; }
+.tracking-phone-row { display:flex; align-items:center; justify-content:space-between; gap:18px; }
+.tracking-phone-row strong { display:block; font-size:16px; }
+.tracking-phone-row p { margin:4px 0 0; color:var(--muted); }
+.tracking-phone-steps { display:grid; gap:18px; width:min(100%,700px); }
+.tracking-phone-step { padding:20px; border:1px solid var(--line); border-radius:12px; background:#fff; }
+.tracking-phone-step h3 { font-size:16px; margin:0 0 12px; }
+.tracking-copy-value { display:flex; align-items:center; gap:12px; padding:12px; background:#f5f7fa; border:1px solid var(--line); border-radius:8px; }
+.tracking-copy-value code { flex:1; min-width:0; overflow-wrap:anywhere; font-size:13px; }
+.tracking-phone-step p { font-size:14px; color:var(--muted); }
+.tracking-assignment-saved,.tracking-assignment-error { margin:0; padding:10px 12px; border-radius:8px; font-size:14px; }
+.tracking-assignment-saved { color:#11613e; background:#eef8f2; border:1px solid #badcc7; }
+.tracking-assignment-error { color:#971729; background:#fff4f5; border:1px solid #e9bac2; }
+.tracking-signal { padding:11px 13px; border:1px solid var(--line); border-radius:9px; background:#f4f7fa; color:var(--navy); font-size:12px; }
+.tracking-signal small { color:var(--muted); }
+@media(max-width:700px) {
+ .tracking-heading { flex-direction:column; }
+ .tracking-task-grid { grid-template-columns:1fr; }
+ .tracking-task { min-height:90px; padding:18px; }
+ .tracking-phone-row,.tracking-copy-value { align-items:flex-start; flex-direction:column; }
+}
