@@ -102,6 +102,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     app.get('/api/bootstrap', async (req, res) => { const actor = await auth(req); res.json({ ...await domain.bootstrap(actor), tracking: { ...tracking.status(actor.orgId), traccar: await traccar.health() } }); });
     app.get('/api/company',async(req,res)=>res.json(await new CompanyAdministration(store).read(await auth(req))));
     app.post('/api/company',async(req,res)=>res.json(await new CompanyAdministration(store).update(await auth(req),req.body)));
+    app.post('/api/users/:id/delete',async(req,res)=>res.json(await new CompanyAdministration(store).remove(await auth(req),String(req.params.id),req.body)));
     app.post('/api/users/:id/access',async(req,res)=>res.json(await new CompanyAdministration(store).setAccess(await auth(req),String(req.params.id),req.body)));
     app.get('/api/shipments', async (req, res) => {
         const actor = await auth(req), limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25)), offset = Math.max(0, Number(req.query.offset) || 0);

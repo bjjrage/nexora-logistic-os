@@ -536,7 +536,7 @@ export class Logistics {
         const stops=all('stops').filter(x=>routeIds.has(x.route_id)),stopIds=new Set(stops.map(s=>s.id));
         return {
             clientProfilesEnabled:true,
-            organization:{...camel((await s.one('SELECT * FROM organizations WHERE id=?',actor.orgId))!),supportContacts:await s.all("SELECT name,role FROM users WHERE org_id=? AND role IN('ADMIN','OPERATIONS') ORDER BY name",actor.orgId)},user:actor,
+            organization:{...camel((await s.one('SELECT * FROM organizations WHERE id=?',actor.orgId))!),supportContacts:await s.all("SELECT name,role FROM users WHERE org_id=? AND enabled=1 AND role IN('ADMIN','OPERATIONS') ORDER BY name",actor.orgId)},user:actor,
             clients:clients.map((client):Row=>({...camel(client),...profileMap.get(client.id)})),drivers:drivers.map(x=>({...camel(x),available:!!x.available})),vehicles:vehicles.map(x=>({...camel(x),available:!!x.available})),
             shipments:shipments.map((x):Row=>({...camel(x),counts:countMap.get(x.id)??{expected:0,received:0,delivered:0,pending:0,returned:0,missing:0}})),parcels:parcels.map(camel),routes:routes.map(camel),stops:stops.map(camel),
             assignments:all('route_assignments').filter(x=>routeIds.has(x.route_id)).map(x=>({...camel(x),active:!!x.active,pickup:!!x.pickup})),

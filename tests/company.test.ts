@@ -105,3 +105,24 @@ test('HTTP: Administración puede crear otra cuenta de Administración que luego
  await login('qa.admin2');
  assert.equal((await (await fetch(base+'/api/session',{headers:{Cookie:cookie}})).json()).user.role,'ADMIN');
 });
+
+test('HTTP: Administración elimina cuentas del equipo; pierden acceso, liberan el usuario y conservan historial',async t=>{
+ const {store,actor,domain}=await fixture(t);
+ const depot=await domain.createUser(actor,{...command(),name:'Depósito Borrar',username:'qa.borrar',password:'QA-Company-2026!',role:'DEPOT'});
+ const server=createApp(store).listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
+ t.after(()=>new Promise<void>((r,j)=>server.close(e=>e?j(e):r())));
+ const base='http://127.0.0.1:'+(server.address() as {port:number}).port;let cookie='';
+ const post=async(path:string,body:unknown,c=cookie)=>fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'logistics-os',Cookie:c},body:JSON.stringify(body)});
+ const login=async(username:string)=>{const response=await post('/api/login',{username,password:'QA-Company-2026!'},'');assert.equal(response.status,200);return response.headers.get('set-cookie')!.split(';')[0];};
+ const adminCookie=await login('qa.admin'),depotCookie=await login('qa.borrar');cookie=adminCookie;
+ assert.equal((await post(`/api/users/${depot.id}/delete`,{...command()},depotCookie)).status,403);
+ assert.equal((await post(`/api/users/${actor.id}/delete`,{...command()})).status,409);
+ assert.equal((await post(`/api/users/${depot.id}/delete`,{...command()})).status,200);
+ assert.equal((await post('/api/login',{username:'qa.borrar',password:'QA-Company-2026!'},'')).status,401);
+ assert.equal((await (await fetch(base+'/api/session',{headers:{Cookie:depotCookie}})).json()).user,null);
+ const team=await (await fetch(base+'/api/company',{headers:{Cookie:adminCookie}})).json();
+ assert.ok(!team.team.some((m:any)=>m.id===depot.id));
+ assert.equal((await post(`/api/users/${depot.id}/access`,{...command(),enabled:true})).status,404);
+ assert.equal((await post('/api/users',{...command(),name:'Nuevo',username:'qa.borrar',password:'QA-Company-2026!',role:'DEPOT'})).status,200);
+ assert.ok(await store.one('SELECT id FROM users WHERE id=?',depot.id));
+});

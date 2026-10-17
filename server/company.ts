@@ -4,18 +4,33 @@ import {authorize,type Actor} from './auth.ts';
 import {Logistics} from './domain.ts';
 import {ensure} from './errors.ts';
 
+const DELETED_HASH='!deleted';
 export class CompanyAdministration {
   private store:Database;
   constructor(store:Database){this.store=store;}
   async read(actor:Actor){
     authorize(actor,['ADMIN']);
     return {organization:await this.store.one('SELECT id,name,timezone FROM organizations WHERE id=?',actor.orgId),
-      team:await this.store.all('SELECT id,name,username,role,enabled FROM users WHERE org_id=? ORDER BY name',actor.orgId)};
+      team:await this.store.all('SELECT id,name,username,role,enabled FROM users WHERE org_id=? AND password_hash<>? ORDER BY name',actor.orgId,DELETED_HASH)};
+  }
+  // Deleted accounts stay as inert tombstones: audit, custody and evidence rows keep a valid actor reference.
+  async remove(actor:Actor,id:string,input:unknown){
+    const body=z.object({commandId:z.uuid()}).strict().parse(input);
+    return new Logistics(this.store).command(actor,`users.${id}.delete`,body,['ADMIN'],async()=>{
+      const target=await this.store.one('SELECT id,role,name FROM users WHERE id=? AND org_id=? AND password_hash<>?',id,actor.orgId,DELETED_HASH);
+      ensure(target,'NOT_FOUND','Cuenta no encontrada.',404);
+      ensure(id!==actor.id,'INVALID_TRANSITION','No podés eliminar tu propia cuenta.');
+      if(target.role==='ADMIN')ensure(await this.store.one("SELECT id FROM users WHERE org_id=? AND role='ADMIN' AND enabled=1 AND id<>?",actor.orgId,id),'INVALID_TRANSITION','Debe quedar una cuenta de Administración activa.');
+      await this.store.run('DELETE FROM sessions WHERE user_id=?',id);
+      await this.store.run('DELETE FROM password_recovery WHERE user_id=? OR issuer_id=?',id,id);
+      await this.store.run('UPDATE users SET enabled=0,password_hash=?,username=?,name=? WHERE id=? AND org_id=?',DELETED_HASH,'eliminado-'+id,target.name+' (eliminado)',id,actor.orgId);
+      return {id,deleted:true};
+    });
   }
   async setAccess(actor:Actor,id:string,input:unknown){
     const body=z.object({commandId:z.uuid(),enabled:z.boolean()}).strict().parse(input);
     return new Logistics(this.store).command(actor,`users.${id}.access`,body,['ADMIN'],async()=>{
-      const target=await this.store.one('SELECT id,role FROM users WHERE id=? AND org_id=?',id,actor.orgId);
+      const target=await this.store.one('SELECT id,role FROM users WHERE id=? AND org_id=? AND password_hash<>?',id,actor.orgId,DELETED_HASH);
       ensure(target,'NOT_FOUND','Cuenta no encontrada.',404);
       if(!body.enabled){
         ensure(id!==actor.id,'INVALID_TRANSITION','No podés suspender tu propia cuenta.');
