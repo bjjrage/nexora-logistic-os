@@ -47,7 +47,22 @@
 .server-import-preview.is-valid { border-color:#a8d8be; background:#f4fbf7; }
 .server-import-preview.has-errors { border-color:#e8b1b7; background:#fff8f8; color:#8d1a26; }
 .import-history { margin-top:18px; }
-.customer-access-form { max-width:700px; }
+.customer-access-form { display:grid; gap:16px; min-width:0; }
+.customer-access-heading { margin-bottom:0; }
+.customer-access-heading h1 { margin:0; }
+.customer-access-heading p { margin-top:4px; }
+.customer-access-methods { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; align-items:start; }
+.customer-access-method { min-width:0; margin:0; }
+.customer-access-method .card-header { margin-bottom:14px; }
+.customer-access-method .card-header p { max-width:38ch; }
+.customer-access-method .stack > .button { align-self:flex-start; }
+.customer-access-disclosure { margin-top:12px; border-top:1px solid var(--line); }
+.customer-access-disclosure > summary { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:42px; padding:8px 0; color:var(--navy); font-size:13px; font-weight:650; cursor:pointer; list-style:none; }
+.customer-access-disclosure > summary::-webkit-details-marker { display:none; }
+.customer-access-disclosure[open] > summary { margin-bottom:5px; }
+.customer-access-count { display:inline-grid; place-items:center; min-width:22px; min-height:22px; padding:0 6px; border-radius:999px; background:#f1f4f8; color:var(--navy); font-size:11px; font-variant-numeric:tabular-nums; }
+.customer-access-existing { margin:0; }
+.customer-access-existing .task-disclosure-body { padding:8px 18px 14px; }
 .inventory-role-note { padding:7px 0; color:var(--muted); font-size:10px; }
 .portal-shell { min-height:100vh; display:grid; grid-template-rows:auto 1fr; }
 .portal-header { display:flex; justify-content:space-between; align-items:center; gap:14px; padding:12px clamp(16px,4vw,52px); background:#fff; border-bottom:1px solid var(--line); }
@@ -194,6 +209,7 @@
   .modal-card { max-height:calc(100vh - 16px); padding:16px; border-radius:14px 14px 8px 8px; }
 }
 @media(max-width:800px) {
+  .customer-access-methods { grid-template-columns:minmax(0,1fr); }
   .inventory-grid { grid-template-columns:minmax(0,1fr); gap:16px; }
   .inventory-metrics { gap:10px; }
   .portal-header { align-items:flex-start; }

@@ -890,9 +890,28 @@ export default function InventoryPanel({ section, role, clients, initialClientId
       </section>}
 
       {section === "customerAccess" && <section className="customer-access-form">
-        {isAdmin && <GooglePortalAccess clients={clients} />}
-        {!isAdmin ? <p className="notice error" role="alert">Solo Administración puede crear o revocar accesos de cliente.</p> : <><div className="card-header"><div><h2>Crear usuario de consulta</h2><p>El usuario solo verá el inventario y los pedidos de su cliente. El alcance se aplica en el servidor.</p></div></div><form className="stack" onSubmit={(event) => void createCustomerAccess(event)}><div className="inventory-form-grid"><label className="field"><span>Cliente</span><select required value={accessForm.clientId} onChange={(event) => setAccessForm({ ...accessForm, clientId: event.target.value })}><option value="">Seleccionar</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label className="field"><span>Nombre de usuario visible</span><input required value={accessForm.name} onChange={(event) => setAccessForm({ ...accessForm, name: event.target.value })} /></label><label className="field"><span>Usuario de inicio de sesión</span><input required autoComplete="off" value={accessForm.username} onChange={(event) => setAccessForm({ ...accessForm, username: event.target.value })} /></label><label className="field"><span>Contraseña inicial</span><input required minLength={12} type="password" autoComplete="new-password" value={accessForm.password} onChange={(event) => setAccessForm({ ...accessForm, password: event.target.value })} /><small>Al menos 12 caracteres.</small></label></div><button className="button button-primary" type="submit" disabled={busy}><Shield aria-hidden="true" />Crear acceso</button></form></>}
-        <div className="form-divider"><h2>Accesos existentes</h2>{accesses.length ? <div className="inventory-list">{accesses.map((access) => <div className="inventory-list-row" key={access.id}><span><strong>{access.name} · {access.username}</strong><small>{access.clientName} · creado {new Date(access.createdAt).toLocaleDateString("es")}</small></span><span className="inventory-actions"><span className={access.enabled ? "badge badge-success" : "badge badge-neutral"}>{access.enabled ? "Activo" : "Revocado"}</span>{isAdmin&&access.enabled&&<AccountRecovery id={access.id} kind="CUSTOMER"/>}{isAdmin && access.enabled && <button className="button button-secondary" type="button" disabled={busy} onClick={() => void runMutation(`/api/customer-access/${encodeURIComponent(access.id)}/revoke`, {}, "Acceso revocado.", "access")}><Trash2 aria-hidden="true" />Revocar</button>}</span></div>)}</div> : <p className="muted">No hay accesos de cliente registrados.</p>}</div>
+        {!isAdmin ? <p className="notice error" role="alert">Solo Administración puede crear o revocar accesos de cliente.</p> : <>
+          <header className="page-heading customer-access-heading"><div><h1>Dar acceso al portal</h1><p className="muted">Elegí cómo entra cada cliente.</p></div></header>
+          <div className="customer-access-methods">
+            <GooglePortalAccess clients={clients} />
+            <section className="card customer-access-method" aria-labelledby="password-access-title">
+              <div className="card-header"><div><h2 id="password-access-title">Crear usuario y contraseña</h2><p>Para clientes sin acceso con Google. Solo verá su información.</p></div></div>
+              <form className="stack" onSubmit={(event) => void createCustomerAccess(event)}>
+                <div className="inventory-form-grid">
+                  <label className="field"><span>Cliente</span><select required value={accessForm.clientId} onChange={(event) => setAccessForm({ ...accessForm, clientId: event.target.value })}><option value="">Seleccionar</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label>
+                  <label className="field"><span>Nombre visible</span><input required value={accessForm.name} onChange={(event) => setAccessForm({ ...accessForm, name: event.target.value })} /></label>
+                  <label className="field"><span>Usuario</span><input required autoComplete="off" value={accessForm.username} onChange={(event) => setAccessForm({ ...accessForm, username: event.target.value })} /></label>
+                  <label className="field"><span>Contraseña inicial</span><input required minLength={12} type="password" autoComplete="new-password" value={accessForm.password} onChange={(event) => setAccessForm({ ...accessForm, password: event.target.value })} /><small>Mínimo 12 caracteres.</small></label>
+                </div>
+                <button className="button button-primary" type="submit" disabled={busy}><Shield aria-hidden="true" />Crear usuario</button>
+              </form>
+            </section>
+          </div>
+          <details className="task-disclosure customer-access-existing" open={accesses.length>0}>
+            <summary>Usuarios creados <span className="customer-access-count">{accesses.length}</span></summary>
+            <div className="task-disclosure-body">{accesses.length ? <div className="inventory-list">{accesses.map((access) => <div className="inventory-list-row" key={access.id}><span><strong>{access.name} · {access.username}</strong><small>{access.clientName} · creado {new Date(access.createdAt).toLocaleDateString("es")}</small></span><span className="inventory-actions"><span className={access.enabled ? "badge badge-success" : "badge badge-neutral"}>{access.enabled ? "Activo" : "Revocado"}</span>{isAdmin&&access.enabled&&<AccountRecovery id={access.id} kind="CUSTOMER"/>}{isAdmin && access.enabled && <button className="button button-secondary" type="button" disabled={busy} onClick={() => void runMutation(`/api/customer-access/${encodeURIComponent(access.id)}/revoke`, {}, "Acceso revocado.", "access")}><Trash2 aria-hidden="true" />Revocar</button>}</span></div>)}</div> : <p className="muted">No hay usuarios creados.</p>}</div>
+          </details>
+        </>}
       </section>}
     </div>
   );
