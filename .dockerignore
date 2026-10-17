@@ -14,6 +14,9 @@
 !server/**
 !api/
 !api/**
+!deploy/
+!deploy/vercel/
+!deploy/vercel/vercel.json
 !scripts/
 !scripts/**
 !tests/

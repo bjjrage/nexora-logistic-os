@@ -31,6 +31,7 @@ jobs:
       - run: npm test
       - run: npm run test:isolated
       - run: npm run build
+      - run: node scripts/package-vercel-site.ts
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - run: docker build --tag nexora-os:ci .

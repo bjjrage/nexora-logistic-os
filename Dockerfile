@@ -8,6 +8,7 @@ COPY server ./server
 COPY api ./api
 COPY scripts ./scripts
 COPY tests ./tests
+COPY deploy/vercel/vercel.json ./deploy/vercel/vercel.json
 COPY supabase ./supabase
 RUN npm run check:migrations && npm test && npm run build && npm prune --omit=dev
 

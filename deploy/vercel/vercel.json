@@ -1,0 +1,28 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm --prefix ../.. ci --include=dev",
+  "buildCommand": "npm --prefix ../.. run build && node ../../scripts/package-vercel-site.ts",
+  "outputDirectory": "dist",
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {"key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains"},
+        {"key": "X-Content-Type-Options", "value": "nosniff"},
+        {"key": "X-Frame-Options", "value": "DENY"},
+        {"key": "Referrer-Policy", "value": "no-referrer"},
+        {"key": "Permissions-Policy", "value": "geolocation=()"},
+        {"key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-src https://www.openstreetmap.org; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"}
+      ]
+    },
+    {"source": "/api/:path*", "headers": [{"key": "Cache-Control", "value": "no-store"}]},
+    {"source": "/release.json", "headers": [{"key": "Cache-Control", "value": "no-store"}]}
+  ],
+  "redirects": [{"source": "/manual", "destination": "/manual.html", "permanent": false}],
+  "rewrites": [
+    {"source": "/api/:path*", "destination": "https://nexora-logistic-production.up.railway.app/api/:path*"},
+    {"source": "/MANUAL_MAESTRO_NEXORA_OS.html", "destination": "/manual.html"},
+    {"source": "/((?!api(?:/|$)|assets/|manual(?:/|\\.html$)|release\\.json$).*)", "destination": "/index.html"}
+  ]
+}

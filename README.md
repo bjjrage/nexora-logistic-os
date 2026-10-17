@@ -1,6 +1,6 @@
 ﻿# OS de logística — desarrollo local
 
-OS online: https://nexora-logistic-production.up.railway.app · [Despliegue y sincronización](docs/OS_EN_INTERNET_Y_SINCRONIZACION.md).
+OS en Vercel: https://nexora-logistic-os.vercel.app · [Arquitectura y despliegue](docs/VERCEL.md). API en Railway y datos en Supabase.
 
 > Estado actualizado al 17/10/2026: ver [cierre de fixes y pendientes](docs/CIERRE_FIXES_CHECKLIST_2026-10-17.md). Migraciones 1–13; pruebas locales y CI ampliadas a PostgreSQL aislado y navegador. QuadMinds queda pendiente de credenciales.
 

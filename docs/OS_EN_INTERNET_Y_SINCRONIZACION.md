@@ -1,5 +1,7 @@
 # OS en Internet y sincronización
 
+> Publicación en Vercel: ver [VERCEL.md](VERCEL.md). La interfaz pasa a Vercel; la API de Railway descrita aquí permanece activa.
+
 ## Qué es cada servicio
 
 - Código del OS: https://github.com/bjjrage/nexora-logistic-os (público por decisión del propietario).
