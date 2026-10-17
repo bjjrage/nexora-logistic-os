@@ -5,7 +5,7 @@
 - Código del OS: https://github.com/bjjrage/nexora-logistic-os (público por decisión del propietario).
 - Carpeta de trabajo: `NEXORA LOGISTIC OS` en esta computadora.
 - Servicio Railway del OS: `nexora-logistic`, conectado a `bjjrage/nexora-logistic-os`, rama `main`. Reutiliza el servicio anteriormente fallido de la web porque el plan no permite crear otro recurso. No tiene volumen: los datos residen en Supabase.
-- Dirección reservada: https://nexora-logistic-production.up.railway.app. Solo se considera operativo después de comprobar `/api/ready`, login y versión desplegada.
+- OS publicado: https://nexora-logistic-production.up.railway.app. Verificado el 17/10/2026: pantalla de ingreso, `/api/ready` con base y GPS conectados, versión del commit y acceso anónimo denegado a operaciones. El ingreso con una cuenta real debe realizarlo su titular; no se copiaron contraseñas ni se crearon cuentas de prueba en producción.
 - Web de marketing/seguimiento: repositorio `bjjrage/nexora-logistic` y hosting Netlify; es independiente del OS.
 - Traccar, pasarela y sus bases/backups conservan sus servicios actuales.
 
@@ -17,7 +17,7 @@ Variables privadas en Railway: `DATABASE_URL` del rol limitado `nexora_runtime`,
 
 Variables operativas: producción, escucha `0.0.0.0:8080`, PostgreSQL obligatorio, cookie segura y origen HTTPS exacto, un proxy confiable y una réplica. QuadMinds permanece deshabilitado hasta recibir el contrato y credenciales. La alta inicial está bloqueada en producción; se usan las cuentas existentes.
 
-La transferencia privada al servicio del OS requiere aprobación específica adicional a la otorgada anteriormente al bridge GPS. Una dirección reservada no confirma que el despliegue haya quedado activo.
+El propietario autorizó específicamente guardar la credencial limitada del OS y el secreto GPS en este servicio. Se habilitó salida IPv6 porque la conexión directa a Supabase la necesita; se mantiene TLS con validación del certificado. El estado operativo se verifica con readiness y versión, no solo con la existencia del dominio.
 
 ## Flujo para actualizar
 
@@ -34,7 +34,7 @@ GitHub sincroniza código, no configura automáticamente esta computadora. Si se
 
 El OS local de operación y el OS online apuntan a la misma base real: los cambios de clientes, stock, pedidos y rutas se reflejan en ambos. Para ensayar, usar la demo aislada o tests; no hacer recepciones ficticias en producción.
 
-Los backups y el monitor instalados en Windows siguen dependiendo de esta PC y su sesión. Publicar el OS no convierte esas tareas en servicios externos. El envío de alertas por correo sigue pendiente de proveedor. Las migraciones se revisan y aplican explícitamente; el servidor verifica versiones y no migra producción automáticamente al arrancar.
+El monitor de Windows comprueba ahora la dirección online del OS. Los backups y ese monitor siguen dependiendo de esta PC y su sesión. Publicar el OS no convierte esas tareas en servicios externos. El envío de alertas por correo sigue pendiente de proveedor. Las migraciones se revisan y aplican explícitamente; el servidor verifica versiones y no migra producción automáticamente al arrancar.
 
 Para rollback, seleccionar en Railway el despliegue anterior compatible con el esquema actual y comprobar readiness y versión. No restaurar una base sobre producción para revertir solo código.
 

@@ -11,5 +11,7 @@
   "restartPolicyMaxRetries": 5,
   "replicas": 1,
   "port": 8080,
-  "host": "0.0.0.0"
+  "host": "0.0.0.0",
+  "ipv6EgressEnabled": true,
+  "timezone": "America/Asuncion"
 }
