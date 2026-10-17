@@ -677,22 +677,32 @@ export class Inventory {
       const order = await this.record('inventory_orders', orderId, actor), route = await this.record('routes', b.routeId, actor);
       await this.client(actor, order.client_id);
       ensure(route.state === 'READY' && route.version === b.expectedVersion, 'VERSION_CONFLICT', 'La ruta cambió; actualizá los datos antes de cargar.');
-      const vehicleId = route.vehicle_id, seen = new Set<string>(), parcels: Row[] = [];
-      for (const code of b.codes) {
-        let item = await this.store.one(`SELECT op.*,p.code,p.state AS parcel_state,p.custody_type,p.custody_id,p.id AS actual_parcel_id
-          FROM inventory_order_parcels op JOIN parcels p ON p.id=op.parcel_id AND p.org_id=op.org_id
-          WHERE op.org_id=? AND op.order_id=? AND p.code=?`, actor.orgId, order.id, code);
-        if (!item) {
-          const unit = await this.store.one(`SELECT op.*,p.code,p.state AS parcel_state,p.custody_type,p.custody_id,p.id AS actual_parcel_id
-            FROM inventory_order_parcels op JOIN parcels p ON p.id=op.parcel_id AND p.org_id=op.org_id
-            LEFT JOIN inventory_units u ON u.id=op.serial_id AND u.org_id=op.org_id
-            JOIN inventory_products pr ON pr.id=op.product_id AND pr.org_id=op.org_id
-            WHERE op.org_id=? AND op.order_id=? AND (u.serial=? OR u.barcode=? OR pr.barcode=?) AND op.state='RESERVED'
-            ORDER BY op.created_at,op.id LIMIT 1`, actor.orgId, order.id, code, code, code);
-          item = unit;
-        }
-        ensure(item && !seen.has(item.actual_parcel_id), 'NOT_FOUND', `El código ${code} no corresponde a una unidad pendiente del pedido.`, 404);
-        seen.add(item.actual_parcel_id);
+      const vehicleId = route.vehicle_id, claimed = new Set<string>(), parcels: Row[] = [];
+      const candidates = await this.store.all(`SELECT op.*,p.code,p.state AS parcel_state,p.custody_type,p.custody_id,p.id AS actual_parcel_id,
+          pr.barcode AS product_barcode,u.serial AS unit_serial,u.barcode AS unit_barcode,
+          CASE WHEN EXISTS(SELECT 1 FROM route_assignments a WHERE a.org_id=op.org_id AND a.route_id=? AND a.parcel_id=op.parcel_id AND a.active=1) THEN 1 ELSE 0 END AS route_assigned
+        FROM inventory_order_parcels op JOIN parcels p ON p.id=op.parcel_id AND p.org_id=op.org_id
+        JOIN inventory_products pr ON pr.id=op.product_id AND pr.org_id=op.org_id
+        LEFT JOIN inventory_units u ON u.id=op.serial_id AND u.org_id=op.org_id AND u.client_id=op.client_id
+        WHERE op.org_id=? AND op.order_id=? ORDER BY op.created_at,op.id`, route.id, actor.orgId, order.id);
+      const planned: Row[] = new Array(b.codes.length);
+      // A model barcode must never consume a unit explicitly identified later in the batch.
+      for (const [index, scan] of b.codes.entries()) {
+        const labels = candidates.filter(item => item.code === scan);
+        const exact = labels.length ? labels : candidates.filter(item => item.unit_serial === scan || item.unit_barcode === scan);
+        if (!exact.length) continue;
+        ensure(exact.length === 1, 'VALIDATION_ERROR', `El código ${scan} identifica varias series. Usá la etiqueta del bulto.`, 400);
+        const item = exact[0];
+        ensure(!claimed.has(item.actual_parcel_id), 'NOT_FOUND', `El código ${scan} repite una unidad del pedido.`, 404);
+        planned[index] = item; claimed.add(item.actual_parcel_id);
+      }
+      for (const [index, scan] of b.codes.entries()) {
+        if (planned[index]) continue;
+        const item = candidates.find(item => item.product_barcode === scan && item.state === 'RESERVED' && item.route_assigned === 1 && !claimed.has(item.actual_parcel_id));
+        ensure(item, 'NOT_FOUND', `El código ${scan} no corresponde a una unidad pendiente del pedido y asignada a esta ruta.`, 404);
+        planned[index] = item; claimed.add(item.actual_parcel_id);
+      }
+      for (const item of planned) {
         ensure(await this.store.one('SELECT id FROM route_assignments WHERE org_id=? AND route_id=? AND parcel_id=? AND active=1', actor.orgId, route.id, item.actual_parcel_id), 'FORBIDDEN', 'La unidad no está asignada a esta ruta.', 403);
         if (item.parcel_state === 'LOADED' && item.custody_type === 'VEHICLE' && item.custody_id === vehicleId) { parcels.push({ id: item.actual_parcel_id, code: item.code, alreadyLoaded: true }); continue; }
         ensure(item.state === 'RESERVED' && item.parcel_state === 'RECEIVED' && item.custody_type === 'DEPOT', 'INVALID_TRANSITION', 'La unidad no está en depósito y reservada.');

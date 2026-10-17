@@ -114,8 +114,8 @@ Las rutas solo se despachan dentro de su ventana programada. El orden puede edit
 
 La validación más reciente registró:
 
-- `npm test`: **103 PASS, 0 FAIL**. Suite SQLite/HTTP, catálogo CSV/XLSX, inventario, pedidos, portal, rutas, circuito GPS explícito y protección de identidad del cliente.
-- `npm run test:postgres`: **10 PASS, 0 FAIL** en la corrida del 17-10. Incluye ficha de clientes, permisos, catálogo, inventario, rutas, entrega/devolución y GPS. Los fixtures de negocio terminan en rollback; se ejecutan en serie.
+- `npm test`: **105 PASS, 0 FAIL**. Suite SQLite/HTTP, catálogo CSV/XLSX, inventario, pedidos, portal, rutas, circuito GPS explícito, identidad del cliente y carga mixta de códigos/series.
+- `npm run test:postgres`: **10 PASS, 0 FAIL** en la corrida del 17-10. Tras el fix adicional de carga, los dos circuitos afectados se revalidaron **2/2**. Los fixtures de negocio terminan en rollback; se ejecutan en serie. Ver el informe para el alcance exacto.
 - `npm run build`: **PASS**, incluida la revalidación final de tipos.
 - `npm run check:migrations`: **PASS**. CI ejecuta secretos, migraciones, suite local y build. La base real se verifica por separado con su configuración privada.
 

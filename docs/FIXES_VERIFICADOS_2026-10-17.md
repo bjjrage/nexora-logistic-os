@@ -6,12 +6,13 @@ El OS ahora tiene repositorio propio privado: https://github.com/bjjrage/nexora-
 
 | Hallazgo | Resultado | Evidencia / límite |
 | --- | --- | --- |
-| H-01: tests de rutas detenidos por políticas GPS faltantes | Corregido | Fixtures positivos declaran su circuito mediante la misma API de dominio. Suite local: **103/103**. La concurrencia llega al conflicto de recursos y produce una ruta READY y otra DRAFT. |
+| H-01: tests de rutas detenidos por políticas GPS faltantes | Corregido | Fixtures positivos declaran su circuito mediante la misma API de dominio. Suite local: **105/105**. La concurrencia llega al conflicto de recursos y produce una ruta READY y otra DRAFT. |
 | H-02: QuadMinds sin configurar | Pendiente de Universo | El responsable confirmó el 17-10 que todavía no recibió endpoint/contrato ni credencial. Se conserva el bloqueo explícito; no se inventó una cuenta ni una posición. |
 | H-03: proveedor inferido del nombre Universo | Corregido y migrado | Política y protección asociadas a `org_id` + `client_id`; sin comparación por nombre en reglas de ejecución ni panel. Una FK impide alterar la política protegida desde SQL y runtime solo puede leer el bloqueo. |
 | H-04: endpoint de puntos GPS que siempre devolvía 503 | Corregido | Retirada la ruta no soportada. Una sesión válida recibe 404; el ingreso vigente continúa por Traccar/Railway. Tests de contrato actualizados. |
 | H-05: alertas de índices FK | Revisado; medición con volumen pendiente | Se verificaron índices existentes por envío, ruta, bulto, parada, chofer y vehículo. El aviso de cobertura compuesta no implica que esas búsquedas carezcan de todo índice. No se añadieron 85 índices sin medir. |
 | H-06: futuras tablas públicas sin permisos explícitos | Guardia agregada | `npm run check:migrations` revisa RLS, REVOKE y GRANT en tablas públicas creadas por las migraciones versionadas. La guardia tiene casos positivos/negativos y se ejecuta en CI. No sustituye revisar privilegios efectivos. |
+| Hallazgo adicional en CI: carga con códigos de modelo y etiquetas/series mezclados | Corregido | La planificación identifica primero bultos/series exactos y después asigna lecturas genéricas a las unidades restantes de la ruta. Pruebas deterministas para QUANTITY y SERIAL, duplicados, rollback e idempotencia. |
 
 ## Datos y compatibilidad
 
@@ -21,12 +22,14 @@ La tabla privada `client_delivery_locks` tiene RLS. `nexora_runtime` tiene SELEC
 
 Los clientes creados después de la migración requieren circuito explícito. Llamarlos Universo no les otorga una política ni una excepción. La DEMO recién generada también declara su circuito; no se debilitaron los controles para hacer pasar los tests.
 
+La corrida de CI detectó además un error operativo de carga: dos lecturas de código de modelo podían consumir el bulto identificado por una etiqueta posterior del mismo lote. Cuando varias reservas tenían el mismo instante de creación, sus UUID cambiaban el orden y el resultado era intermitente. Se corrige la selección en servidor antes de escribir movimientos; las pruebas fuerzan la unidad específica al primer lugar para reproducir el fallo sin depender del azar.
+
 ## Verificaciones
 
-- `npm test`: **103 aprobadas, 0 fallidas**, SQLite, dominio y HTTP.
+- `npm test`: **105 aprobadas, 0 fallidas**, SQLite, dominio y HTTP.
 - `npm run build`: **PASS**, TypeScript y Vite.
 - `npm run check:migrations`: **PASS**, guardia estática de permisos.
-- `npm run test:postgres`: **10 aprobadas, 0 fallidas**, PostgreSQL real, roles, integridad y circuitos con rollback (334,13 s). Incluye los nuevos bloqueos privados de proveedor.
+- `npm run test:postgres`: **10 aprobadas, 0 fallidas**, PostgreSQL real, roles, integridad y circuitos con rollback (334,13 s), antes del ajuste adicional de carga mixta. Tras ese fix se revalidaron los dos circuitos afectados de inventario, despacho, entrega y devolución: **2/2**, con rollback (230,93 s).
 - Traccar Railway: `/health` y `/diagnostics` devuelven 200 y conectado; alta de dispositivo sin autorización devuelve 401. Esto prueba la pasarela, no el GPS de un celular físico.
 - La verificación visual por navegador no se obtuvo en esta corrida: el controlador no logró abrir la instancia QA local. La prueba HTTP del contrato y el build sí pasaron.
 

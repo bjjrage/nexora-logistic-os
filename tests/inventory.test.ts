@@ -227,6 +227,34 @@ test('parcels por unidad enlazan ruta, bloquean cierre manual, entregan parcial 
   await assert.rejects(() => f.store.run('UPDATE inventory_movements SET reason=?', 'alterado'), /INVENTORY_LEDGER_APPEND_ONLY/);
 });
 
+for (const tracking of ['QUANTITY', 'SERIAL'] as const) test(`carga ${tracking}: el código de modelo no consume el bulto o serie explícito del mismo lote`, async t => {
+  const f = await fixture(t);
+  const product = tracking === 'SERIAL' ? await f.makeProduct(f.clientId, 'MIXED-SERIAL', 'SERIAL') : f.product;
+  await f.inventory.receive(f.actor, { ...f.command(), clientId: f.clientId, productId: product.id, locationId: f.locationId, quantity: 3,
+    ...(tracking === 'SERIAL' ? { serials: [{ serial: 'EXACT-A', barcode: 'UNIT-A' }, { serial: 'EXACT-B', barcode: 'UNIT-B' }, { serial: 'EXACT-C', barcode: 'UNIT-C' }] } : {}) });
+  const order = await f.inventory.createOrder(f.actor, orderBody(randomUUID(), f.clientId, product.id, 'ORDER-MIXED', 3));
+  const reservation = await f.inventory.reserveOrder(f.actor, order.id, { ...f.command(), locationId: f.locationId });
+  const explicit = reservation.parcels[2];
+  // Force the old greedy query to choose the explicitly scanned unit first, every run.
+  await f.store.run('UPDATE inventory_order_parcels SET created_at=? WHERE order_id=?', '2026-10-16T00:00:00.000Z', order.id);
+  await f.store.run('UPDATE inventory_order_parcels SET created_at=? WHERE parcel_id=?', '2026-10-15T00:00:00.000Z', explicit.id);
+  const driverId = (await f.domain.createDriver(f.actor, { ...f.command(), name: 'QA', username: 'driver-' + randomUUID(), password: 'QA-Mixed-load-2026!' })).id;
+  const vehicleId = (await f.domain.createVehicle(f.actor, { ...f.command(), plate: 'MIXED-' + randomUUID(), capacityWeightGrams: 10000, capacityVolumeCm3: 10000, odometer: 0 })).id;
+  const route = await f.domain.createRoute(f.actor, { ...f.command(), name: 'QA mixed scans', driverId, vehicleId, startAt: new Date(Date.now() - 60000).toISOString(), endAt: new Date(Date.now() + 3600000).toISOString() });
+  await f.domain.assign(f.actor, route.id, { ...f.command(), expectedVersion: route.version, parcelIds: reservation.parcels.map((p: any) => p.id), pickup: false });
+  await f.domain.ready(f.actor, route.id, { ...f.command(), expectedVersion: (await f.domain.route(route.id, f.actor)).version });
+  const version = (await f.domain.route(route.id, f.actor)).version;
+  await assert.rejects(f.inventory.loadOrder(f.actor, order.id, { ...f.command(), routeId: route.id, expectedVersion: version, codes: [explicit.code, explicit.code] }), code('NOT_FOUND'));
+  assert.equal((await f.store.one("SELECT count(*) n FROM parcels WHERE shipment_id=? AND state='LOADED'", order.shipmentId))!.n, 0);
+  const serial = tracking === 'SERIAL' ? (await f.store.one('SELECT u.serial FROM inventory_units u JOIN inventory_order_parcels op ON op.serial_id=u.id WHERE op.parcel_id=?', explicit.id))!.serial : explicit.code;
+  const input = { ...f.command(), routeId: route.id, expectedVersion: version, codes: [product.barcode, product.barcode, serial] };
+  const loaded = await f.inventory.loadOrder(f.actor, order.id, input);
+  assert.equal(loaded.loaded, 3); assert.equal(loaded.parcels[2].id, explicit.id);
+  assert.equal(new Set(loaded.parcels.map((p: any) => p.id)).size, 3);
+  assert.deepEqual(await f.inventory.loadOrder(f.actor, order.id, input), loaded);
+  assert.equal((await f.store.one("SELECT count(*) n FROM inventory_movements WHERE order_id=? AND action='LOAD'", order.id))!.n, 3);
+});
+
 test('seriales son unitarios y el snapshot/export de cliente se filtra desde el actor autenticado', async (t) => {
   const f = await fixture(t), serialized = await f.makeProduct(f.clientId, 'SERIAL-001', 'SERIAL');
   const receive = { ...f.command(), clientId: f.clientId, productId: serialized.id, locationId: f.locationId, quantity: 2, serials: [{ serial: 'S-1', barcode: 'BAR-S-1' }, { serial: 'S-2', barcode: 'BAR-S-2' }] };
