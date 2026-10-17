@@ -5,6 +5,9 @@
 !tsconfig.json
 !vite.config.ts
 !index.html
+!MANUAL_MAESTRO_NEXORA_OS.html
+!manual/
+!manual/**
 !frontend/
 !frontend/**
 !server/

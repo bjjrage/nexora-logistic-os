@@ -580,6 +580,7 @@ function AppContent() {
           ))}</div>)}
         </nav></div>
         <div className="sidebar-footer">
+          <a className="text-button" href="/manual.html" target="_blank" rel="noreferrer">Guía interactiva ↗</a>
           <div className="user-chip" aria-label={'Cuenta en uso: '+bootstrap.user.name}><span className="avatar">{bootstrap.user.name.slice(0, 1).toUpperCase()}</span><span><strong>{bootstrap.user.name}</strong><small>{displayState(bootstrap.user.role)}</small></span></div>
           <button className="text-button signout" onClick={logout} disabled={pending}><LogOut aria-hidden="true" />Cerrar sesión</button>
         </div>
@@ -587,7 +588,7 @@ function AppContent() {
       <main className="workspace" inert={reauthentication} aria-hidden={reauthentication||undefined}>
         <header className="topbar">
           <div><Brand compact className="mobile-brand" /><span className="topbar-label">{bootstrap.organization.name}</span><span className="topbar-separator">/</span><span>{pageLabel(page)}</span></div>
-          <div className="topbar-meta"><span className="connection-indicator" /><span className="local-label">Entorno local</span><button className="text-button mobile-signout" aria-label="Cerrar sesión" onClick={logout} disabled={pending}>Salir</button></div>
+          <div className="topbar-meta"><span className="connection-indicator" /><span className="local-label">{['127.0.0.1','localhost'].includes(location.hostname)?'Entorno local':'OS online'}</span><button className="text-button mobile-signout" aria-label="Cerrar sesión" onClick={logout} disabled={pending}>Salir</button></div>
         </header>
         <div className="content">
           {bootstrap.organization.name.startsWith('DEMO') && <div className="notice demo-notice" role="status">DEMO · Datos ficticios · Base separada de la operación</div>}

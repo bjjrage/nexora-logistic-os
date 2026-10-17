@@ -165,6 +165,9 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
       res.json(setting?.provider==='TRACCAR'?await traccar.route(actor,id):await tracking.route(actor,id));
     });
     app.use('/api', (_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Endpoint no encontrado.' } }));
+    app.use('/manual',express.static(resolve('manual'),{index:false,redirect:false}));
+    app.get(['/manual','/manual/'],(_req,res)=>res.redirect('/manual.html'));
+    app.get(['/manual.html','/MANUAL_MAESTRO_NEXORA_OS.html'],(_req,res)=>res.sendFile(resolve('MANUAL_MAESTRO_NEXORA_OS.html')));
     const dist = resolve('dist');
     if (existsSync(resolve(dist, 'index.html'))) {
         app.use(express.static(dist));
