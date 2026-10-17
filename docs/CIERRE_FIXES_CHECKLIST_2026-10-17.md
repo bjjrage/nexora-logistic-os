@@ -17,7 +17,7 @@ El OS local incorpora las correcciones siguientes. Este informe reemplaza el est
 | Seguridad HTTP | CSP/HSTS en el servidor de producción del OS; endpoint de preview deshabilitado en producción. Proxy confiable explícito y límites de intentos. |
 | Base de datos | Migraciones 11–13 aplicadas en Supabase: recuperación, índices y auditoría del autorizante. Baseline histórico recuperado para instalaciones reproducibles. |
 
-Verificación local: 115 pruebas unitarias/de integración aprobadas, 12 pruebas PostgreSQL del conjunto anterior y la prueba nueva de paginación/recuperación aprobadas; dos pruebas de navegador completan recepción, sesión vencida, despacho, foto, entrega y cierre. Build TypeScript/Vite aprobado. Web pública: 19 pruebas aprobadas. Auditoría npm sin vulnerabilidades reportadas en ambos proyectos. El workflow de GitHub ejecuta también PostgreSQL aislado y navegador.
+Verificación local: 115 pruebas unitarias/de integración aprobadas, 13 pruebas PostgreSQL aisladas aprobadas; dos pruebas de navegador completan recepción, sesión vencida, despacho, foto, entrega y cierre. Build TypeScript/Vite aprobado. Web pública: 19 pruebas aprobadas. Auditoría npm sin vulnerabilidades reportadas en ambos proyectos. El workflow de GitHub ejecuta también PostgreSQL aislado y navegador. Su primera ejecución detectó precedencia incorrecta de una variable de entorno de pruebas; se corrigió el runner y se reprodujo localmente el caso con las 13 pruebas aprobadas.
 
 ## Rendimiento medido
 
