@@ -8,6 +8,20 @@ import {TraccarTracking} from '../server/traccar.ts';
 import {QuadMindsTracking} from '../server/quadminds.ts';
 import {passwordHash,type Actor} from '../server/auth.ts';
 
+test('Supabase: circuitos protegidos tienen RLS y runtime no puede alterar ni borrar el bloqueo',async()=>{
+ const store=new PostgresStore(process.env.DATABASE_URL??'');
+ try{
+  await store.verify();
+  const grants=await store.one("SELECT has_table_privilege('anon','nexora.client_delivery_locks','SELECT') AS anonymous,has_table_privilege('authenticated','nexora.client_delivery_locks','SELECT') AS customer,has_table_privilege('nexora_tracking_worker','nexora.client_delivery_locks','SELECT') AS gps,has_table_privilege('nexora_runtime','nexora.client_delivery_locks','SELECT') AS readable");
+  assert.deepEqual(grants,{anonymous:false,customer:false,gps:false,readable:true});
+  await assert.rejects(store.run("UPDATE client_delivery_locks SET delivery_provider='NEXORA' WHERE false"),{code:'42501'});
+  await assert.rejects(store.run('DELETE FROM client_delivery_locks WHERE false'),{code:'42501'});
+  const invalid=await store.one('SELECT count(*) n FROM client_delivery_locks l LEFT JOIN client_delivery_policies p ON p.org_id=l.org_id AND p.client_id=l.client_id AND p.delivery_provider=l.delivery_provider WHERE p.client_id IS NULL');
+  assert.equal(invalid!.n,0);
+  assert.equal((await store.one("SELECT relrowsecurity FROM pg_class WHERE oid='nexora.client_delivery_locks'::regclass"))!.relrowsecurity,true);
+ }finally{await store.close();}
+});
+
 test('Supabase tracking: guardar y releer asignaciones conserva el contrato JSON del formulario; rollback',async()=>{
  const store=new PostgresStore(process.env.DATABASE_URL??''),org=randomUUID(),user=randomUUID(),rollback=new Error('ROLLBACK_TRACKING_FORM'),command=()=>({commandId:randomUUID()});
  try{

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { Store } from '../server/db.ts';
 import { setup, type Actor } from '../server/auth.ts';
 import { Logistics } from '../server/domain.ts';
+import { TraccarTracking } from '../server/traccar.ts';
 const path = resolve('.local/demo.sqlite');
 if (existsSync(path)) {
     console.log('La base DEMO ya existe. Se conserva sin cambios: .local/demo.sqlite');
@@ -15,6 +16,7 @@ else {
         const actor: Actor = { id: userId, orgId, name: 'Administrador DEMO', role: 'ADMIN', driverId: null };
         const domain = new Logistics(store), command = () => ({ commandId: randomUUID() });
         const client = (await domain.createClient(actor, { ...await command(), name: 'Cliente ficticio · QA' })).id;
+        await new TraccarTracking(store, {}).clientPolicy(actor, client, { ...command(), deliveryProvider: 'QUADMINDS' });
         const driver = (await domain.createDriver(actor, { ...await command(), name: 'Chofer de demostración', username: 'demo.chofer', password: 'Demo-Chofer-2026!' })).id;
         const vehicle = (await domain.createVehicle(actor, { ...await command(), plate: 'DEMO-001', capacityWeightGrams: 500000, capacityVolumeCm3: 2000000, odometer: 12000 })).id;
         const shipment = (await domain.createShipment(actor, { ...await command(), clientId: client, reference: 'QA-P1-P5', originText: 'Remitente ficticio · Origen QA', destinationText: 'Dirección ficticia · Destino QA', recipientName: 'Destinatario ficticio', recipientPhone: '', parcelCount: 5, weightGrams: 1000, volumeCm3: 2000, proofPolicy: 'RECEIVER_PHOTO' })).id;

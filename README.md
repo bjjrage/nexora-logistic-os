@@ -2,6 +2,8 @@
 
 Nexora OS gestiona clientes, envíos, recepción, rutas, flota, entregas e incidencias. El servidor local ya usa PostgreSQL de Supabase mediante una conexión privada; SQLite queda disponible para DEMO y pruebas. Ver [configuración de Supabase](docs/SUPABASE.md). Esto no completa el alcance del Prompt Maestro V0.1 ni constituye un despliegue de producción.
 
+Código del OS en el [repositorio privado](https://github.com/bjjrage/nexora-logistic-os). La web pública se mantiene en su repositorio separado. Ver [fixes y verificaciones del 17-10-2026](docs/FIXES_VERIFICADOS_2026-10-17.md) y el [manual maestro](MANUAL_MAESTRO_NEXORA_OS.html).
+
 La ampliación del cliente incorpora inventario por cantidad/serie, importación de catálogos CSV/XLSX, recepción por escaneo, pedidos diarios, portal privado y preparación de integración QuadMinds con foto/firma. Consultá la [entrega y guía operativa](docs/ENTREGA_INVENTARIO_Y_QUADMINDS.md), el [contrato de inventario](docs/INVENTORY_API.md) y la [auditoría independiente](docs/AUDITORIA_IMPLEMENTACION.md). Cuenta QuadMinds, pruebas de celular, programación de sync y publicación del negocio siguen pendientes de sus accesos reales.
 
 La interfaz actual aplica la identidad Nexora facilitada en los recursos del workspace, según el pedido posterior del usuario. El [informe del rediseño](docs/REDISENO_UI.md) registra la compactación medida, capturas y comprobaciones de navegador. El OS local se revisa en `http://127.0.0.1:5173`.
@@ -112,12 +114,12 @@ Las rutas solo se despachan dentro de su ventana programada. El orden puede edit
 
 La validación más reciente registró:
 
-- `npm test`: **81 PASS, 0 FAIL**. Suite SQLite/HTTP, catálogo CSV/XLSX, inventario, pedidos, portal, auditoría y QuadMinds con fixtures aislados.
-- PostgreSQL real: **5 casos aprobados entre distintas corridas**. A los cuatro casos ya registrados se añadió el quinto, importación de catálogo en lote con rollback verificado (22,43 s). Los fixtures de negocio terminan en rollback.
+- `npm test`: **103 PASS, 0 FAIL**. Suite SQLite/HTTP, catálogo CSV/XLSX, inventario, pedidos, portal, rutas, circuito GPS explícito y protección de identidad del cliente.
+- `npm run test:postgres`: **10 PASS, 0 FAIL** en la corrida del 17-10. Incluye ficha de clientes, permisos, catálogo, inventario, rutas, entrega/devolución y GPS. Los fixtures de negocio terminan en rollback; se ejecutan en serie.
 - `npm run build`: **PASS**, incluida la revalidación final de tipos.
-- Chrome con Supabase: pantalla inicial de configuración visible y consola sin errores. Health HTTP 200 indica `database:"postgres"`; session HTTP 200 indica `setupRequired:true`. No se creó una cuenta administradora ficticia. Las verificaciones visuales anteriores están en `docs/REDISENO_UI.md`.
+- `npm run check:migrations`: **PASS**. CI ejecuta secretos, migraciones, suite local y build. La base real se verifica por separado con su configuración privada.
 
-Estos resultados validan el núcleo probado y su conexión real con Supabase. No son evidencia de GPS real, despliegue de producción ni aceptación de todas las funciones del Prompt Maestro V0.1.
+Estos resultados validan el núcleo probado y su conexión real con Supabase. La aceptación física del celular, la cuenta QuadMinds y el despliegue remoto del OS siguen pendientes. El [informe de fixes](docs/FIXES_VERIFICADOS_2026-10-17.md) registra los límites de esta corrida.
 
 ## Alcance pendiente y producción
 

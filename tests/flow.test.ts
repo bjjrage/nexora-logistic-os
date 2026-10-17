@@ -153,6 +153,7 @@ async function setupOrganization(client: ReturnType<typeof clientFor>): Promise<
 }
 async function createShipmentFixture(client: ReturnType<typeof clientFor>, parcelCount: number, reference: string) {
     const clientId = ok(await client.post('/api/clients', { name: `Cliente ${reference}` })).id as string;
+    ok(await client.post(`/api/clients/${clientId}/delivery-provider`, { deliveryProvider: 'QUADMINDS' }));
     const driverId = ok(await client.post('/api/drivers', {
         name: `Chofer ${reference}`,
         username: `driver.${reference.toLowerCase()}`,

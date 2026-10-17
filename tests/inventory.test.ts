@@ -1,3 +1,4 @@
+import { configureDelivery } from './support/delivery-policy.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
@@ -17,6 +18,8 @@ async function fixture(t: any) {
   const domain = new Logistics(store), inventory = new Inventory(store), command = () => ({ commandId: randomUUID() });
   const clientId = (await domain.createClient(actor, { ...command(), name: 'Cliente uno QA' })).id;
   const secondClientId = (await domain.createClient(actor, { ...command(), name: 'Cliente dos QA' })).id;
+  await configureDelivery(store, actor, clientId);
+  await configureDelivery(store, actor, secondClientId);
   const locationId = (await inventory.createLocation(actor, { ...command(), code: `DEP-${suffix}`, name: 'Depósito QA', kind: 'DEPOT' })).id;
   const shelfId = (await inventory.createLocation(actor, { ...command(), code: `RCK-${suffix}`, name: 'Estante QA', kind: 'STORAGE' })).id;
   const quarantineId = (await inventory.createLocation(actor, { ...command(), code: `QRT-${suffix}`, name: 'Cuarentena QA', kind: 'QUARANTINE' })).id;

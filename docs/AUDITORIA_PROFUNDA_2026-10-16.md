@@ -1,5 +1,7 @@
 # Auditoría profunda de Nexora Logistic OS
 
+Actualización posterior: se ejecutaron correcciones el 17-10. Consultar [fixes y verificaciones](FIXES_VERIFICADOS_2026-10-17.md); este informe conserva la evidencia del estado auditado originalmente.
+
 Fecha: 16 de octubre de 2026. Alcance: aplicación OS, API, lógica de rutas e inventario, integración GPS, migraciones y permisos Supabase, web de seguimiento, pruebas, dependencias y estado local.
 
 Revisión de código y configuración con pruebas ejecutadas. No se modificó código operativo. Se consultó el estado con un GET local y metadatos/asesores de Supabase; no se leyeron datos comerciales ni valores de secretos.

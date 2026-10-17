@@ -207,7 +207,7 @@ test('QuadMinds: endpoints HTTP requieren sesión, rol y CSRF; bootstrap informa
         const response = await fetch(base + `/api/routes/${f.route.id}/tracking`, { headers: { cookie: ownCookie } });
         assert.equal(response.status, 200);
         assert.equal((await response.json()).status, 'FRESH');
-        assert.equal((await fetch(base + '/api/tracking/sessions/unused/points', { method: 'POST', headers: { cookie, 'x-requested-with': 'logistics-os' } })).status, 503);
+        assert.equal((await fetch(base + '/api/tracking/sessions/unused/points', { method: 'POST', headers: { cookie, 'x-requested-with': 'logistics-os' } })).status, 404);
     }
     finally {
         await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

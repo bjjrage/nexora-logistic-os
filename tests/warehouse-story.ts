@@ -1,3 +1,4 @@
+import { configureDelivery } from './support/delivery-policy.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
@@ -21,6 +22,7 @@ export async function warehouseStory(store:Database){
   const actor:Actor={id:userId,orgId,name:'QA warehouse',role:'ADMIN',driverId:null};
   const domain=new Logistics(store),inventory=new Inventory(store);
   const clientId=(await domain.createClient(actor,{...command(),name:'QA owner'})).id,foreignClient=(await domain.createClient(actor,{...command(),name:'QA other owner'})).id;
+  await configureDelivery(store, actor, clientId);
   const locationId=(await inventory.createLocation(actor,{...command(),code:'QA-STOCK',name:'QA stock',kind:'STORAGE'})).id;
   const quarantineId=(await inventory.createLocation(actor,{...command(),code:'QA-QUARANTINE',name:'QA quarantine',kind:'QUARANTINE'})).id;
   const productId=(await inventory.createProduct(actor,{...command(),clientId,sku:'QA-WASHER',barcode:'QA-UPC-1',name:'QA washer',tracking:'QUANTITY',weightGrams:1000,volumeCm3:1000})).id;

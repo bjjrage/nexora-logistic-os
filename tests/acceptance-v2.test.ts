@@ -1,3 +1,4 @@
+import { configureDelivery } from './support/delivery-policy.ts';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -28,6 +29,7 @@ async function fileFixture(t: any) {
     const domain = new Logistics(store);
     const command = () => ({ commandId: randomUUID() });
     const clientId = (await domain.createClient(actor, { ...await command(), name: 'Cliente QA v2' })).id;
+    await configureDelivery(store, actor, clientId);
     const driverId = (await domain.createDriver(actor, { ...await command(), name: 'Chofer QA v2', username: 'driver-v2', password })).id;
     const vehicleId = (await domain.createVehicle(actor, { ...await command(), plate: 'QA-V2-001', capacityWeightGrams: 50000, capacityVolumeCm3: 50000, odometer: 100 })).id;
     const shipment = async (options: {

@@ -151,7 +151,6 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
       const setting=await store.one('SELECT provider FROM route_tracking_settings WHERE org_id=? AND route_id=?',actor.orgId,id);
       res.json(setting?.provider==='TRACCAR'?await traccar.route(actor,id):await tracking.route(actor,id));
     });
-    app.post('/api/tracking/sessions/:id/points', async (req, _res) => { await auth(req); throw new DomainError('INTEGRATION_NOT_CONFIGURED', 'No hay una fuente GPS aprobada para recibir ubicaciones.', 503); });
     app.use('/api', (_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Endpoint no encontrado.' } }));
     const dist = resolve('dist');
     if (existsSync(resolve(dist, 'index.html'))) {

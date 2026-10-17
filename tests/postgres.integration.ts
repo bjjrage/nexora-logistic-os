@@ -1,3 +1,4 @@
+import { configureDelivery } from './support/delivery-policy.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -108,6 +109,7 @@ test('Supabase: recepción, concurrencia protegida por constraints, despacho, fo
       await db.run('INSERT INTO users VALUES(?,?,?,?,?,?,NULL)',userId,orgId,'qa-'+randomUUID(),'QA',passwordHash('QA-Postgres-Only-2026!'),'ADMIN');
       const actor:Actor={id:userId,orgId,name:'QA',role:'ADMIN',driverId:null},domain=new Logistics(db);
       const client=await domain.createClient(actor,{...command(),name:'Cliente QA temporal'});
+      await configureDelivery(db, actor, client.id);
       const driver=await domain.createDriver(actor,{...command(),name:'Chofer QA',username:'driver-'+randomUUID(),password:'QA-Postgres-Driver-2026!'});
       const vehicle=await domain.createVehicle(actor,{...command(),plate:'QA-'+randomUUID(),capacityWeightGrams:10_000,capacityVolumeCm3:10_000,odometer:100});
       const shipment=await domain.createShipment(actor,{...command(),clientId:client.id,reference:randomUUID(),originText:'Origen QA',destinationText:'Destino QA',recipientName:'Receptor QA',recipientPhone:'',parcelCount:3,weightGrams:1000,volumeCm3:1000,proofPolicy:'RECEIVER_PHOTO'});

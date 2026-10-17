@@ -25,6 +25,7 @@ export class TraccarTracking {
       bindings: await this.store.all('SELECT vehicle_id AS "vehicleId",device_id AS "deviceId" FROM traccar_vehicle_bindings WHERE org_id=?', actor.orgId),
       routes: await this.store.all('SELECT route_id AS "routeId",provider FROM route_tracking_settings WHERE org_id=?', actor.orgId),
       policies: await this.store.all('SELECT client_id AS "clientId",delivery_provider AS "deliveryProvider" FROM client_delivery_policies WHERE org_id=?', actor.orgId),
+      lockedPolicies: await this.store.all('SELECT client_id AS "clientId",delivery_provider AS "deliveryProvider" FROM client_delivery_locks WHERE org_id=?', actor.orgId),
       phoneUrl: this.env.TRACCAR_PHONE_URL ?? null };
   }
   async health() {
@@ -55,8 +56,9 @@ export class TraccarTracking {
   async clientPolicy(actor: Actor, clientId: string, input: unknown) {
     const body=z.object({commandId:z.uuid(),deliveryProvider:z.enum(['QUADMINDS','NEXORA'])}).parse(input),domain=new Logistics(this.store);
     return domain.command(actor,`clients.${clientId}.delivery-provider`,body,['ADMIN'],async()=>{
-      const client=await domain.record('clients',clientId,actor);
-      ensure(String(client.name).trim().toLocaleLowerCase()!=='universo'||body.deliveryProvider==='QUADMINDS','INVALID_TRANSITION','Universo conserva su circuito QuadMinds.');
+      await domain.record('clients',clientId,actor);
+      const lock=await this.store.one('SELECT delivery_provider FROM client_delivery_locks WHERE org_id=? AND client_id=?',actor.orgId,clientId);
+      ensure(!lock||lock.delivery_provider===body.deliveryProvider,'INVALID_TRANSITION','Este cliente tiene un circuito de reparto protegido por contrato.');
       ensure(!await this.store.one("SELECT a.id FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id JOIN shipments s ON s.id=p.shipment_id JOIN routes r ON r.id=a.route_id WHERE s.org_id=? AND s.client_id=? AND a.active=1 AND r.state IN('READY','IN_PROGRESS')",actor.orgId,clientId),'INVALID_TRANSITION','No se cambia el circuito de un cliente con repartos comprometidos.');
       if(body.deliveryProvider==='NEXORA')ensure(!await this.store.one('SELECT q.parcel_id FROM quad_parcel_links q JOIN parcels p ON p.id=q.parcel_id JOIN shipments s ON s.id=p.shipment_id WHERE s.org_id=? AND s.client_id=?',actor.orgId,clientId),'INVALID_TRANSITION','Este cliente tiene órdenes QuadMinds; conservá su circuito.');
       await this.store.run('INSERT INTO client_delivery_policies VALUES(?,?,?,?) ON CONFLICT(org_id,client_id) DO UPDATE SET delivery_provider=excluded.delivery_provider,updated_at=excluded.updated_at',actor.orgId,clientId,body.deliveryProvider,new Date(this.clock()).toISOString());
@@ -94,11 +96,11 @@ export async function validateRouteProvider(store: Database, orgId: string, rout
   const missing=await store.one(`SELECT cl.name FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id
     JOIN shipments s ON s.id=p.shipment_id AND s.org_id=p.org_id JOIN clients cl ON cl.id=s.client_id AND cl.org_id=s.org_id
     LEFT JOIN client_delivery_policies c ON c.org_id=s.org_id AND c.client_id=s.client_id
-    WHERE a.org_id=? AND a.route_id=? AND a.active=1 AND c.client_id IS NULL AND lower(trim(cl.name))<>'universo' LIMIT 1`,orgId,routeId);
+    WHERE a.org_id=? AND a.route_id=? AND a.active=1 AND c.client_id IS NULL LIMIT 1`,orgId,routeId);
   ensure(!missing,'INVALID_TRANSITION','Antes de elegir el GPS, definí el circuito de reparto de cada cliente en Tracking > Mi celular > Clientes. Universo conserva QuadMinds.');
   const incompatible=await store.one(`SELECT a.id FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id
     JOIN shipments s ON s.id=p.shipment_id AND s.org_id=p.org_id JOIN clients cl ON cl.id=s.client_id AND cl.org_id=s.org_id LEFT JOIN client_delivery_policies c ON c.org_id=s.org_id AND c.client_id=s.client_id
-    WHERE a.org_id=? AND a.route_id=? AND a.active=1 AND COALESCE(c.delivery_provider,CASE WHEN lower(trim(cl.name))='universo' THEN 'QUADMINDS' END)<>?`,orgId,routeId,provider==='TRACCAR'?'NEXORA':'QUADMINDS');
+    WHERE a.org_id=? AND a.route_id=? AND a.active=1 AND c.delivery_provider<>?`,orgId,routeId,provider==='TRACCAR'?'NEXORA':'QUADMINDS');
   ensure(!incompatible,'INVALID_TRANSITION','La ruta mezcla clientes con circuitos distintos. Separá Universo/QuadMinds de los repartos Nexora/Traccar.');
 }
 
@@ -110,7 +112,7 @@ export async function validateParcelRouteProvider(store:Database,orgId:string,ro
       JOIN clients cl ON cl.id=s.client_id AND cl.org_id=s.org_id LEFT JOIN client_delivery_policies c ON c.org_id=s.org_id AND c.client_id=s.client_id
       WHERE p.org_id=? AND p.id=?`,orgId,parcelId);
     ensure(client,'NOT_FOUND','El bulto no tiene un cliente válido.',404);
-    const name=String(client.name).trim().toLocaleLowerCase(),circuit=client.delivery_provider??(name==='universo'?'QUADMINDS':null);
+    const circuit=client.delivery_provider;
     ensure(circuit||provider!=='TRACCAR','INVALID_TRANSITION',`Definí el circuito de ${client.name} en Tracking > Mi celular > Clientes antes de asignar este pedido a una ruta Traccar.`);
     ensure(!circuit||circuit===(provider==='TRACCAR'?'NEXORA':'QUADMINDS'),'INVALID_TRANSITION','Este pedido usa un circuito distinto al GPS de la ruta. Universo conserva QuadMinds; los repartos Nexora usan Traccar.');
   }

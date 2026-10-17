@@ -1,3 +1,4 @@
+import { configureDelivery } from './support/delivery-policy.ts';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -62,6 +63,7 @@ async function fixture(t: any) {
     const domain = new Logistics(store);
     const command = () => ({ commandId: randomUUID() });
     const clientId = (await domain.createClient(actor, { ...await command(), name: 'Cliente controles QA' })).id;
+    await configureDelivery(store, actor, clientId);
     const driverId = (await domain.createDriver(actor, {
         ...await command(), name: 'Chofer controles QA', username: `driver-${suffix}`, password,
     })).id;

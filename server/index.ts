@@ -14,6 +14,8 @@ if(!['sqlite','postgres'].includes(provider)) throw new Error('DATABASE_PROVIDER
 const store:Database=provider==='postgres'?new PostgresStore(process.env.DATABASE_URL??'',process.env.DATABASE_SCHEMA??'nexora'):new Store(databasePath);
 if(store instanceof PostgresStore) await store.verify();
 const port=Number(process.env.PORT??3001);
-const server=createApp(store).listen(port,'127.0.0.1',()=>console.log(`Nexora OS: http://127.0.0.1:${port} · ${store.kind==='postgres'?'Supabase PostgreSQL':'SQLite local'}`));
+const host=process.env.HOST??'127.0.0.1';
+if(!Number.isInteger(port)||port<1||port>65535) throw new Error('PORT debe ser un puerto TCP válido.');
+const server=createApp(store).listen(port,host,()=>console.log(`Nexora OS: http://${host}:${port} · ${store.kind==='postgres'?'Supabase PostgreSQL':'SQLite local'}`));
 const shutdown=()=>server.close(async()=>{await store.close();process.exit(0);});
 process.on('SIGINT',shutdown);process.on('SIGTERM',shutdown);

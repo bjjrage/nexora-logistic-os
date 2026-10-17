@@ -1,5 +1,7 @@
 # Plan de corrección de hallazgos — Nexora Logistic OS
 
+Actualización de ejecución: el OS ya tiene repositorio privado propio y se corrigieron H-01, H-03 y H-04; H-06 tiene guardia en CI. Ver el [informe de fixes y verificación](FIXES_VERIFICADOS_2026-10-17.md) para resultados y pendientes actuales. El estado de partida siguiente se conserva como registro de planificación.
+
 Fecha: 17 de octubre de 2026  
 Base: [auditoría profunda del 16-10-2026](AUDITORIA_PROFUNDA_2026-10-16.md) y repetición local de `npm.cmd test` el 17-10-2026.
 
