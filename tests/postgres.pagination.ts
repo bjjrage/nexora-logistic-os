@@ -10,7 +10,7 @@ test('isolated PostgreSQL: paged stock/catalog, lookup past 1000 products and au
  const url=new URL(process.env.DATABASE_URL??'');assert.ok(['127.0.0.1','localhost'].includes(url.hostname)&&url.pathname==='/nexora_test');
  const store=new PostgresStore(url.toString()),rollback=Error('ISOLATED_ROLLBACK'),orgId=randomUUID(),id=randomUUID(),command=()=>({commandId:randomUUID()});
  try{await store.verify();await assert.rejects(store.transaction(async()=>{
-  await store.run('INSERT INTO organizations VALUES(?,?,?)',orgId,'QA native pages','UTC');await store.run('INSERT INTO users VALUES(?,?,?,?,?,?,NULL)',id,orgId,'qa-native-'+id,'QA','unusable-fixture','ADMIN');
+  await store.run('INSERT INTO organizations VALUES(?,?,?)',orgId,'QA native pages','UTC');await store.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)',id,orgId,'qa-native-'+id,'QA','unusable-fixture','ADMIN');
   const actor={id,orgId,name:'QA',role:'ADMIN' as const,driverId:null},domain=new Logistics(store),inventory=new Inventory(store),recovery=new PasswordRecovery(store);
   const client=(await domain.createClient(actor,{...command(),name:'A'})).id,other=(await domain.createClient(actor,{...command(),name:'B'})).id;
   await store.run(`INSERT INTO inventory_products(id,org_id,client_id,sku,name,tracking,unit,active,created_at,updated_at) SELECT gen_random_uuid()::text,?,?,'SKU-'||lpad(n::text,4,'0'),'Product '||lpad(n::text,4,'0'),'QUANTITY','unidad',1,now(),now() FROM generate_series(1,1005) n`,orgId,client);

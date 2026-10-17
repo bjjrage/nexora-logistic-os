@@ -21,6 +21,7 @@ import { synchronizeQuadMinds } from './quad-sync.ts';
 import {Diagnostics,requestContext,WindowLimiter} from './observability.ts';
 import {reconcileInventory} from './reconciliation.ts';
 import {PasswordRecovery} from './password-recovery.ts';
+import {latestParcelAssignment} from './driver-access.ts';
 export function createApp(store: Database, tracking = new QuadMindsTracking(store), quad = new QuadOperations(store),diagnostics=new Diagnostics()) {
     const app = express(), domain = new Logistics(store);
     const traccar = new TraccarTracking(store);
@@ -77,7 +78,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     app.post('/api/login', async (req, res) => {
         loginLimit(req);
         const b = schemas.login.parse(req.body);
-        let user = await store.one('SELECT id,password_hash FROM users WHERE username=?', b.username);
+        let user = await store.one('SELECT id,password_hash FROM users WHERE username=? AND enabled=1', b.username);
         const customer=!user;
         if(customer) user=await store.one('SELECT id,password_hash FROM customer_accounts WHERE username=? AND enabled=1',b.username);
         ensure(user && checkPassword(b.password, user.password_hash), 'FORBIDDEN', 'Usuario o contraseña incorrectos.', 401);
@@ -101,17 +102,18 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     app.get('/api/bootstrap', async (req, res) => { const actor = await auth(req); res.json({ ...await domain.bootstrap(actor), tracking: { ...tracking.status(actor.orgId), traccar: await traccar.health() } }); });
     app.get('/api/company',async(req,res)=>res.json(await new CompanyAdministration(store).read(await auth(req))));
     app.post('/api/company',async(req,res)=>res.json(await new CompanyAdministration(store).update(await auth(req),req.body)));
+    app.post('/api/users/:id/access',async(req,res)=>res.json(await new CompanyAdministration(store).setAccess(await auth(req),String(req.params.id),req.body)));
     app.get('/api/shipments', async (req, res) => {
         const actor = await auth(req), limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25)), offset = Math.max(0, Number(req.query.offset) || 0);
         ensure(Number.isInteger(limit) && Number.isInteger(offset) && offset <= 1000000, 'VALIDATION_ERROR', 'Paginación inválida.', 400);
-        const filter = actor.role === 'DRIVER' ? 'AND EXISTS(SELECT 1 FROM parcels p JOIN route_assignments a ON a.parcel_id=p.id JOIN routes r ON r.id=a.route_id WHERE p.shipment_id=s.id AND r.driver_id=?)' : '';
+        const filter = actor.role === 'DRIVER' ? `AND EXISTS(SELECT 1 FROM parcels p JOIN route_assignments a ON a.parcel_id=p.id AND a.org_id=p.org_id JOIN routes r ON r.id=a.route_id AND r.org_id=a.org_id WHERE p.shipment_id=s.id AND p.org_id=s.org_id AND r.driver_id=? AND ${latestParcelAssignment})` : '';
         const params = actor.role === 'DRIVER' ? [actor.orgId, actor.driverId!, limit, offset] : [actor.orgId, limit, offset];
         res.json({ items: (await store.all(`SELECT s.* FROM shipments s WHERE s.org_id=? ${filter} ORDER BY s.created_at DESC,s.id LIMIT ? OFFSET ?`, ...params)).map(camel), limit, offset });
     });
     app.get('/api/shipments/:id', async (req, res) => {
         const actor = await auth(req), shipment = await domain.record('shipments', String(req.params.id), actor);
         if (actor.role === 'DRIVER')
-            ensure(await store.one('SELECT a.id FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id JOIN routes r ON r.id=a.route_id WHERE p.shipment_id=? AND r.driver_id=?', shipment.id, actor.driverId), 'FORBIDDEN', 'El envío no está asignado a este chofer.', 403);
+            ensure(await store.one(`SELECT a.id FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id JOIN routes r ON r.id=a.route_id AND r.org_id=a.org_id WHERE p.shipment_id=? AND r.driver_id=? AND p.org_id=? AND ${latestParcelAssignment}`, shipment.id, actor.driverId,actor.orgId), 'FORBIDDEN', 'El envío no está asignado a este chofer.', 403);
         res.json(camel(shipment));
     });
     const post = (path: string, schema: ZodType, work: (actor: Actor, b: any, req: Request) => unknown) => app.post(path, async (req, res) => res.json(await work(await auth(req), schema.parse(req.body), req)));
@@ -132,6 +134,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     post('/api/routes/:id/close', schemas.version, async (a, b, r) => await domain.closeRoute(a, routeId(r), b));
     post('/api/stops/:id/pickups', schemas.pickup, async (a, b, r) => await domain.pickup(a, routeId(r), b));
     post('/api/stops/:id/attempts', schemas.attempt, async (a, b, r) => await domain.attempt(a, routeId(r), b));
+    post('/api/stops/:id/retry', schemas.version, async (a,b,r)=>await domain.retryDelivery(a,routeId(r),b));
     post('/api/incidents/:id/authorize-return', schemas.command, async (a, b, r) => await domain.authorizeReturn(a, routeId(r), b));
     post('/api/returns/:id/receive', schemas.returnReceive, async (a, b, r) => await domain.receiveReturn(a, routeId(r), b));
     post('/api/returns/:id/depot-evidence', schemas.resolve, async (a, b, r) => await domain.correctReturnEvidence(a, routeId(r), b));

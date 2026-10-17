@@ -18,7 +18,7 @@ function image(rgb:number[]){
 export async function warehouseStory(store:Database){
   const orgId=randomUUID(),userId=randomUUID(),command=()=>({commandId:randomUUID()});
   await store.run('INSERT INTO organizations VALUES(?,?,?)',orgId,'QA warehouse rollback','America/Asuncion');
-  await store.run('INSERT INTO users VALUES(?,?,?,?,?,?,NULL)',userId,orgId,'qa-'+randomUUID(),'QA warehouse',passwordHash('Warehouse-QA-2026!'),'ADMIN');
+  await store.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)',userId,orgId,'qa-'+randomUUID(),'QA warehouse',passwordHash('Warehouse-QA-2026!'),'ADMIN');
   const actor:Actor={id:userId,orgId,name:'QA warehouse',role:'ADMIN',driverId:null};
   const domain=new Logistics(store),inventory=new Inventory(store);
   const clientId=(await domain.createClient(actor,{...command(),name:'QA owner'})).id,foreignClient=(await domain.createClient(actor,{...command(),name:'QA other owner'})).id;

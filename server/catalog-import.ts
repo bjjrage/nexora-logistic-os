@@ -255,6 +255,10 @@ function parseTracking(value: string): Tracking | null {
 function parseProductRow(row: SourceRow, indexes: Map<ProductField, { index: number; source: string }>, defaultTracking?: Tracking): { product?: ParsedProduct; errors: RowError[] } {
   const errors: RowError[] = [];
   const value = (field: ProductField) => cellValue(row.cells[indexes.get(field)?.index ?? -1], field);
+  for(const field of ['sku','barcode'] as const){
+    const cell=row.cells[indexes.get(field)?.index??-1];
+    if(typeof cell?.raw==='number'&&!Number.isSafeInteger(cell.raw))errors.push({row:row.row,field,message:'El identificador numérico perdió precisión. Guardá el SKU o código de barras como texto en Excel y volvé a importar.'});
+  }
   for (let index = 0; index < row.cells.length; index++) if (row.cells[index]?.formula) errors.push({ row: row.row, field: indexes && [...indexes.entries()].find(([, entry]) => entry.index === index)?.[0], message: 'No uses fórmulas; pega valores en las celdas.' });
   const sku = value('sku').trim(), name = value('name').trim();
   if (!sku) errors.push({ row: row.row, field: 'sku', message: 'Completa el SKU.' });
@@ -362,6 +366,17 @@ export class CatalogImport {
       const previous = allFinalBarcodes.get(plan.next.barcode);
       if (previous && previous !== plan.parsed.sku) rowErrors.push({ row: plan.parsed.row, field: 'barcode', message: 'El código de barras ya pertenece a otro SKU de este cliente.' });
       else allFinalBarcodes.set(plan.next.barcode, plan.parsed.sku);
+    }
+    // The scanner matches both identifiers case-insensitively, so their final namespace must be unambiguous.
+    const updatesById=new Map(plans.filter(plan=>plan.existing).map(plan=>[plan.existing!.id,plan.next]));
+    const rowBySku=new Map(plans.map(plan=>[plan.next.sku,plan.parsed.row]));
+    const finalProducts=[...existing.map(product=>updatesById.get(product.id)??product),...plans.filter(plan=>!plan.existing).map(plan=>plan.next)];
+    const scanOwners=new Map<string,string>();
+    for(const product of finalProducts)for(const value of [product.sku,product.barcode]){
+      if(!value)continue;
+      const key=String(value).toLowerCase(),owner=scanOwners.get(key);
+      if(owner&&owner!==product.sku)rowErrors.push({row:rowBySku.get(product.sku)??1,field:'barcode',message:'El SKU o código de barras identifica varios productos, incluso ignorando mayúsculas.'});
+      else scanOwners.set(key,product.sku);
     }
     const rows: CatalogRow[] = plans.map(plan => {
       const action: CatalogAction = !plan.existing ? 'CREATE' : sameProduct(plan.existing, plan.next) ? 'UNCHANGED' : 'UPDATE';

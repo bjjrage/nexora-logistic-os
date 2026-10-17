@@ -16,7 +16,7 @@ test('live Google portal: runtime permissions, administrative grant, persisted r
       const identity=await store.one("SELECT nexora.portal_registered_user(?) AS id",'nexoralogisticpy@gmail.com');assert.ok(identity?.id,'Corporate Google account exists');identity.email='nexoralogisticpy@gmail.com';
       await store.run('INSERT INTO organizations VALUES(?,?,?)',org,'Portal transient QA','America/Asuncion');
       await store.run('INSERT INTO organizations VALUES(?,?,?)',otherOrg,'Other transient QA','America/Asuncion');
-      await store.run("INSERT INTO users VALUES(?,?,?,?,?,? ,NULL)",actorId,org,'portal-qa-'+actorId,'QA','unusable-fixture','ADMIN');
+      await store.run("INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,? ,NULL)",actorId,org,'portal-qa-'+actorId,'QA','unusable-fixture','ADMIN');
       await store.run('INSERT INTO sessions VALUES(?,?,?)',hash(token),actorId,new Date(Date.now()+600000).toISOString());
       const actor={id:actorId,orgId:org,name:'QA',role:'ADMIN' as const,driverId:null},domain=new Logistics(store);
       const client=(await domain.createClient(actor,{commandId:randomUUID(),name:'Customer QA'})).id;

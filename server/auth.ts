@@ -28,7 +28,7 @@ export async function actorFromRequest(store: Database, req: Request): Promise<A
     const token = req.headers.cookie?.split(';').map(x => x.trim()).find(x => x.startsWith('logistics_session='))?.split('=')[1];
     if (!token || !/^[a-f0-9]{64}$/.test(token))
         return null;
-    const user = await store.one('SELECT u.id,u.org_id,u.name,u.role,u.driver_id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?', hash(token), new Date().toISOString());
+    const user = await store.one('SELECT u.id,u.org_id,u.name,u.role,u.driver_id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.enabled=1', hash(token), new Date().toISOString());
     if(user) return { id: user.id, orgId: user.org_id, name: user.name, role: user.role, driverId: user.driver_id, clientId:null };
     const account=await store.one('SELECT a.id,a.org_id,a.name,a.client_id FROM customer_sessions s JOIN customer_accounts a ON a.id=s.account_id WHERE s.token_hash=? AND s.expires_at>? AND a.enabled=1',hash(token),new Date().toISOString());
     return account ? {id:account.id,orgId:account.org_id,name:account.name,role:'CUSTOMER',driverId:null,clientId:account.client_id} : null;
@@ -36,8 +36,11 @@ export async function actorFromRequest(store: Database, req: Request): Promise<A
 export async function createSession(store: Database, userId: string, res: Response, customer=false) {
     const token = randomBytes(32).toString('hex');
     const table=customer?'customer_sessions':'sessions';
-    await store.run(`DELETE FROM ${table} WHERE expires_at<=?`, new Date().toISOString());
-    await store.run(`INSERT INTO ${table} VALUES(?,?,?)`, hash(token), userId, new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString());
+    await store.transaction(async()=>{
+        ensure(await store.one(`SELECT id FROM ${customer?'customer_accounts':'users'} WHERE id=? AND enabled=1`,userId),'FORBIDDEN','Usuario o contraseña incorrectos.',401);
+        await store.run(`DELETE FROM ${table} WHERE expires_at<=?`, new Date().toISOString());
+        await store.run(`INSERT INTO ${table} VALUES(?,?,?)`, hash(token), userId, new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString());
+    });
     res.cookie('logistics_session', token, { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV==='production'||process.env.COOKIE_SECURE === 'true', maxAge: 12 * 60 * 60 * 1000, path: '/' });
 }
 export async function setup(store: Database, input: {
@@ -56,7 +59,7 @@ export async function setup(store: Database, input: {
         }
         const orgId = randomUUID(), userId = randomUUID();
         await store.run('INSERT INTO organizations VALUES(?,?,?)', orgId, input.organizationName, input.timezone);
-        await store.run('INSERT INTO users VALUES(?,?,?,?,?,?,NULL)', userId, orgId, input.username, 'Administración', passwordHash(input.password), 'ADMIN');
+        await store.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)', userId, orgId, input.username, 'Administración', passwordHash(input.password), 'ADMIN');
         return { userId, orgId };
     });
 }

@@ -4,6 +4,8 @@ import type { Database, Row } from './database.ts';
 import { camel } from './db.ts';
 import { DomainError, ensure } from './errors.ts';
 import { z } from 'zod';
+import {verifyVehicleCapacity} from './vehicle-capacity.ts';
+import {verifyProductCodes} from './product-codes.ts';
 
 export type InventoryActor = Omit<Actor, 'role'> & { role: string; clientId?: string | null };
 type ItemInput = { productId: string; quantity: number; serials?: string[] };
@@ -227,6 +229,7 @@ export class Inventory {
     return this.command(actor, 'products.create', b, async () => {
       await this.client(actor, b.clientId);
       const id = randomUUID(), time = now();
+      await verifyProductCodes(this.store,actor.orgId,b.clientId,id,b.sku,b.barcode??null);
       await this.store.run('INSERT INTO inventory_products VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?)', id, actor.orgId, b.clientId, b.sku, b.barcode ?? null, b.name, b.tracking, b.unit, b.weightGrams, b.volumeCm3, time, time);
       return { id, clientId: b.clientId, sku: b.sku, barcode: b.barcode ?? null, name: b.name, tracking: b.tracking, unit: b.unit, weightGrams: b.weightGrams, volumeCm3: b.volumeCm3, active: true };
     }, ['ADMIN', 'OPERATIONS']);
@@ -236,6 +239,7 @@ export class Inventory {
     return this.command(actor, `products.${id}.update`, b, async () => {
       const product = await this.product(actor, id);
       const next = { sku: b.sku ?? product.sku, barcode: b.barcode === undefined ? product.barcode : b.barcode, name: b.name ?? product.name, unit: b.unit ?? product.unit, weightGrams: b.weightGrams === undefined ? product.weight_grams : b.weightGrams, volumeCm3: b.volumeCm3 === undefined ? product.volume_cm3 : b.volumeCm3, active: b.active === undefined ? Boolean(product.active) : b.active };
+      await verifyProductCodes(this.store,actor.orgId,product.client_id,id,next.sku,next.barcode);
       await this.store.run('UPDATE inventory_products SET sku=?,barcode=?,name=?,unit=?,weight_grams=?,volume_cm3=?,active=?,updated_at=? WHERE id=? AND org_id=?', next.sku, next.barcode, next.name, next.unit, next.weightGrams, next.volumeCm3, next.active ? 1 : 0, now(), id, actor.orgId);
       return { id, ...next };
     }, ['ADMIN', 'OPERATIONS']);
@@ -253,10 +257,10 @@ export class Inventory {
     return this.command(actor, `locations.${id}.update`, b, async () => {
       const location = await this.location(actor, id);
       const next = { code: b.code ?? location.code, name: b.name ?? location.name, kind: b.kind ?? location.kind, active: b.active === undefined ? Boolean(location.active) : b.active };
-      if (!next.active) {
+      if (!next.active || next.kind === 'QUARANTINE' && location.kind !== 'QUARANTINE') {
         const balances = await this.store.one('SELECT id FROM inventory_balances WHERE org_id=? AND location_id=? AND quantity>0 LIMIT 1', actor.orgId, id);
         const units = await this.store.one("SELECT id FROM inventory_units WHERE org_id=? AND location_id=? AND status IN('AVAILABLE','RESERVED','VEHICLE','QUARANTINE') LIMIT 1", actor.orgId, id);
-        ensure(!balances && !units, 'INVALID_TRANSITION', 'Trasladá o resolvé el stock de esta ubicación antes de archivarla.');
+        ensure(!balances && !units, 'INVALID_TRANSITION', 'Trasladá o resolvé el stock antes de archivar la ubicación o convertirla en cuarentena.');
       }
       await this.store.run('UPDATE inventory_locations SET code=?,name=?,kind=?,active=? WHERE id=? AND org_id=?', next.code, next.name, next.kind, next.active ? 1 : 0, id, actor.orgId);
       return { id, ...next };
@@ -314,6 +318,7 @@ export class Inventory {
     return this.command(actor, 'stock.adjust', b, async () => {
       const product = await this.product(actor, b.productId, b.clientId), location = await this.location(actor, b.locationId);
       await this.client(actor, b.clientId);
+      ensure(location.active && location.kind !== 'QUARANTINE' && (b.quantityDelta < 0 || product.active), 'INVALID_TRANSITION', 'El producto o la ubicación no admite ajustes de stock disponible.');
       const amount = Math.abs(b.quantityDelta);
       if (product.tracking === 'QUANTITY') {
         ensure(!b.serials?.length, 'VALIDATION_ERROR', 'Este producto se ajusta por cantidad.', 400);
@@ -327,7 +332,7 @@ export class Inventory {
           await this.appendMovement(actor, { clientId: b.clientId, productId: product.id, quantity: 1, serialId: id, toLocationId: location.id, toStatus: 'AVAILABLE', action: 'ADJUST', reason: b.reason, commandId: b.commandId });
         }
       } else {
-        ensure(b.serials?.length === amount && new Set(b.serials).size === amount, 'VALIDATION_ERROR', 'Escaneá las series que se dan de baja.', 400);
+        ensure(b.serials?.length === amount && new Set(b.serials.map(entry => entry.serial)).size === amount, 'VALIDATION_ERROR', 'Escaneá series distintas para las unidades que se dan de baja.', 400);
         for (const entry of b.serials!) {
           const unit = await this.store.one('SELECT * FROM inventory_units WHERE org_id=? AND client_id=? AND product_id=? AND serial=?', actor.orgId, b.clientId, product.id, entry.serial);
           ensure(unit && unit.status === 'AVAILABLE' && unit.location_id === location.id, 'INSUFFICIENT_STOCK', `La serie ${entry.serial} no está disponible para ajustar.`);
@@ -567,6 +572,7 @@ export class Inventory {
     const preview = await this.previewImport(actor, b);
     if (!preview.valid) {
       const run = await this.recordImportRun(actor, { commandId: b.commandId, source: 'JSON', digest, status: 'REJECTED', rowCount: preview.rowCount, acceptedCount: preview.acceptedCount, rowErrors: preview.rowErrors });
+      if(run.status==='IMPORTED')return {...JSON.parse(run.result),importRunId:run.id};
       throw new DomainError('VALIDATION_ERROR', 'La importación JSON fue rechazada sin crear pedidos.', 400, { runId: run.id, rowErrors: preview.rowErrors });
     }
     try {
@@ -576,9 +582,11 @@ export class Inventory {
         return { ...result, importRunId: run.id };
       });
     } catch (error) {
-      const failure = error instanceof DomainError ? error : new DomainError('IMPORT_FAILED', 'No se pudo confirmar la importación.', 409);
+      if (!(error instanceof DomainError) || error.status >= 500 || ['VERSION_CONFLICT','INVENTORY_CONFLICT'].includes(error.code)) throw error;
+      const failure = error;
       const rowErrors = [{ row: 0, field: 'orders', code: failure.code, message: failure.message }];
       const run = await this.recordImportRun(actor, { commandId: b.commandId, source: 'JSON', digest, status: 'REJECTED', rowCount: b.orders.length, acceptedCount: 0, rowErrors });
+      if(run.status==='IMPORTED')return {...JSON.parse(run.result),importRunId:run.id};
       throw new DomainError(failure.code, failure.message, failure.status, { runId: run.id, rowErrors });
     }
   }
@@ -597,6 +605,7 @@ export class Inventory {
     const prepared = await this.previewCsvRows(actor, b.csv);
     if (prepared.rowErrors.length) {
       const run = await this.recordImportRun(actor, { commandId: b.commandId, source: 'CSV', digest, status: 'REJECTED', rowCount: prepared.rowCount, acceptedCount: 0, rowErrors: prepared.rowErrors });
+      if(run.status==='IMPORTED')return {...JSON.parse(run.result),importRunId:run.id};
       throw new DomainError('VALIDATION_ERROR', 'El CSV fue rechazado sin crear pedidos.', 400, { runId: run.id, rowErrors: prepared.rowErrors });
     }
     try {
@@ -606,9 +615,11 @@ export class Inventory {
         return { ...result, importRunId: run.id };
       });
     } catch (error) {
-      const failure = error instanceof DomainError ? error : new DomainError('IMPORT_FAILED', 'No se pudo confirmar la importación.', 409);
+      if (!(error instanceof DomainError) || error.status >= 500 || ['VERSION_CONFLICT','INVENTORY_CONFLICT'].includes(error.code)) throw error;
+      const failure = error;
       const rowErrors = [{ row: 0, field: 'csv', code: failure.code, message: failure.message }];
       const run = await this.recordImportRun(actor, { commandId: b.commandId, source: 'CSV', digest, status: 'REJECTED', rowCount: prepared.rowCount, acceptedCount: 0, rowErrors });
+      if(run.status==='IMPORTED')return {...JSON.parse(run.result),importRunId:run.id};
       throw new DomainError(failure.code, failure.message, failure.status, { runId: run.id, rowErrors });
     }
   }
@@ -702,6 +713,9 @@ export class Inventory {
         ensure(item, 'NOT_FOUND', `El código ${scan} no corresponde a una unidad pendiente del pedido y asignada a esta ruta.`, 404);
         planned[index] = item; claimed.add(item.actual_parcel_id);
       }
+      const loadingIds=planned.filter(item=>item.parcel_state!=='LOADED').map(item=>item.actual_parcel_id);
+      const loading=loadingIds.length?await this.store.all(`SELECT * FROM parcels WHERE org_id=? AND id IN (${loadingIds.map(()=>'?').join(',')})`,actor.orgId,...loadingIds):[];
+      await verifyVehicleCapacity(this.store,actor.orgId,vehicleId,loading);
       for (const item of planned) {
         ensure(await this.store.one('SELECT id FROM route_assignments WHERE org_id=? AND route_id=? AND parcel_id=? AND active=1', actor.orgId, route.id, item.actual_parcel_id), 'FORBIDDEN', 'La unidad no está asignada a esta ruta.', 403);
         if (item.parcel_state === 'LOADED' && item.custody_type === 'VEHICLE' && item.custody_id === vehicleId) { parcels.push({ id: item.actual_parcel_id, code: item.code, alreadyLoaded: true }); continue; }

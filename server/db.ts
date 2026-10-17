@@ -27,7 +27,7 @@ export class Store implements Database {
         this.db.exec(readFileSync(new URL('./migrations/003_tracking.sql', import.meta.url), 'utf8'));
         this.db.prepare('INSERT INTO schema_migrations VALUES(3,?)').run(new Date().toISOString());
       }
-      for(const [version,file] of [[4,'004_inventory.sql'],[5,'005_customer_access.sql'],[6,'006_quad_operations.sql'],[7,'007_inventory_imports.sql'],[8,'008_traccar.sql'],[9,'009_client_profiles.sql'],[10,'010_stable_client_providers.sql'],[11,'011_password_recovery.sql'],[12,'012_listing_indexes.sql'],[13,'013_recovery_audit.sql']] as const) {
+      for(const [version,file] of [[4,'004_inventory.sql'],[5,'005_customer_access.sql'],[6,'006_quad_operations.sql'],[7,'007_inventory_imports.sql'],[8,'008_traccar.sql'],[9,'009_client_profiles.sql'],[10,'010_stable_client_providers.sql'],[11,'011_password_recovery.sql'],[12,'012_listing_indexes.sql'],[13,'013_recovery_audit.sql'],[14,'014_staff_access.sql']] as const) {
         const path=new URL(`./migrations/${file}`,import.meta.url);
         if(existsSync(path)&&!this.db.prepare('SELECT version FROM schema_migrations WHERE version=?').get(version)) {
           this.db.exec(readFileSync(path,'utf8'));

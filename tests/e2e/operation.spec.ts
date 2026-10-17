@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {test,expect} from '@playwright/test';
 test.describe.configure({mode:'serial'});
-test('browser: setup, customer profile, catalog import, warehouse receipt, persistence and logout',async({page})=>{
+test('browser: setup, customer profile, catalog import, warehouse receipt, persistence and logout',async({page,browser})=>{
  const crashes:string[]=[];page.on('pageerror',e=>crashes.push(e.message));
  await page.goto('/');
  await page.getByLabel('Nombre de tu empresa logística').fill('Nexora QA aislada');
@@ -53,6 +53,22 @@ test('browser: setup, customer profile, catalog import, warehouse receipt, persi
  await page.getByRole('button',{name:'Empresa y equipo',exact:true}).click();
  await page.getByRole('button',{name:'Control del sistema',exact:true}).click();await page.getByRole('button',{name:'Comprobar ahora',exact:true}).click();
  await expect(page.getByText('Stock y movimientos coinciden.')).toBeVisible();
+ await page.getByRole('button',{name:'Equipo interno',exact:true}).click();
+ await page.getByRole('button',{name:'Agregar integrante',exact:true}).click();
+ await page.getByLabel('Nombre de la persona',{exact:true}).fill('Depósito E2E');
+ await page.getByLabel('Usuario de acceso',{exact:true}).fill('qa-staff-e2e');
+ await page.getByLabel(/^Contraseña inicial/).fill('QA-Staff-Browser-2026!');
+ await page.getByRole('dialog').getByRole('button',{name:'Guardar',exact:true}).click();
+ const staff=await browser.newContext({baseURL:'http://127.0.0.1:3039'});
+ try{
+  expect((await staff.request.post('/api/login',{headers:{'X-Requested-With':'logistics-os'},data:{username:'qa-staff-e2e',password:'QA-Staff-Browser-2026!'}})).ok()).toBeTruthy();
+  expect((await staff.request.get('/api/bootstrap')).status()).toBe(200);
+  const member=page.getByRole('row').filter({hasText:'qa-staff-e2e'});
+  await member.getByRole('button',{name:'Suspender',exact:true}).click();
+  await expect(member.getByText('Suspendido',{exact:true})).toBeVisible();
+  expect((await staff.request.get('/api/bootstrap')).status()).toBe(401);
+  await member.getByRole('button',{name:'Activar',exact:true}).click();await expect(member.getByText('Activo',{exact:true})).toBeVisible();
+ }finally{await staff.close();}
  await page.getByRole('button',{name:'Cerrar sesión',exact:true}).click();
  await expect(page.getByRole('heading',{name:'Bienvenido de nuevo'})).toBeVisible();
  await page.getByLabel('Usuario',{exact:true}).fill('qa-browser');await page.getByLabel('Contraseña',{exact:true}).fill('QA-Browser-Isolated-2026!');await page.getByRole('button',{name:'Ingresar',exact:true}).click();
@@ -87,6 +103,14 @@ test('browser: isolated API fixtures → dispatch → photo evidence → Nexora 
  await page.getByRole('button',{name:new RegExp(name)}).click();
  await page.getByRole('button',{name:'Despachar',exact:true}).click();
  await expect(page.getByText('Salida de ruta registrada.',{exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Registrar intento en esta parada',exact:true}).click();
+ await page.getByLabel('Fallido',{exact:true}).check();
+ await page.getByRole('combobox',{name:'Motivo del fallo',exact:true}).selectOption('ABSENT');
+ await page.getByLabel('Próxima acción',{exact:true}).fill('Nueva visita QA');
+ await page.getByRole('button',{name:'Guardar resultado',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Habilitar nuevo intento',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Habilitar nuevo intento',exact:true}).click();
+ await expect(page.getByText('Nuevo intento habilitado. Registrá el resultado de la nueva visita.',{exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Registrar intento en esta parada',exact:true}).click();
  await page.getByLabel('Entregado',{exact:true}).check();
  await page.getByLabel('Nombre de quien recibe',{exact:true}).fill('Receptor ficticio QA');

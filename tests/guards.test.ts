@@ -139,7 +139,7 @@ test('QA-16: chofer no consulta ni modifica rutas ajenas; bootstrap limitado', a
 test('Aislamiento de organización y claves foráneas compuestas', async (t) => {
     const f = await fixture(t), s = await f.shipment(), org = randomUUID(), user = randomUUID();
     await f.store.run('INSERT INTO organizations VALUES(?,?,?)', org, 'Otro operador QA', 'UTC');
-    await f.store.run('INSERT INTO users VALUES(?,?,?,?,?,?,NULL)', user, org, 'other-admin', 'Other', 'hash', 'ADMIN');
+    await f.store.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)', user, org, 'other-admin', 'Other', 'hash', 'ADMIN');
     const other: Actor = { id: user, orgId: org, role: 'ADMIN', name: 'Other', driverId: null };
     await f.rejects(async () => await f.d.parcel(s.parcels[0].id, other), 'NOT_FOUND');
     assert.equal((await f.d.bootstrap(other)).shipments.length, 0);

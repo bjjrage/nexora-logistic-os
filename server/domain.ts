@@ -6,6 +6,8 @@ import { ensure } from './errors.ts';
 import { validateRouteProvider, validateParcelRouteProvider } from './traccar.ts';
 import {schemas} from './validation.ts';
 import {saveClientProfile,clientProfileSummaries} from './client-profiles.ts';
+import {latestParcelAssignment} from './driver-access.ts';
+import {verifyVehicleCapacity} from './vehicle-capacity.ts';
 const now = () => new Date().toISOString();
 const canonical = (value: any): string => JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 const OPS: Role[] = ['ADMIN', 'OPERATIONS'];
@@ -30,7 +32,7 @@ export class Logistics {
     async parcel(id: string, actor: Actor) {
         const parcel = await this.record('parcels', id, actor);
         if (actor.role === 'DRIVER')
-            ensure(await this.store.one('SELECT a.id FROM route_assignments a JOIN routes r ON r.id=a.route_id WHERE a.parcel_id=? AND r.driver_id=? AND r.org_id=?', id, actor.driverId, actor.orgId), 'FORBIDDEN', 'El bulto no está asignado a este chofer.', 403);
+            ensure(await this.store.one(`SELECT a.id FROM route_assignments a JOIN routes r ON r.id=a.route_id AND r.org_id=a.org_id WHERE a.parcel_id=? AND r.driver_id=? AND r.org_id=? AND ${latestParcelAssignment}`, id, actor.driverId, actor.orgId), 'FORBIDDEN', 'El bulto no está asignado a este chofer.', 403);
         return parcel;
     }
     async command(actor: Actor, operation: string, input: Row, roles: Role[], work: () => Row | Promise<Row>) {
@@ -79,7 +81,7 @@ export class Logistics {
             ensure(!await this.store.one('SELECT id FROM customer_accounts WHERE username=?',b.username),'VALIDATION_ERROR','El nombre de usuario ya existe.',409);
             const id = randomUUID();
             await this.store.run('INSERT INTO drivers VALUES(?,?,?,1)', id, actor.orgId, b.name);
-            await this.store.run('INSERT INTO users VALUES(?,?,?,?,?,?,?)', randomUUID(), actor.orgId, b.username, b.name, passwordHash(b.password), 'DRIVER', id);
+            await this.store.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,?)', randomUUID(), actor.orgId, b.username, b.name, passwordHash(b.password), 'DRIVER', id);
             return { id };
         });
     }
@@ -87,7 +89,7 @@ export class Logistics {
         return await this.command(actor, 'users.create', b, ['ADMIN'], async () => {
             ensure(!await this.store.one('SELECT id FROM customer_accounts WHERE username=?',b.username),'VALIDATION_ERROR','El nombre de usuario ya existe.',409);
             const id = randomUUID();
-            await this.store.run('INSERT INTO users VALUES(?,?,?,?,?,?,NULL)', id, actor.orgId, b.username, b.name, passwordHash(b.password), b.role);
+            await this.store.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)', id, actor.orgId, b.username, b.name, passwordHash(b.password), b.role);
             return { id };
         });
     }
@@ -218,6 +220,9 @@ export class Logistics {
             return { id, state: 'READY', version: r.version + 1 };
         });
     }
+    async vehicleCapacity(actor:Actor,vehicleId:string,additional:Row[]=[]){
+        await verifyVehicleCapacity(this.store,actor.orgId,vehicleId,additional);
+    }
     async load(actor: Actor, id: string, b: Row) {
         return await this.command(actor, `routes.${id}.load`, b, DEPOT, async () => {
             const r = await this.route(id, actor, b.expectedVersion);
@@ -227,6 +232,7 @@ export class Logistics {
             if (p.state === 'LOADED' && p.custody_type === 'VEHICLE' && p.custody_id === r.vehicle_id)
                 return { id, alreadyLoaded: true, version: r.version };
             ensure(['RECEIVED', 'RETURNED_TO_DEPOT'].includes(p.state) && p.custody_type === 'DEPOT', 'INVALID_TRANSITION', 'El bulto no está en depósito.');
+            await this.vehicleCapacity(actor,r.vehicle_id,[p]);
             await this.move(p, actor, 'LOADED', 'VEHICLE', r.vehicle_id, 'LOADED', b.commandId);
             await this.bump(id);
             return { id, version: r.version + 1 };
@@ -235,6 +241,7 @@ export class Logistics {
     async fleetGuard(r: Row, actor: Actor) {
         const v = await this.record('vehicles', r.vehicle_id, actor), d = await this.record('drivers', r.driver_id, actor);
         ensure(v.available && d.available, 'INVALID_TRANSITION', 'Chofer o vehículo no disponible.');
+        ensure(await this.store.one('SELECT id FROM users WHERE org_id=? AND driver_id=? AND enabled=1',actor.orgId,d.id),'INVALID_TRANSITION','El acceso del chofer está suspendido.');
         ensure(!await this.store.one("SELECT id FROM defects WHERE vehicle_id=? AND state='OPEN' AND severity='CRITICAL'", v.id), 'INVALID_TRANSITION', 'Hay un defecto crítico abierto.');
         ensure(!await this.store.one('SELECT id FROM vehicle_documents WHERE vehicle_id=? AND blocks_dispatch=1 AND expires_at<=?', v.id, now()), 'INVALID_TRANSITION', 'Hay documentación impeditiva vencida.');
         ensure(!await this.store.one('SELECT id FROM driver_documents WHERE driver_id=? AND blocks_dispatch=1 AND expires_at<=?', d.id, now()), 'INVALID_TRANSITION', 'Hay documentación impeditiva del chofer vencida.');
@@ -249,6 +256,7 @@ export class Logistics {
             await validateRouteProvider(this.store,actor.orgId,id);
             ensure(now() >= r.start_at && now() <= r.end_at, 'INVALID_TRANSITION', 'El despacho está fuera de la ventana de trabajo.');
             await this.capacity(r, actor);
+            await this.vehicleCapacity(actor,r.vehicle_id);
             await this.fleetGuard(r, actor);
             const assigned = await this.store.all('SELECT p.*,a.pickup FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id WHERE a.route_id=? AND a.active=1', id);
             ensure(assigned.every(p => p.pickup ? p.state === 'EXPECTED' && p.custody_type === 'SENDER' : p.state === 'LOADED' && p.custody_type === 'VEHICLE' && p.custody_id === r.vehicle_id), 'INVALID_TRANSITION', 'El manifiesto no está reconciliado: faltan bultos por cargar.');
@@ -270,10 +278,7 @@ export class Logistics {
                 ensure(p.state === 'EXPECTED' && p.custody_type === 'SENDER', 'INVALID_TRANSITION', 'La custodia del bulto cambió.');
                 return p;
             }));
-            const actualLoad = await this.store.all("SELECT * FROM parcels WHERE org_id=? AND custody_type='VEHICLE' AND custody_id=?", actor.orgId, r.vehicle_id);
-            const vehicle = await this.record('vehicles', r.vehicle_id, actor), load = [...actualLoad, ...pickupParcels];
-            ensure(load.every(p => p.weight_grams !== null && p.volume_cm3 !== null), 'VALIDATION_ERROR', 'La carga real tiene medidas desconocidas.', 400);
-            ensure(load.reduce((sum, p) => sum + p.weight_grams, 0) <= vehicle.capacity_weight_grams && load.reduce((sum, p) => sum + p.volume_cm3, 0) <= vehicle.capacity_volume_cm3, 'CAPACITY_EXCEEDED', 'La carga real excede la capacidad, incluyendo entregas fallidas que siguen a bordo.');
+            await this.vehicleCapacity(actor,r.vehicle_id,pickupParcels);
             for (const p of pickupParcels) {
                 await this.move(p, actor, 'IN_TRANSIT', 'VEHICLE', r.vehicle_id, 'DIRECT_PICKUP', b.commandId);
             }
@@ -288,10 +293,22 @@ export class Logistics {
         ensure(!parcelId || e.parcel_id === parcelId, 'EVIDENCE_REQUIRED', 'La evidencia no corresponde al bulto.');
         return e;
     }
+    async retryDelivery(actor:Actor,stopId:string,b:Row){
+        return this.command(actor,`stops.${stopId}.retry`,b,ROAD,async()=>{
+            const stop=await this.record('stops',stopId,actor),r=await this.route(stop.route_id,actor,b.expectedVersion);
+            ensure(r.state==='IN_PROGRESS'&&stop.kind==='DELIVERY'&&['FAILED','PARTIAL'].includes(stop.state),'INVALID_TRANSITION','La parada no admite un nuevo intento.');
+            const parcels=await this.store.all("SELECT p.* FROM parcels p JOIN route_assignments a ON a.parcel_id=p.id AND a.org_id=p.org_id WHERE a.route_id=? AND a.active=1 AND p.shipment_id=? AND p.state='RETURN_PENDING' AND p.custody_type='VEHICLE' AND p.custody_id=? AND NOT EXISTS(SELECT 1 FROM returns ret WHERE ret.parcel_id=p.id AND ret.state<>'SENT_TO_SENDER')",r.id,stop.shipment_id,r.vehicle_id);
+            ensure(parcels.length,'INVALID_TRANSITION','No hay bultos fallidos que admitan reintento; completá las devoluciones autorizadas.');
+            for(const parcel of parcels)await this.move(parcel,actor,'IN_TRANSIT','VEHICLE',r.vehicle_id,'DELIVERY_RETRY',b.commandId);
+            await this.store.run("UPDATE stops SET state='PARTIAL' WHERE id=?",stopId);
+            await this.bump(r.id);
+            return {id:stopId,version:r.version+1,retryCount:parcels.length};
+        });
+    }
     async attempt(actor: Actor, stopId: string, b: Row) {
         return await this.command(actor, `stops.${stopId}.attempt`, b, ROAD, async () => {
             const stop = await this.record('stops', stopId, actor), r = await this.route(stop.route_id, actor, b.expectedVersion);
-            ensure(r.state === 'IN_PROGRESS' && stop.kind === 'DELIVERY', 'INVALID_TRANSITION', 'La parada no está habilitada para entrega.');
+            ensure(r.state === 'IN_PROGRESS' && stop.kind === 'DELIVERY' && ['PENDING','PARTIAL'].includes(stop.state), 'INVALID_TRANSITION', 'La parada no está habilitada para entrega. Para repetir una visita fallida, habilitá un nuevo intento.');
             ensure(!await this.store.one("SELECT id FROM stops WHERE route_id=? AND sequence<? AND state NOT IN('COMPLETED','FAILED')", r.id, stop.sequence), 'INVALID_TRANSITION', 'Completá las paradas anteriores.');
             const delivered = [...new Set<string>(b.deliveredParcelIds)], failed = [...new Set<string>(b.failedParcelIds)];
             ensure(delivered.length + failed.length > 0 && !delivered.some(p => failed.includes(p)), 'VALIDATION_ERROR', 'Seleccioná resultados distintos por bulto.', 400);
@@ -303,7 +320,7 @@ export class Logistics {
             for (const parcelId of [...delivered, ...failed]) {
                 const p = await this.parcel(parcelId, actor);
                 ensure(p.shipment_id === stop.shipment_id && await this.store.one('SELECT id FROM route_assignments WHERE route_id=? AND parcel_id=? AND active=1', r.id, p.id), 'FORBIDDEN', 'El bulto no está en esta parada.', 403);
-                ensure(['IN_TRANSIT', 'RETURN_PENDING'].includes(p.state) && p.custody_type === 'VEHICLE' && p.custody_id === r.vehicle_id, 'INVALID_TRANSITION', 'El bulto no está en custodia del vehículo.');
+                ensure(p.state === 'IN_TRANSIT' && p.custody_type === 'VEHICLE' && p.custody_id === r.vehicle_id, 'INVALID_TRANSITION', 'El bulto no admite este intento; habilitá el reintento si la visita anterior falló.');
                 ensure(!await this.store.one("SELECT id FROM returns WHERE parcel_id=? AND state<>'SENT_TO_SENDER'", p.id), 'INVALID_TRANSITION', 'La devolución autorizada debe completarse.');
                 const quad=await this.store.one('SELECT * FROM quad_parcel_links WHERE org_id=? AND parcel_id=?',actor.orgId,p.id);
                 const inventory=await this.store.one('SELECT id FROM inventory_order_parcels WHERE org_id=? AND parcel_id=?',actor.orgId,p.id);
@@ -483,8 +500,15 @@ export class Logistics {
         const s=this.store, cap=500;
         const tables=['clients','drivers','vehicles','shipments','parcels','routes','stops','route_assignments','incidents','returns','defects','vehicle_documents','driver_documents','inspections','maintenance','attempts','custody_events','audit'];
         const driver=actor.role==='DRIVER';
-        const driverFilters:Record<string,string>={routes:'AND driver_id=?',drivers:'AND id=?',route_assignments:'AND route_id IN(SELECT id FROM routes WHERE driver_id=?)',stops:'AND route_id IN(SELECT id FROM routes WHERE driver_id=?)',incidents:'AND route_id IN(SELECT id FROM routes WHERE driver_id=?)',returns:'AND route_id IN(SELECT id FROM routes WHERE driver_id=?)',parcels:'AND id IN(SELECT a.parcel_id FROM route_assignments a JOIN routes r ON r.id=a.route_id AND r.org_id=a.org_id WHERE r.driver_id=?)',shipments:'AND id IN(SELECT p.shipment_id FROM parcels p JOIN route_assignments a ON a.parcel_id=p.id AND a.org_id=p.org_id JOIN routes r ON r.id=a.route_id AND r.org_id=a.org_id WHERE r.driver_id=?)'};
-        Object.assign(driverFilters,{vehicles:'AND id IN(SELECT vehicle_id FROM routes WHERE driver_id=?)',driver_documents:'AND driver_id=?',attempts:'AND stop_id IN(SELECT s.id FROM stops s JOIN routes r ON r.id=s.route_id AND r.org_id=s.org_id WHERE r.driver_id=?)',custody_events:'AND parcel_id IN(SELECT a.parcel_id FROM route_assignments a JOIN routes r ON r.id=a.route_id AND r.org_id=a.org_id WHERE r.driver_id=?)'});
+        const ownParcels=`(SELECT a.parcel_id FROM route_assignments a JOIN routes r ON r.id=a.route_id AND r.org_id=a.org_id WHERE r.driver_id=? AND ${latestParcelAssignment})`;
+        const driverFilters:Record<string,string>={
+            routes:'AND driver_id=?',drivers:'AND id=?',route_assignments:'AND route_id IN(SELECT id FROM routes WHERE driver_id=?)',
+            stops:'AND route_id IN(SELECT id FROM routes WHERE driver_id=?)',incidents:'AND route_id IN(SELECT id FROM routes WHERE driver_id=?)',returns:'AND route_id IN(SELECT id FROM routes WHERE driver_id=?)',
+            parcels:`AND id IN ${ownParcels}`,shipments:`AND id IN(SELECT p.shipment_id FROM parcels p WHERE p.id IN ${ownParcels})`,
+            vehicles:'AND id IN(SELECT vehicle_id FROM routes WHERE driver_id=?)',driver_documents:'AND driver_id=?',
+            attempts:'AND stop_id IN(SELECT s.id FROM stops s JOIN routes r ON r.id=s.route_id AND r.org_id=s.org_id WHERE r.driver_id=?)',
+            custody_events:`AND parcel_id IN ${ownParcels}`
+        };
         const collections=Object.fromEntries(await Promise.all(tables.map(async table=>{const filter=driver?driverFilters[table]:undefined;const order=table==='routes'?"CASE state WHEN 'IN_PROGRESS' THEN 0 WHEN 'READY' THEN 1 WHEN 'DRAFT' THEN 2 ELSE 3 END, rowid DESC":'rowid DESC';return [table,await s.all('SELECT * FROM '+table+' WHERE org_id=? '+(filter??'')+' ORDER BY '+order+' LIMIT ?',actor.orgId,...(filter?[actor.driverId!]:[]),cap)];}))) as Record<string,Row[]>;
         const totals=await s.all(tables.concat('evidence').map(table=>"SELECT '"+table+"' AS collection,COUNT(*) AS n FROM "+table+' WHERE org_id=?').join(' UNION ALL '),...tables.concat('evidence').map(()=>actor.orgId));
         const limitedCollections=totals.filter(row=>row.n>cap);
@@ -525,7 +549,7 @@ export class Logistics {
             evidence:evidence.filter(x=>actor.role!=='DRIVER'||parcelIds.has(x.parcel_id)).map(camel),
             audit:all('audit').filter(x=>actor.role!=='DRIVER'||x.actor_id===actor.id).map(camel),
             tracking:{status:'PROVIDERS_AVAILABLE',message:'QuadMinds para Universo. Traccar para los repartos propios de Nexora.'},
-            limits:{perCollection:cap,hasMore:limitedCollections.length>0,message:'Vista limitada a los ?ltimos 500 registros por colecci?n. Los conteos corresponden a la vista cargada; consult? /api/shipments para paginar env?os.'}
+            limits:{perCollection:cap,hasMore:limitedCollections.length>0,message:'Vista limitada a los últimos 500 registros por colección. Los conteos corresponden a la vista cargada; consultá /api/shipments para paginar envíos.'}
         };
     }
 }

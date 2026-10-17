@@ -188,7 +188,7 @@ test('otro tenant no puede leer evidencia existente', async (t) => {
     const foreignUserId = randomUUID();
     const foreignPassword = 'Password-QA-foreign-2026!';
     await f.store.run('INSERT INTO organizations VALUES(?,?,?)', foreignOrgId, 'Organización ajena QA', 'UTC');
-    await f.store.run('INSERT INTO users VALUES(?,?,?,?,?,?,NULL)', foreignUserId, foreignOrgId, 'foreign-v2', 'Usuario ajeno QA', passwordHash(foreignPassword), 'ADMIN');
+    await f.store.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)', foreignUserId, foreignOrgId, 'foreign-v2', 'Usuario ajeno QA', passwordHash(foreignPassword), 'ADMIN');
     const base = await startHttp(t, f);
     const cookie = await login(base, 'foreign-v2', foreignPassword);
     const response = await request(base, `/api/evidence/${evidence.id}`, { cookie });

@@ -11,7 +11,7 @@ test('Supabase: ficha privada, contrato JSON, actualización parcial y permisos;
   await store.verify();
   await assert.rejects(store.transaction(async()=>{
    await store.run('INSERT INTO organizations VALUES(?,?,?)',orgId,'QA ficha cliente rollback','America/Asuncion');
-   await store.run('INSERT INTO users VALUES(?,?,?,?,?,?,NULL)',userId,orgId,'qa-profile-'+userId,'QA',passwordHash(randomUUID()),'ADMIN');
+   await store.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)',userId,orgId,'qa-profile-'+userId,'QA',passwordHash(randomUUID()),'ADMIN');
    const actor:Actor={id:userId,orgId,name:'QA',role:'ADMIN',driverId:null},domain=new Logistics(store);
    const body={commandId:randomUUID(),name:'Cliente QA',legalName:'Empresa ficticia QA',taxId:'QA-'+randomUUID(),contactName:'Contacto ficticio',phone:'+595000000000',email:'qa@example.test',address:'Dirección ficticia',city:'QA',notes:'Prueba de privacidad'};
    const client=await domain.createClient(actor,body);assert.deepEqual(await domain.createClient(actor,body),client);

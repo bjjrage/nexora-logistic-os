@@ -11,7 +11,7 @@ test('Supabase: empresa, equipo y cliente mantienen su jerarquía y sus identida
  try{
   await assert.rejects(store.transaction(async()=>{
    await store.run('INSERT INTO organizations VALUES(?,?,?)',org,'Universo QA','America/Asuncion');
-   await store.run("INSERT INTO users VALUES(?,?,?,?,?,'ADMIN',NULL)",user,org,'qa-company-'+user,'QA',passwordHash(randomUUID()));
+   await store.run("INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,'ADMIN',NULL)",user,org,'qa-company-'+user,'QA',passwordHash(randomUUID()));
    const actor:Actor={id:user,orgId:org,name:'QA',role:'ADMIN',driverId:null},domain=new Logistics(store),company=new CompanyAdministration(store);
    const client=(await domain.createClient(actor,{commandId:randomUUID(),name:'Universo QA'})).id;
    await company.update(actor,{commandId:randomUUID(),name:'Nexora QA',timezone:'America/Asuncion'});

@@ -1,0 +1,68 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {PostgresStore} from '../server/postgres.ts';
+import {Logistics} from '../server/domain.ts';
+import {Inventory} from '../server/inventory.ts';
+import {CompanyAdministration} from '../server/company.ts';
+import {passwordHash,hash,actorFromRequest,type Actor} from '../server/auth.ts';
+import {configureDelivery} from './support/delivery-policy.ts';
+
+test('PostgreSQL aislado: revocación, última asignación, capacidad real y reintento explícito',async()=>{
+ const connection=process.env.DATABASE_URL??'',url=new URL(connection);
+ assert.ok(['localhost','127.0.0.1'].includes(url.hostname)&&url.pathname==='/nexora_test','Solo nexora_test local');
+ const store=new PostgresStore(connection),rollback=new Error('ROLLBACK_AUDIT_FIXES'),orgId=randomUUID(),id=randomUUID(),command=()=>({commandId:randomUUID()});
+ try{
+  await store.verify();
+  await assert.rejects(store.transaction(async()=>{
+   await store.run('INSERT INTO organizations VALUES(?,?,?)',orgId,'QA audit isolated','UTC');
+   await store.run("INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,'ADMIN',NULL)",id,orgId,'qa-'+id,'QA admin',passwordHash(randomUUID()));
+   const actor:Actor={id,orgId,name:'QA',role:'ADMIN',driverId:null},domain=new Logistics(store),inventory=new Inventory(store),company=new CompanyAdministration(store);
+   const user=(await domain.createUser(actor,{...command(),name:'QA depot',username:'qa-'+randomUUID(),password:randomUUID(),role:'DEPOT'})).id;
+   const token='a'.repeat(64);await store.run('INSERT INTO sessions VALUES(?,?,?)',hash(token),user,new Date(Date.now()+60000).toISOString());
+   const req={headers:{cookie:'logistics_session='+token}} as any;
+   assert.equal((await actorFromRequest(store,req))!.id,user);
+   await company.setAccess(actor,user,{...command(),enabled:false});assert.equal(await actorFromRequest(store,req),null);
+   assert.equal((await store.one('SELECT enabled FROM users WHERE id=?',user))!.enabled,0);
+   const clientId=(await domain.createClient(actor,{...command(),name:'QA client'})).id;await configureDelivery(store,actor,clientId);
+   const driverId=(await domain.createDriver(actor,{...command(),name:'QA driver',username:'qa-'+randomUUID(),password:randomUUID()})).id;
+   const vehicleId=(await domain.createVehicle(actor,{...command(),plate:'QA '+id,capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0})).id;
+   const shipmentId=(await domain.createShipment(actor,{...command(),clientId,reference:'QA',originText:'QA',destinationText:'QA',recipientName:'QA',recipientPhone:'',proofPolicy:'RECEIVER',parcelCount:1,weightGrams:8000,volumeCm3:1000})).id;
+   const p=(await store.one('SELECT * FROM parcels WHERE shipment_id=?',shipmentId))!;
+   const routeId=(await domain.createRoute(actor,{...command(),name:'QA route',driverId,vehicleId,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+600000).toISOString()})).id;
+   const version=async()=>(await store.one('SELECT version FROM routes WHERE id=?',routeId))!.version;
+   await domain.receive(actor,{...command(),shipmentId,codes:[p.code],location:'QA'});
+   await domain.assign(actor,routeId,{...command(),expectedVersion:await version(),parcelIds:[p.id],pickup:false});
+   await domain.ready(actor,routeId,{...command(),expectedVersion:await version()});await domain.load(actor,routeId,{...command(),expectedVersion:await version(),code:p.code});
+   await domain.inspect(actor,vehicleId,{...command(),odometer:0,fuelPercent:80,items:[{label:'QA',severity:'OK',note:''}]});
+   await domain.dispatch(actor,routeId,{...command(),expectedVersion:await version()});
+   const stop=(await store.one("SELECT id FROM stops WHERE route_id=? AND kind='DELIVERY'",routeId))!;
+   await domain.attempt(actor,stop.id,{...command(),expectedVersion:await version(),deliveredParcelIds:[],failedParcelIds:[p.id],receiverName:'',evidenceIds:[],reasonCode:'ABSENT',nextAction:'Volver'});
+   const failedVersion=await version();
+   await assert.rejects(()=>domain.attempt(actor,stop.id,{...command(),expectedVersion:failedVersion,deliveredParcelIds:[],failedParcelIds:[p.id],receiverName:'',evidenceIds:[],reasonCode:'ABSENT',nextAction:'Volver'}),{code:'INVALID_TRANSITION'});
+   await domain.retryDelivery(actor,stop.id,{...command(),expectedVersion:await version()});
+   await domain.attempt(actor,stop.id,{...command(),expectedVersion:await version(),deliveredParcelIds:[p.id],failedParcelIds:[],receiverName:'QA',evidenceIds:[],reasonCode:'',nextAction:''});
+   const driver=(await store.one('SELECT id FROM users WHERE driver_id=?',driverId))!,driverActor:Actor={...actor,id:driver.id,role:'DRIVER',driverId};
+   assert.equal((await domain.bootstrap(driverActor)).parcels.length,1);
+   const otherDriver=(await domain.createDriver(actor,{...command(),name:'QA second',username:'qa-'+randomUUID(),password:randomUUID()})).id;
+   const otherRoute=(await domain.createRoute(actor,{...command(),name:'QA reassigned',driverId:otherDriver,vehicleId,startAt:new Date(Date.now()+3600000).toISOString(),endAt:new Date(Date.now()+7200000).toISOString()})).id;
+   await store.run('INSERT INTO route_assignments VALUES(?,?,?,?,0,1)',randomUUID(),orgId,otherRoute,p.id);
+   await assert.rejects(()=>domain.parcel(p.id,driverActor),{code:'FORBIDDEN'});
+   assert.equal((await domain.bootstrap(driverActor)).parcels.length,0);
+   await store.run("UPDATE parcels SET state='IN_TRANSIT',custody_type='VEHICLE',custody_id=? WHERE id=?",vehicleId,p.id);
+   await assert.rejects(()=>domain.vehicleCapacity(actor,vehicleId,[{id:'extra',weight_grams:8000,volume_cm3:1000}]),{code:'CAPACITY_EXCEEDED'});
+   const locationId=(await inventory.createLocation(actor,{...command(),code:'QA',name:'QA'})).id;
+   const product=(await inventory.createProduct(actor,{...command(),clientId,sku:'QA',name:'QA',tracking:'QUANTITY'})).id;
+   const input={...command(),orders:[{clientId,externalId:'QA import',orderDate:'2026-10-17',destination:'QA',recipientName:'QA',lines:[{productId:product,quantity:1}]}]};
+   const original=store.run.bind(store);let fail=true;
+   store.run=async(sql,...args)=>{if(fail&&sql.includes('INSERT INTO inventory_import_runs')){fail=false;throw new Error('QA transient');}return original(sql,...args);};
+   await assert.rejects(()=>inventory.importOrders(actor,input),/QA transient/);
+   assert.equal((await store.one('SELECT COUNT(*) n FROM inventory_import_runs WHERE org_id=?',orgId))!.n,0);
+   assert.equal((await inventory.importOrders(actor,input)).imported,1);
+   await inventory.updateLocation(actor,locationId,{...command(),active:false});
+   await assert.rejects(()=>inventory.adjust(actor,{...command(),clientId,productId:product,locationId,quantityDelta:1,reason:'QA'}),{code:'INVALID_TRANSITION'});
+   throw rollback;
+  }),e=>e===rollback);
+  assert.equal(await store.one('SELECT id FROM organizations WHERE id=?',orgId),undefined);
+ }finally{await store.close();}
+});

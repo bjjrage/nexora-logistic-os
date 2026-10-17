@@ -434,9 +434,10 @@ test('evidencia ausente no cambia estado; intento fallido y reintento exitoso co
             nextAction: 'Reintentar entrega',
         }));
         assert.equal((await harness.store.one('SELECT state FROM parcels WHERE id=?', parcel.id))!.state, 'RETURN_PENDING');
+        const reopened = ok(await harness.client.post(`/api/stops/${stop.id}/retry`, { expectedVersion: failed.version }));
         const evidenceId = await uploadPhoto(harness.client, parcel.id, 'reintento-P1.png', [120, 70, 230]);
         const succeeded = ok(await harness.client.post(`/api/stops/${stop.id}/attempts`, {
-            expectedVersion: failed.version,
+            expectedVersion: reopened.version,
             deliveredParcelIds: [parcel.id],
             failedParcelIds: [],
             receiverName: 'Receptor QA',
@@ -453,7 +454,7 @@ test('evidencia ausente no cambia estado; intento fallido y reintento exitoso co
         assert.deepEqual(results.map(item => item.result), ['FAILED', 'DELIVERED']);
         assert.equal((await harness.store.one('SELECT state FROM incidents WHERE parcel_id=?', parcel.id))!.state, 'RESOLVED');
         const actions = (await harness.store.all('SELECT action FROM custody_events WHERE parcel_id=? ORDER BY rowid', parcel.id)).map(item => item.action);
-        assert.deepEqual(actions.slice(-2), ['DELIVERY_FAILED', 'DELIVERED']);
+        assert.deepEqual(actions.slice(-3), ['DELIVERY_FAILED', 'DELIVERY_RETRY', 'DELIVERED']);
     }
     finally {
         await harness.dispose();

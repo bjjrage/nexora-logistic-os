@@ -17,7 +17,7 @@ test('Supabase: catálogo masivo preserva ceros, idempotencia, stock y totales; 
   try {
     await assert.rejects(store.transaction(async()=>{
       await store.run('INSERT INTO organizations VALUES(?,?,?)',orgId,'QA catálogo temporal','UTC');
-      await store.run('INSERT INTO users VALUES(?,?,?,?,?,?,NULL)',userId,orgId,'qa-'+randomUUID(),'QA catálogo',passwordHash('QA-Catalog-Postgres-2026!'),'ADMIN');
+      await store.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)',userId,orgId,'qa-'+randomUUID(),'QA catálogo',passwordHash('QA-Catalog-Postgres-2026!'),'ADMIN');
       const actor:Actor={id:userId,orgId,name:'QA catálogo',role:'ADMIN',driverId:null},inventory=new Inventory(store),catalog=new CatalogImport(store),domain=new Logistics(store);
       const clientId=(await domain.createClient(actor,{commandId:randomUUID(),name:'QA catálogo dueño'})).id;
       const header='sku,nombre,codigoBarras,seguimiento,unidad,pesoKg,volumenM3,Marca,Stock';
@@ -44,7 +44,7 @@ test('Supabase: CSV rechazado guarda errores por fila, no crea pedidos y reinten
   try{
     await assert.rejects(store.transaction(async()=>{
       await store.run('INSERT INTO organizations VALUES(?,?,?)',orgId,'QA rejected import','UTC');
-      await store.run('INSERT INTO users VALUES(?,?,?,?,?,?,NULL)',userId,orgId,'qa-'+randomUUID(),'QA import',passwordHash('QA-Import-Postgres-2026!'),'ADMIN');
+      await store.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)',userId,orgId,'qa-'+randomUUID(),'QA import',passwordHash('QA-Import-Postgres-2026!'),'ADMIN');
       const actor:Actor={id:userId,orgId,name:'QA import',role:'ADMIN',driverId:null},domain=new Logistics(store),inventory=new Inventory(store),command=()=>({commandId:randomUUID()});
       const clientId=(await domain.createClient(actor,{...command(),name:'QA import owner'})).id;
       await inventory.createProduct(actor,{...command(),clientId,sku:'QA-IMPORT',name:'QA import item',tracking:'QUANTITY'});
@@ -106,7 +106,7 @@ test('Supabase: recepción, concurrencia protegida por constraints, despacho, fo
   try {
     await assert.rejects(db.transaction(async()=>{
       await db.run('INSERT INTO organizations VALUES(?,?,?)',orgId,'QA temporal PostgreSQL','UTC');
-      await db.run('INSERT INTO users VALUES(?,?,?,?,?,?,NULL)',userId,orgId,'qa-'+randomUUID(),'QA',passwordHash('QA-Postgres-Only-2026!'),'ADMIN');
+      await db.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)',userId,orgId,'qa-'+randomUUID(),'QA',passwordHash('QA-Postgres-Only-2026!'),'ADMIN');
       const actor:Actor={id:userId,orgId,name:'QA',role:'ADMIN',driverId:null},domain=new Logistics(db);
       const client=await domain.createClient(actor,{...command(),name:'Cliente QA temporal'});
       await configureDelivery(db, actor, client.id);

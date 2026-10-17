@@ -27,7 +27,7 @@ test('Supabase tracking: guardar y releer asignaciones conserva el contrato JSON
  try{
   await assert.rejects(store.transaction(async()=>{
    await store.run('INSERT INTO organizations VALUES(?,?,?)',org,'QA contrato tracking rollback','America/Asuncion');
-   await store.run("INSERT INTO users VALUES(?,?,?,?,?,'ADMIN',NULL)",user,org,'qa-tracking-'+user,'QA',passwordHash(randomUUID()));
+   await store.run("INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,'ADMIN',NULL)",user,org,'qa-tracking-'+user,'QA',passwordHash(randomUUID()));
    const actor:Actor={id:user,orgId:org,name:'QA',role:'ADMIN',driverId:null},domain=new Logistics(store),tracking=new TraccarTracking(store);
    const vehicle=(await domain.createVehicle(actor,{...command(),plate:'QA-'+randomUUID(),capacityWeightGrams:1000,capacityVolumeCm3:1000,odometer:0})).id;
    const device=String(Math.floor(Math.random()*1000000000)+2000000000);
