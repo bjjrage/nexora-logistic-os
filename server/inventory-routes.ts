@@ -12,6 +12,9 @@ const queryString = (value: unknown): string | undefined => typeof value === 'st
 export function installInventoryRoutes(app: Express, store: Database, auth: InventoryAuth) {
   const inventory = new Inventory(store);
   const catalog = new CatalogImport(store);
+  app.get('/api/inventory/products',async(req,res)=>res.json(await inventory.catalogPage(await actorForInventory(auth,req),req.query)));
+  app.get('/api/inventory/stock',async(req,res)=>res.json(await inventory.stockPage(await actorForInventory(auth,req),req.query)));
+  app.get('/api/inventory/lookup',async(req,res)=>res.json(await inventory.lookupCode(await actorForInventory(auth,req),req.query)));
   app.get('/api/inventory/catalog/template.csv', async (req, res) => {
     const csv = catalog.templateCsv(await actorForInventory(auth, req));
     res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="nexora-catalog-template.csv"' }).send(csv);
@@ -33,7 +36,7 @@ export function installInventoryRoutes(app: Express, store: Database, auth: Inve
   app.post('/api/inventory/movements', async (req, res) => res.json(await inventory.move(await actorForInventory(auth, req), inventorySchemas.move.parse(req.body))));
   app.post('/api/inventory/adjustments', async (req, res) => res.json(await inventory.adjust(await actorForInventory(auth, req), inventorySchemas.adjust.parse(req.body))));
 
-  app.get(['/api/orders', '/api/orders/read'], async (req, res) => res.json(await inventory.orders(await actorForInventory(auth, req), queryString(req.query.clientId))));
+  app.get(['/api/orders', '/api/orders/read'], async (req, res) => res.json(await inventory.orders(await actorForInventory(auth, req), queryString(req.query.clientId),req.query)));
   app.get('/api/orders/:id', async (req, res) => res.json(await inventory.order(await actorForInventory(auth, req), String(req.params.id))));
   app.post('/api/orders', async (req, res) => res.status(201).json(await inventory.createOrder(await actorForInventory(auth, req), inventorySchemas.order.parse(req.body))));
   app.patch('/api/orders/:id', async (req, res) => res.json(await inventory.updateOrder(await actorForInventory(auth, req), String(req.params.id), inventorySchemas.orderUpdate.parse(req.body))));

@@ -12,8 +12,8 @@ export function publicMigrationErrors(sql: string): string[] {
     const table = match[2], object = `(?:public\\.)?${table}\\b`;
     const requirements: [string, RegExp][] = [
       ['RLS', new RegExp(`ALTER\\s+TABLE\\s+${object}\\s+ENABLE\\s+ROW\\s+LEVEL\\s+SECURITY`, 'i')],
-      ['REVOKE', new RegExp(`REVOKE\\s+[^;]+?\\s+ON\\s+(?:TABLE\\s+)?${object}\\s+FROM\\s+`, 'i')],
-      ['GRANT', new RegExp(`GRANT\\s+[^;]+?\\s+ON\\s+(?:TABLE\\s+)?${object}\\s+TO\\s+`, 'i')],
+      ['REVOKE', new RegExp(`REVOKE\\s+[^;]+?\\s+ON\\s+(?:TABLE\\s+)?(?:[\\w.]+\\s*,\\s*)*${object}(?:\\s*,\\s*[\\w.]+)*\\s+FROM\\s+`, 'i')],
+      ['GRANT', new RegExp(`GRANT\\s+[^;]+?\\s+ON\\s+(?:TABLE\\s+)?(?:[\\w.]+\\s*,\\s*)*${object}(?:\\s*,\\s*[\\w.]+)*\\s+TO\\s+`, 'i')],
     ];
     for (const [name, rule] of requirements) if (!rule.test(source)) errors.push(`public.${table}: falta ${name} explícito en la migración`);
   }

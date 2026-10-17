@@ -1,0 +1,34 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID,randomBytes} from 'node:crypto';
+import {Store} from '../server/db.ts';
+import {setup,hash} from '../server/auth.ts';
+import {createApp} from '../server/app.ts';
+import {Logistics} from '../server/domain.ts';
+import type {Database} from '../server/database.ts';
+
+test('portal acceptance rolls back shipment, parcels and audit on request update failure; retry and concurrency create one shipment',async t=>{
+ const store=new Store(':memory:');t.after(()=>store.close());
+ const {orgId,userId}=await setup(store,{organizationName:'QA portal',timezone:'America/Asuncion',username:'qa-portal',password:'QA-Portal-Atomic-2026!'});
+ const actor={id:userId,orgId,name:'QA',role:'ADMIN' as const,driverId:null};
+ const domain=new Logistics(store),client=(await domain.createClient(actor,{commandId:randomUUID(),name:'QA cliente'})).id;
+ store.db.exec("ATTACH DATABASE ':memory:' AS public; CREATE TABLE public.portal_companies(id TEXT PRIMARY KEY,os_org_id TEXT,os_client_id TEXT); CREATE TABLE public.portal_shipping_requests(id TEXT PRIMARY KEY,company_id TEXT,reference TEXT,origin_text TEXT,destination_text TEXT,recipient_name TEXT,recipient_phone TEXT,parcel_count INTEGER,status TEXT,shipment_id TEXT,updated_at TEXT);");
+ const company=randomUUID(),request=randomUUID(),token=randomBytes(32).toString('hex');
+ await store.run('INSERT INTO public.portal_companies VALUES(?,?,?)',company,orgId,client);
+ await store.run("INSERT INTO public.portal_shipping_requests VALUES(?,?,?,?,?,?,?,?, 'REQUESTED',NULL,NULL)",request,company,'QA-PORTAL','A','B','QA','',2);
+ await store.run('INSERT INTO sessions VALUES(?,?,?)',hash(token),userId,new Date(Date.now()+60000).toISOString());
+ let fail=true;
+ const db=new Proxy(store,{get(target,key){if(key==='kind')return 'postgres';if(key==='run')return async(sql:string,...args:any[])=>{if(fail&&sql.startsWith('UPDATE public.portal_shipping_requests'))throw new Error('INJECTED_REQUEST_UPDATE_FAILURE');return target.run(sql,...args);};const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}}) as Database;
+ const server=createApp(db).listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));t.after(()=>new Promise<void>(r=>server.close(()=>r())));
+ const origin=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
+ const accept=()=>fetch(`${origin}/api/customer-shipping-requests/${request}/accept`,{method:'POST',headers:{cookie:`logistics_session=${token}`,'Content-Type':'application/json','X-Requested-With':'logistics-os',Origin:origin},body:'{}'});
+ assert.equal((await accept()).status,500);
+ assert.equal((await store.one('SELECT COUNT(*) AS n FROM shipments WHERE org_id=?',orgId))?.n,0,'shipment must roll back');
+ assert.equal((await store.one('SELECT COUNT(*) AS n FROM parcels WHERE org_id=?',orgId))?.n,0);
+ assert.equal((await store.one("SELECT COUNT(*) AS n FROM idempotency WHERE command_id=?",request))?.n,0);
+ fail=false;
+ const responses=await Promise.all([accept(),accept()]);assert.deepEqual(responses.map(r=>r.status),[200,200]);
+ const results=await Promise.all(responses.map(r=>r.json()));assert.equal(results[0].id,results[1].id);
+ assert.equal((await store.one('SELECT COUNT(*) AS n FROM shipments WHERE org_id=?',orgId))?.n,1);
+ assert.equal((await store.one('SELECT status FROM public.portal_shipping_requests WHERE id=?',request))?.status,'ACCEPTED');
+});

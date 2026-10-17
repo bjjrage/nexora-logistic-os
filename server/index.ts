@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { loadEnvFile } from 'node:process';
 import { PostgresStore } from './postgres.ts';
 import type { Database } from './database.ts';
+import {Diagnostics} from './observability.ts';
 
 if (existsSync('.env')) loadEnvFile('.env');
 
@@ -16,6 +17,9 @@ if(store instanceof PostgresStore) await store.verify();
 const port=Number(process.env.PORT??3001);
 const host=process.env.HOST??'127.0.0.1';
 if(!Number.isInteger(port)||port<1||port>65535) throw new Error('PORT debe ser un puerto TCP válido.');
-const server=createApp(store).listen(port,host,()=>console.log(`Nexora OS: http://${host}:${port} · ${store.kind==='postgres'?'Supabase PostgreSQL':'SQLite local'}`));
+const diagnostics=new Diagnostics();
+const server=createApp(store,undefined,undefined,diagnostics).listen(port,host,()=>diagnostics.emit('server.started',{host,port,database:store.kind}));
 const shutdown=()=>server.close(async()=>{await store.close();process.exit(0);});
 process.on('SIGINT',shutdown);process.on('SIGTERM',shutdown);
+const fatal=(error:unknown)=>{diagnostics.emit('server.fatal',{errorType:error instanceof Error?error.name:'UnknownError'});server.close();setTimeout(()=>process.exit(1),1000).unref();};
+process.on('uncaughtException',fatal);process.on('unhandledRejection',fatal);

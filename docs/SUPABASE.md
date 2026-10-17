@@ -1,5 +1,7 @@
 # Nexora OS conectado a Supabase
 
+> Actualización 17/10/2026: migraciones 1–13 aplicadas; baseline histórico del portal recuperado. El entorno aislado prepara scripts/sql/tracking-worker-role.sql antes de las migraciones. Ver CIERRE_FIXES_CHECKLIST_2026-10-17.md para evidencia y límites.
+
 Actualización 17-10-2026: el historial de aplicación llega a **1–10**, con la migración de políticas de reparto por identidad estable. La última suite real pasó **10/10**. Consultar el [informe vigente de fixes](FIXES_VERIFICADOS_2026-10-17.md); el detalle histórico de preparación del 15-10 se conserva abajo.
 
 Actualizado el 15 de octubre de 2026. El servidor local ya usa PostgreSQL remoto; la interfaz todavía se ejecuta localmente. No se desplegó en Vercel.

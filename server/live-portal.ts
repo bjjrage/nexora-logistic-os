@@ -43,12 +43,16 @@ export function installLivePortal(app:Express,store:Database,auth:(req:Request)=
   });
   app.post('/api/customer-shipping-requests/:id/accept',async(req,res)=>{
     const actor=await admin(req),id=z.uuid().parse(req.params.id);
+    const accepted=await store.transaction(async()=>{
     const request=await store.one('SELECT r.*,c.os_client_id FROM public.portal_shipping_requests r JOIN public.portal_companies c ON c.id=r.company_id WHERE r.id=? AND c.os_org_id=?',id,actor.orgId);
     ensure(request,'NOT_FOUND','Solicitud no encontrada.',404);
     ensure(request.status!=='REJECTED','INVALID_TRANSITION','La solicitud fue rechazada.',409);
-    if(request.shipment_id){res.json({id:request.shipment_id});return;}
+    if(request.shipment_id)return {id:request.shipment_id};
     const result=await domain.createShipment(actor,{commandId:id,clientId:request.os_client_id,reference:request.reference,originText:request.origin_text,destinationText:request.destination_text,recipientName:request.recipient_name,recipientPhone:request.recipient_phone,parcelCount:request.parcel_count,weightGrams:null,volumeCm3:null,proofPolicy:'RECEIVER'});
     await store.run("UPDATE public.portal_shipping_requests SET status='ACCEPTED',shipment_id=?,updated_at=? WHERE id=?",result.id,new Date().toISOString(),id);
-    res.json(result);
+    await store.run('INSERT INTO audit VALUES(?,?,?,?,?,?,?,?)',randomUUID(),actor.orgId,actor.id,'portal.requests.accept',id,id,JSON.stringify({shipmentId:result.id}),new Date().toISOString());
+    return result;
+    });
+    res.json(accepted);
   });
 }

@@ -1,5 +1,5 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
-import { ZodError, type ZodType } from 'zod';
+import { z,ZodError, type ZodType } from 'zod';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { camel } from './db.ts';
@@ -18,10 +18,18 @@ import { QuadOperations } from './quad-operations.ts';
 import { installQuadOperationRoutes } from './quad-operation-routes.ts';
 import { installInventoryRoutes } from './inventory-routes.ts';
 import { synchronizeQuadMinds } from './quad-sync.ts';
-export function createApp(store: Database, tracking = new QuadMindsTracking(store), quad = new QuadOperations(store)) {
+import {Diagnostics,requestContext,WindowLimiter} from './observability.ts';
+import {reconcileInventory} from './reconciliation.ts';
+import {PasswordRecovery} from './password-recovery.ts';
+export function createApp(store: Database, tracking = new QuadMindsTracking(store), quad = new QuadOperations(store),diagnostics=new Diagnostics()) {
     const app = express(), domain = new Logistics(store);
     const traccar = new TraccarTracking(store);
     app.disable('x-powered-by');
+    const proxyHops=Number(process.env.TRUST_PROXY_HOPS??0);
+    if(!Number.isInteger(proxyHops)||proxyHops<0||proxyHops>5)throw new Error('TRUST_PROXY_HOPS inválido.');
+    if(proxyHops)app.set('trust proxy',proxyHops);
+    app.use(diagnostics.middleware);
+    app.use((_req,res,next)=>{if(process.env.NODE_ENV==='production')res.set({'Strict-Transport-Security':'max-age=31536000; includeSubDomains','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-src https://www.openstreetmap.org; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"});next();});
     app.use((_req, res, next) => { res.set({ 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer', 'Permissions-Policy': 'geolocation=()', 'Cache-Control': 'no-store' }); next(); });
     app.post('/api/quadminds/webhook',express.raw({type:'application/json',limit:'512kb'}),async(req,res)=>{ensure(Buffer.isBuffer(req.body),'VALIDATION_ERROR','Se requiere un evento JSON.',400);res.json(await quad.webhook(req.body,req.headers['quadminds-signature']));});
     app.get('/api/jobs/quadminds-sync',async(req,res)=>{
@@ -39,22 +47,26 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
         next();
     });
     app.use(express.json({ limit: '8mb' }));
-    const auth = async (req: Request): Promise<Actor> => { const actor = await actorFromRequest(store, req); ensure(actor, 'FORBIDDEN', 'Iniciá sesión para continuar.', 401); return actor; };
+    const auth = async (req: Request): Promise<Actor> => { const actor = await actorFromRequest(store, req); ensure(actor, 'FORBIDDEN', 'Iniciá sesión para continuar.', 401); const context=requestContext.getStore();if(context){context.userId=actor.id;context.orgId=actor.orgId;} return actor; };
     installLivePortal(app,store,auth);
-    const loginAttempts = new Map<string, {
-        count: number;
-        until: number;
-    }>();
+    const loginAttempts = new WindowLimiter(20,60000);
+    const recovery=new PasswordRecovery(store),recoveryIssues=new WindowLimiter(20,3600000);
     const loginLimit = (req: Request) => {
-        const key = req.socket.remoteAddress ?? 'local';
-        const old = loginAttempts.get(key);
-        const entry = old && old.until > Date.now() ? old : { count: 0, until: Date.now() + 60000 };
-        entry.count++;
-        loginAttempts.set(key, entry);
-        ensure(entry.count <= 20, 'FORBIDDEN', 'Demasiados intentos. Esperá un minuto.', 429);
+        ensure(loginAttempts.allow(req.ip??req.socket.remoteAddress??'local'),'FORBIDDEN','Demasiados intentos. Esperá un minuto.',429);
     };
     app.get('/api/health', async (_req, res) => { await store.one('SELECT 1 AS connected'); res.json({ application: 'logistics-os-local', status: 'ok', database: store.kind, tracking: tracking.status().status, providers: { quadminds: tracking.status().status, traccar: await traccar.health() }, previewInstanceId: process.env.PREVIEW_INSTANCE_ID ?? null }); });
-    app.get('/api/preview-identity',(_req,res)=>{if(!process.env.PREVIEW_INSTANCE_ID)return res.status(404).json({error:{code:'NOT_FOUND',message:'Endpoint no encontrado.'}});res.json({application:'logistics-os-local',previewInstanceId:process.env.PREVIEW_INSTANCE_ID});});
+    app.get('/api/ready',async(_req,res)=>{
+      await store.one('SELECT 1 AS connected');
+      const gps=await traccar.health();const ready=process.env.TRACCAR_ENABLED!=='true'||gps.configured&&gps.connected;
+      res.status(ready?200:503).json({status:ready?'ready':'degraded',database:'connected',gps:process.env.TRACCAR_ENABLED==='true'?(gps.connected?'connected':'unavailable'):'disabled'});
+    });
+    app.post('/api/password-recovery/redeem',async(req,res)=>{loginLimit(req);res.json(await recovery.redeem(req.body));});
+    app.post('/api/password-recovery/issue',async(req,res)=>{const actor=await auth(req);ensure(recoveryIssues.allow(actor.id),'FORBIDDEN','Demasiados enlaces. Esperá antes de emitir otro.',429);res.json(await recovery.issue(actor,req.body));});
+    app.get('/api/preview-identity',(_req,res)=>{if(process.env.NODE_ENV==='production'||!process.env.PREVIEW_INSTANCE_ID)return res.status(404).json({error:{code:'NOT_FOUND',message:'Endpoint no encontrado.'}});res.json({application:'logistics-os-local',previewInstanceId:process.env.PREVIEW_INSTANCE_ID});});
+    const telemetryLimit=new WindowLimiter(20,60000);
+    app.post('/api/diagnostics/events',async(req,res)=>{const actor=await auth(req);ensure(telemetryLimit.allow(actor.id),'FORBIDDEN','Demasiados eventos.',429);const body=z.object({kind:z.enum(['UI_ERROR','UNHANDLED_REJECTION','API_ERROR']),component:z.string().regex(/^[a-zA-Z0-9_.-]{1,80}$/),requestId:z.uuid().optional()}).strict().parse(req.body);diagnostics.emit('client.error',body);res.status(202).json({accepted:true});});
+    app.get('/api/diagnostics',async(req,res)=>{const actor=await auth(req);ensure(actor.role==='ADMIN','FORBIDDEN','Acceso no autorizado.',403);res.json({release:process.env.RELEASE_SHA??'local',events:diagnostics.recent.filter(entry=>entry.orgId===actor.orgId)});});
+    app.get('/api/inventory/reconciliation',async(req,res)=>{const actor=await auth(req);const result=await reconcileInventory(store,actor);if(!result.ok)diagnostics.emit('inventory.mismatch',{quantityIssues:result.quantityIssues.length,serialIssues:result.serialIssues.length});res.json(result);});
     app.get('/api/session', async (req, res) => res.json({ user: await actorFromRequest(store, req), setupRequired: !await store.one('SELECT id FROM users LIMIT 1') }));
     app.post('/api/setup', async (req, res) => {
         loginLimit(req);
@@ -166,8 +178,8 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
             return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'El cuerpo JSON no es válido.' } });
         if (error && typeof error === 'object' && 'status' in error && error.status === 413)
             return res.status(413).json({ error: { code: 'VALIDATION_ERROR', message: 'La solicitud excede el tamaño permitido.' } });
-        console.error(error instanceof Error ? error.message : 'Error interno');
-        res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'La operación no pudo completarse.' } });
+        diagnostics.error(error,_req);
+        res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'La operación no pudo completarse.',requestId:requestContext.getStore()?.requestId } });
     });
     return app;
 }

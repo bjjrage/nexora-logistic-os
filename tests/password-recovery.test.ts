@@ -1,0 +1,24 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {Store} from '../server/db.ts';
+import {setup,checkPassword} from '../server/auth.ts';
+import {Logistics} from '../server/domain.ts';
+import {PasswordRecovery} from '../server/password-recovery.ts';
+test('recovery is admin-scoped, hashed, expires, single-use, invalidates old links and sessions under concurrent redemption',async t=>{
+ const store=new Store(':memory:');t.after(()=>store.close());const ids=await setup(store,{organizationName:'QA',timezone:'UTC',username:'reset-qa',password:'QA-Recovery-2026!'});
+ const actor={id:ids.userId,orgId:ids.orgId,name:'QA',role:'ADMIN' as const,driverId:null},recovery=new PasswordRecovery(store),domain=new Logistics(store);
+ const target=(await domain.createUser(actor,{commandId:randomUUID(),name:'QA target',username:'reset-target',password:'QA-Recovery-2026!',role:'DEPOT'})).id;
+ await assert.rejects(recovery.issue({...actor,role:'DEPOT'},{kind:'USER',id:target}),(e:any)=>e.code==='FORBIDDEN');
+ await assert.rejects(recovery.issue({...actor,orgId:randomUUID()},{kind:'USER',id:target}),(e:any)=>e.code==='NOT_FOUND');
+ const old=await recovery.issue(actor,{kind:'USER',id:target}),current=await recovery.issue(actor,{kind:'USER',id:target});
+ assert.equal((await store.one('SELECT token_hash FROM password_recovery'))?.token_hash===current.token,false);
+ await assert.rejects(recovery.redeem({token:old.token,password:'QA-Changed-2026!'}),(e:any)=>e.code==='FORBIDDEN');
+ await store.run('INSERT INTO sessions VALUES(?,?,?)','session-placeholder',target,new Date(Date.now()+60000).toISOString());
+ const results=await Promise.allSettled([recovery.redeem({token:current.token,password:'QA-Changed-2026!'}),recovery.redeem({token:current.token,password:'QA-Changed-2026!'})]);assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+ assert.equal(checkPassword('QA-Changed-2026!',(await store.one('SELECT password_hash FROM users WHERE id=?',target))!.password_hash),true);
+ assert.equal((await store.one('SELECT COUNT(*) AS n FROM sessions WHERE user_id=?',target))!.n,0);
+ assert.equal((await store.one("SELECT COUNT(*) AS n FROM audit WHERE action='account.recovery.redeemed' AND entity_id=?",target))!.n,1);
+ const expired=await recovery.issue(actor,{kind:'USER',id:target});await store.run('UPDATE password_recovery SET expires_at=?','2000-01-01T00:00:00Z');await assert.rejects(recovery.redeem({token:expired.token,password:'QA-Changed-2026!'}),(e:any)=>e.code==='FORBIDDEN');
+ assert.doesNotMatch(JSON.stringify(await store.all('SELECT * FROM audit')),new RegExp(current.token));
+});

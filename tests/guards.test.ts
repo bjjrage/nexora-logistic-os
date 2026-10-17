@@ -145,6 +145,16 @@ test('Aislamiento de organización y claves foráneas compuestas', async (t) => 
     assert.equal((await f.d.bootstrap(other)).shipments.length, 0);
     await assert.rejects(async () => await f.store.run('INSERT INTO shipments VALUES(?,?,?,?,?,?,?,?,?,?)', randomUUID(), org, f.client, 'REF', 'O', 'D', 'R', '', 'RECEIVER', new Date().toISOString()), /FOREIGN KEY/);
 });
+
+test('driver bootstrap retains an older assigned route and parcels behind 501 newer foreign records',async t=>{
+ const f=await fixture(t),shipment=await f.shipment(),route=await f.route();await f.receive(shipment);await f.assign(route,shipment.parcels.map(p=>p.id));
+ const foreign=(await f.d.createDriver(f.actor,{...f.cmd(),name:'Foreign',username:'driver-bootstrap-foreign',password:'QA-Foreign-2026!'})).id;
+ await f.store.run(`WITH RECURSIVE n(i) AS(SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<501) INSERT INTO routes(id,org_id,name,driver_id,vehicle_id,start_at,end_at,state,version) SELECT 'foreign-'||i,?,'Foreign',?,?,'2026-01-01T00:00:00Z','2026-01-02T00:00:00Z','DRAFT',1 FROM n`,f.actor.orgId,foreign,f.vehicle);
+ await f.store.run(`WITH RECURSIVE n(i) AS(SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<501) INSERT INTO shipments(id,org_id,client_id,reference,origin_text,destination_text,recipient_name,recipient_phone,proof_policy,created_at) SELECT 'foreign-shipment-'||i,?,?,'foreign-ref-'||i,'A','B','QA','','RECEIVER','2026-01-01T00:00:00Z' FROM n`,f.actor.orgId,f.client);
+ const member=(await f.store.one('SELECT * FROM users WHERE driver_id=?',f.driver))!;
+ const data=await f.d.bootstrap({id:member.id,orgId:f.actor.orgId,name:member.name,role:'DRIVER',driverId:f.driver});
+ assert.deepEqual(data.routes.map(r=>r.id),[route]);assert.deepEqual(data.shipments.map(s=>s.id),[shipment.id]);assert.equal(data.parcels.length,1);assert.equal(data.shipments[0].counts.expected,1);
+});
 test('QA-24: cierre con paradas pendientes no modifica ruta ni elimina obligaciones', async (t) => {
     const f = await fixture(t), { r } = await f.loaded();
     await f.d.dispatch(f.actor, r, { ...f.cmd(), expectedVersion: await f.version(r) });

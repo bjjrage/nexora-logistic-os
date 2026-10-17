@@ -31,9 +31,10 @@ export class PostgresStore implements Database {
     // Keep certificate validation explicit; URI SSL settings must not override it.
     for (const key of ['sslmode', 'sslcert', 'sslkey', 'sslrootcert']) url.searchParams.delete(key);
     this.schema = schema;
+    const localTest=process.env.NODE_ENV==='test'&&process.env.DATABASE_LOCAL_TEST==='true'&&['127.0.0.1','localhost'].includes(url.hostname)&&/^\/nexora_test[a-z0-9_]*$/.test(url.pathname);
     this.pool = new pg.Pool({ connectionString: url.toString(), max: 5, connectionTimeoutMillis: 10_000,
       idleTimeoutMillis: 10_000, statement_timeout: 20_000, application_name: 'nexora-os',
-      ssl: { rejectUnauthorized: true, ca: readFileSync(process.env.PGSSLROOTCERT ?? new URL('./certs/supabase-prod-ca-2021.crt', import.meta.url), 'utf8') },
+      ssl: localTest?false:{ rejectUnauthorized: true, ca: readFileSync(process.env.PGSSLROOTCERT ?? new URL('./certs/supabase-prod-ca-2021.crt', import.meta.url), 'utf8') },
       types: { getTypeParser: (oid: number, format?: string) => {
         if (oid === 1184) return (value: string) => new Date(value).toISOString();
         if (oid === 20) return (value: string) => { const number = Number(value); if (!Number.isSafeInteger(number)) throw new Error('Valor entero fuera de rango.'); return number; };
@@ -89,7 +90,7 @@ export class PostgresStore implements Database {
   }
   async verify() {
     const versions = await this.all('SELECT version FROM schema_migrations ORDER BY version');
-    if (versions.map(row => row.version).join(',') !== '1,2,3,4,5,6,7,8,9,10') throw new Error('La base de Nexora no tiene las migraciones esperadas.');
+    if (versions.map(row => row.version).join(',') !== '1,2,3,4,5,6,7,8,9,10,11,12,13') throw new Error('La base de Nexora no tiene las migraciones esperadas.');
   }
   async close() { await this.pool.end(); }
 }

@@ -819,6 +819,37 @@ export class Inventory {
     });
   }
 
+  async catalogPage(actor:InventoryActor,input:unknown={}){
+    this.readAccess(actor);
+    const page=z.object({clientId:z.uuid().optional(),q:z.string().trim().max(200).default(''),limit:z.coerce.number().int().min(1).max(200).default(25),offset:z.coerce.number().int().min(0).max(1000000).default(0)}).parse(input);
+    if(page.clientId)await this.client(actor,page.clientId,true);
+    const clientId=actor.role==='CUSTOMER'?actor.clientId:page.clientId;
+    ensure(actor.role!=='CUSTOMER'||clientId,'FORBIDDEN','Sesión sin cliente.',403);
+    const filters=['p.org_id=?'],args:any[]=[actor.orgId];if(clientId){filters.push('p.client_id=?');args.push(clientId);}
+    if(page.q){filters.push('(lower(p.sku) LIKE ? OR lower(p.name) LIKE ? OR lower(p.barcode) LIKE ?)');args.push(...Array(3).fill('%'+page.q.toLowerCase()+'%'));}
+    const from=`FROM inventory_products p WHERE ${filters.join(' AND ')}`;
+    const total=Number((await this.store.one(`SELECT COUNT(*) AS n ${from}`,...args))?.n??0);
+    const rows=await this.store.all(`SELECT p.* ${from} ORDER BY p.name,p.id LIMIT ? OFFSET ?`,...args,page.limit,page.offset);
+    return {items:rows.map((row):Row=>({...camel(row),active:Boolean(row.active)})),total,limit:page.limit,offset:page.offset};
+  }
+  async lookupCode(actor:InventoryActor,input:unknown):Promise<{product:Row|null;unit:Row|null}>{
+    this.readAccess(actor);const body=z.object({clientId:z.uuid(),code:z.string().trim().min(1).max(200)}).parse(input);await this.client(actor,body.clientId,true);
+    const products=await this.store.all('SELECT * FROM inventory_products WHERE org_id=? AND client_id=? AND active=1 AND (lower(sku)=? OR lower(barcode)=?) LIMIT 2',actor.orgId,body.clientId,body.code.toLowerCase(),body.code.toLowerCase());
+    const units=await this.store.all('SELECT * FROM inventory_units WHERE org_id=? AND client_id=? AND (lower(serial)=? OR lower(barcode)=?) LIMIT 2',actor.orgId,body.clientId,body.code.toLowerCase(),body.code.toLowerCase());
+    ensure(products.length<=1&&units.length<=1,'VALIDATION_ERROR','El código identifica más de un producto o serie. Revisá el catálogo.',409);
+    ensure(!products[0]||!units[0]||products[0].id===units[0].product_id,'VALIDATION_ERROR','El código coincide con un producto y una serie diferentes. Revisá el catálogo.',409);
+    const product=products[0]??(units[0]?await this.product(actor,units[0].product_id,body.clientId):null);
+    return {product:product?{...camel(product),active:Boolean(product.active)}:null,unit:units[0]?camel(units[0]):null};
+  }
+  async stockPage(actor:InventoryActor,input:unknown={}){
+    this.readAccess(actor);const page=z.object({clientId:z.uuid().optional(),status:z.enum(['','AVAILABLE','RESERVED','VEHICLE','QUARANTINE','DELIVERED','ADJUSTED']).default(''),q:z.string().trim().max(200).default(''),limit:z.coerce.number().int().min(1).max(200).default(25),offset:z.coerce.number().int().min(0).max(1000000).default(0)}).parse(input);
+    if(page.clientId)await this.client(actor,page.clientId,true);const clientId=actor.role==='CUSTOMER'?actor.clientId:page.clientId;ensure(actor.role!=='CUSTOMER'||clientId,'FORBIDDEN','Sesión sin cliente.',403);
+    const filters=['x.org_id=?'],args:any[]=[actor.orgId];if(clientId){filters.push('x.client_id=?');args.push(clientId);}if(page.status){filters.push('x.status=?');args.push(page.status);}if(page.q){filters.push('(lower(p.sku) LIKE ? OR lower(p.name) LIKE ? OR lower(x.serial) LIKE ? OR lower(l.code) LIKE ? OR lower(c.name) LIKE ? OR lower(o.external_id) LIKE ?)');args.push(...Array(6).fill('%'+page.q.toLowerCase()+'%'));}
+    const source=`FROM (SELECT id,org_id,client_id,product_id,location_id,status,order_id,quantity,'' AS serial FROM inventory_balances WHERE quantity>0 UNION ALL SELECT id,org_id,client_id,product_id,location_id,status,order_id,1 AS quantity,serial FROM inventory_units) x JOIN inventory_products p ON p.id=x.product_id AND p.org_id=x.org_id JOIN inventory_locations l ON l.id=x.location_id AND l.org_id=x.org_id JOIN clients c ON c.id=x.client_id AND c.org_id=x.org_id LEFT JOIN inventory_orders o ON o.id=x.order_id AND o.org_id=x.org_id WHERE ${filters.join(' AND ')}`;
+    const total=Number((await this.store.one(`SELECT COUNT(*) AS n ${source}`,...args))?.n??0);
+    const rows=await this.store.all(`SELECT x.id AS key,x.client_id,c.name AS client_name,x.product_id,p.sku,p.name AS product_name,x.serial,p.barcode,l.code AS location_code,x.quantity,p.unit,x.status,COALESCE(o.external_id,'—') AS order_reference ${source} ORDER BY p.sku,x.id LIMIT ? OFFSET ?`,...args,page.limit,page.offset);
+    return {items:rows.map(camel),total,limit:page.limit,offset:page.offset};
+  }
   async bootstrap(actor: InventoryActor, clientFilter?: string) {
     this.readAccess(actor);
     let clientId: string | undefined;
@@ -835,9 +866,9 @@ export class Inventory {
     const movementFilter = `FROM inventory_movements WHERE org_id=? ${clientId ? 'AND client_id=?' : ''}`;
     const movementArgs = clientId ? [actor.orgId, clientId] : [actor.orgId];
     const [products, locations, balances, units, movements, productCount, locationCount, balanceCount, unitCount, movementCount, balanceTotals, unitTotals] = await Promise.all([
-      this.store.all(`SELECT * FROM inventory_products WHERE org_id=? ${predicate} ORDER BY name,id`, ...args),
-      this.store.all(`SELECT l.* FROM inventory_locations l WHERE l.org_id=? ${customerLocationPredicate} ORDER BY l.code,l.id`, actor.orgId, ...customerLocationArgs),
-      this.store.all(`SELECT * FROM inventory_balances WHERE org_id=? ${predicate} AND quantity>0 ORDER BY product_id,location_id,status`, ...args),
+      this.store.all(`SELECT * FROM inventory_products WHERE org_id=? ${predicate} ORDER BY name,id LIMIT 1000`, ...args),
+      this.store.all(`SELECT l.* FROM inventory_locations l WHERE l.org_id=? ${customerLocationPredicate} ORDER BY l.code,l.id LIMIT 1000`, actor.orgId, ...customerLocationArgs),
+      this.store.all(`SELECT * FROM inventory_balances WHERE org_id=? ${predicate} AND quantity>0 ORDER BY product_id,location_id,status LIMIT 1000`, ...args),
       this.store.all(`SELECT * FROM inventory_units WHERE org_id=? ${predicate} ORDER BY created_at,id LIMIT 1001`, ...args),
       this.store.all(`SELECT * ${movementFilter} ORDER BY created_at DESC,id DESC LIMIT 501`, ...movementArgs),
       this.store.one(`SELECT COUNT(*) AS count FROM inventory_products WHERE org_id=? ${predicate}`, ...args),
@@ -858,20 +889,27 @@ export class Inventory {
       clientTotals[row.client_id] ??= { AVAILABLE: 0, RESERVED: 0, VEHICLE: 0, QUARANTINE: 0 };
       clientTotals[row.client_id][status] += quantity;
     }
-    const limits = { products: null, locations: null, balances: null, units: 1000, movements: 500 };
-    const hasMore = { products: false, locations: false, balances: false, units: Number(unitCount?.count ?? 0) > limits.units!, movements: Number(movementCount?.count ?? 0) > limits.movements };
+    const limits = { products: 1000, locations: 1000, balances: 1000, units: 1000, movements: 500 };
+    const hasMore = { products: Number(productCount?.count??0)>limits.products, locations: Number(locationCount?.count??0)>limits.locations, balances: Number(balanceCount?.count??0)>limits.balances, units: Number(unitCount?.count ?? 0) > limits.units!, movements: Number(movementCount?.count ?? 0) > limits.movements };
     return { products: products.map(row => ({ ...camel(row), active: Boolean(row.active) })), locations: locations.map(row => ({ ...camel(row), active: Boolean(row.active) })), balances: balances.map(camel), units: units.slice(0, 1000).map(camel), movements: movements.slice(0, 500).map(camel),
       counts: { products: Number(productCount?.count ?? 0), locations: Number(locationCount?.count ?? 0), balances: Number(balanceCount?.count ?? 0), units: Number(unitCount?.count ?? 0), movements: Number(movementCount?.count ?? 0) }, limits, hasMore, totals, clientTotals };
   }
-  async orders(actor: InventoryActor, clientFilter?: string) {
+  async orders(actor: InventoryActor, clientFilter?: string,options:unknown={}) {
     this.readAccess(actor);
     let clientId: string | undefined;
     if (actor.role === 'CUSTOMER') { ensure(actor.clientId, 'FORBIDDEN', 'La sesión de cliente no tiene un cliente asociado.', 403); clientId = actor.clientId; }
     else if (clientFilter) { await this.client(actor, clientFilter); clientId = clientFilter; }
-    const orders = await this.store.all(`SELECT * FROM inventory_orders WHERE org_id=? ${clientId ? 'AND client_id=?' : ''} ORDER BY order_date DESC,created_at DESC,id`, ...(clientId ? [actor.orgId, clientId] : [actor.orgId]));
+    const page=z.object({limit:z.coerce.number().int().min(1).max(200).default(50),offset:z.coerce.number().int().min(0).max(1000000).default(0),q:z.string().trim().max(200).default(''),status:z.enum(['','DRAFT','RESERVED','PARTIALLY_LOADED','LOADED','IN_TRANSIT','PARTIAL','DELIVERED','CANCELLED','EXCEPTION']).default('')}).parse(options);
+    const predicates=['o.org_id=?'],args:any[]=[actor.orgId];
+    if(clientId){predicates.push('o.client_id=?');args.push(clientId);}
+    if(page.status){predicates.push('o.status=?');args.push(page.status);}
+    if(page.q){predicates.push('(lower(o.external_id) LIKE ? OR lower(o.recipient_name) LIKE ? OR lower(o.destination) LIKE ? OR lower(o.recipient_phone) LIKE ? OR lower(c.name) LIKE ?)');args.push(...Array(5).fill('%'+page.q.toLowerCase()+'%'));}
+    const from=`FROM inventory_orders o JOIN clients c ON c.id=o.client_id AND c.org_id=o.org_id WHERE ${predicates.join(' AND ')}`;
+    const total=Number((await this.store.one(`SELECT COUNT(*) AS n ${from}`,...args))?.n??0);
+    const orders = await this.store.all(`SELECT o.*,c.name AS client_name ${from} ORDER BY o.order_date DESC,o.created_at DESC,o.id LIMIT ? OFFSET ?`,...args,page.limit,page.offset);
     const items: Row[] = [];
     for (const order of orders) items.push(await this.orderView(actor, order));
-    return { items };
+    return { items,total,limit:page.limit,offset:page.offset,hasMore:page.offset+items.length<total };
   }
   async order(actor: InventoryActor, orderId: string) {
     this.readAccess(actor);

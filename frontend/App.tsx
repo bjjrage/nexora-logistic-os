@@ -12,6 +12,9 @@ import CustomerPortal from './CustomerPortal';
 import ClientsPanel, {type ClientRecord} from './ClientsPanel';
 import CompanyPanel from './CompanyPanel';
 import {api,type ApiProblem} from './api';
+import {reportClientError,sourcePosition} from './diagnostics';
+import PasswordReset from './PasswordReset';
+import Reauthentication from './Reauthentication';
 import PublicTrackingLinks from './PublicTrackingLinks';
 import QuadOperationsPanel from './QuadOperationsPanel';
 import { LayoutDashboard, Package, Route as RouteIcon, Truck, Users, Radio, Plus, ArrowUpRight, ArrowRight, LogOut, ChevronRight, CircleAlert, Boxes, ClipboardList, Shield } from 'lucide-react';
@@ -355,6 +358,8 @@ function AuthScreen({ setupRequired, busy, error, onAuth }: {
 
 function AppContent() {
   const [session, setSession] = useState<Session | null>(null);
+  const [reauthentication,setReauthentication]=useState(false);
+  useEffect(()=>{const expired=()=>setReauthentication(true);window.addEventListener('nexora:session-expired',expired);return()=>window.removeEventListener('nexora:session-expired',expired);},[]);
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [page, setPage] = useState<Page>("home");
   const [preferredRouteId, setPreferredRouteId] = useState("");
@@ -489,7 +494,7 @@ function AppContent() {
         body: JSON.stringify(body),
       });
       setSuccess("");
-      await refreshSession();
+      if(reauthentication){const restored=await api<Session>('/api/session');if(restored.user?.id!==session?.user?.id){await api('/api/logout',{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'logistics-os'},body:'{}'});throw new Error('Ingresá con la misma cuenta que abrió este formulario.');}setSession(restored);await refreshBootstrap();setError('');setReauthentication(false);}else await refreshSession();
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -560,7 +565,8 @@ function AppContent() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      {reauthentication&&<Reauthentication busy={pending} error={error} onAuthenticate={authenticate}/>}
+      <aside className="sidebar" inert={reauthentication} aria-hidden={reauthentication||undefined}>
         <div className="brand">
           <Brand />
           <span className="brand-caption">Centro de operaciones</span>
@@ -578,7 +584,7 @@ function AppContent() {
           <button className="text-button signout" onClick={logout} disabled={pending}><LogOut aria-hidden="true" />Cerrar sesión</button>
         </div>
       </aside>
-      <main className="workspace">
+      <main className="workspace" inert={reauthentication} aria-hidden={reauthentication||undefined}>
         <header className="topbar">
           <div><Brand compact className="mobile-brand" /><span className="topbar-label">{bootstrap.organization.name}</span><span className="topbar-separator">/</span><span>{pageLabel(page)}</span></div>
           <div className="topbar-meta"><span className="connection-indicator" /><span className="local-label">Entorno local</span><button className="text-button mobile-signout" aria-label="Cerrar sesión" onClick={logout} disabled={pending}>Salir</button></div>
@@ -599,7 +605,7 @@ function AppContent() {
           {page === "tracking" && <TrackingView data={bootstrap} action={mutate} busy={pending} operationError={error} onRefresh={refreshBootstrap} />}
         </div>
       </main>
-      <nav className="mobile-nav" aria-label="Navegación móvil">
+      <nav className="mobile-nav" aria-label="Navegación móvil" inert={reauthentication} aria-hidden={reauthentication||undefined}>
         {nav.map((item) => <button key={item.id} aria-current={page===item.id?'page':undefined} className={"nav-link " +(page === item.id ? "active" : "")} onClick={() => changePage(item.id)}><span>{item.icon}</span>{item.label}</button>)}
       </nav>
     </div>
@@ -1330,8 +1336,8 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
     return { error };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("Error al mostrar OS de Logística", error, info.componentStack);
+  componentDidCatch(_error: Error, _info: ErrorInfo) {
+    reportClientError('UI_ERROR','ErrorBoundary',undefined,sourcePosition(_error.stack));
   }
 
   render() {
@@ -1343,6 +1349,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 }
 
 function App() {
+  if(new URLSearchParams(window.location.hash.slice(1)).has('restablecer'))return <ErrorBoundary><PasswordReset/></ErrorBoundary>;
   return <ErrorBoundary><AppContent /></ErrorBoundary>;
 }
 

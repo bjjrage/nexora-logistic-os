@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {Store} from '../server/db.ts';
+import {setup} from '../server/auth.ts';
+import {Logistics} from '../server/domain.ts';
+import {Inventory} from '../server/inventory.ts';
+test('catalog and stock paginate beyond bootstrap cap; exact scanner lookup finds older/unloaded SKU and isolates customer',async t=>{
+ const store=new Store(':memory:');t.after(()=>store.close());const initial=await setup(store,{organizationName:'QA',timezone:'UTC',username:'pagination-qa',password:'QA-Pagination-2026!'});
+ const actor={id:initial.userId,orgId:initial.orgId,name:'QA',role:'ADMIN' as const,driverId:null},domain=new Logistics(store),inventory=new Inventory(store),command=()=>({commandId:randomUUID()});
+ const client=(await domain.createClient(actor,{...command(),name:'Client A'})).id,other=(await domain.createClient(actor,{...command(),name:'Client B'})).id;
+ const last=randomUUID();await store.transaction(async()=>{for(let i=0;i<1005;i++)await store.run('INSERT INTO inventory_products(id,org_id,client_id,sku,name,tracking,unit,active,created_at,updated_at) VALUES(?,?,?,?,?,\'QUANTITY\',\'unidad\',1,?,?)',i===1004?last:randomUUID(),actor.orgId,client,'SKU-'+String(i).padStart(4,'0'),'Product '+String(i).padStart(4,'0'),new Date().toISOString(),new Date().toISOString());});
+ const snapshot=await inventory.bootstrap(actor);assert.equal(snapshot.products.length,1000);assert.equal(snapshot.hasMore.products,true);assert.equal(snapshot.counts.products,1005);
+ const page=await inventory.catalogPage(actor,{clientId:client,limit:25,offset:1000});assert.equal(page.total,1005);assert.equal(page.items.length,5);assert.ok(page.items.some(p=>p.id===last));
+ const lookup=await inventory.lookupCode(actor,{clientId:client,code:'SKU-1004'});assert.equal(lookup.product?.id,last);
+ const location=(await inventory.createLocation(actor,{...command(),code:'QA',name:'QA'})).id;await inventory.receive(actor,{...command(),clientId:client,productId:last,locationId:location,quantity:3});
+ const stock=await inventory.stockPage(actor,{q:'SKU-1004'});assert.equal(stock.total,1);assert.equal(stock.items[0].productId,last);assert.equal(stock.items[0].quantity,3);
+ const customer={...actor,role:'CUSTOMER',clientId:other};assert.equal((await inventory.stockPage(customer)).total,0);assert.equal((await inventory.catalogPage(customer)).total,0);
+ await assert.rejects(inventory.lookupCode(customer,{clientId:client,code:'SKU-1004'}),(e:any)=>e.code==='FORBIDDEN');
+ await assert.rejects(inventory.catalogPage(actor,{limit:201}));await assert.rejects(inventory.stockPage(actor,{offset:-1}));
+});
+test('order pagination and server search do not truncate later orders or leak another customer',async t=>{
+ const store=new Store(':memory:');t.after(()=>store.close());const initial=await setup(store,{organizationName:'QA',timezone:'UTC',username:'order-page-qa',password:'QA-Pagination-2026!'});
+ const actor={id:initial.userId,orgId:initial.orgId,name:'QA',role:'ADMIN' as const,driverId:null},domain=new Logistics(store),inventory=new Inventory(store),command=()=>({commandId:randomUUID()});
+ const client=(await domain.createClient(actor,{...command(),name:'A'})).id,foreign=(await domain.createClient(actor,{...command(),name:'B'})).id;
+ const product=(await inventory.createProduct(actor,{...command(),clientId:client,sku:'QA',name:'QA',tracking:'QUANTITY'})).id;
+ for(let i=0;i<27;i++)await inventory.createOrder(actor,{...command(),clientId:client,externalId:'ORDER-'+String(i).padStart(2,'0'),orderDate:'2026-10-17',destination:'QA',recipientName:'QA',lines:[{productId:product,quantity:1}]});
+ const first=await inventory.orders(actor,undefined,{limit:25}),second=await inventory.orders(actor,undefined,{limit:25,offset:25});assert.equal(first.total,27);assert.equal(first.items.length,25);assert.equal(second.items.length,2);assert.equal(new Set([...first.items,...second.items].map(o=>o.id)).size,27);
+ assert.equal((await inventory.orders(actor,undefined,{q:'ORDER-26'})).items.length,1);assert.equal((await inventory.orders({...actor,role:'CUSTOMER',clientId:foreign})).total,0);
+});

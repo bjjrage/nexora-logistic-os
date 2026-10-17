@@ -1,5 +1,7 @@
 ﻿# OS de logística — desarrollo local
 
+> Estado actualizado al 17/10/2026: ver [cierre de fixes y pendientes](docs/CIERRE_FIXES_CHECKLIST_2026-10-17.md). Migraciones 1–13; pruebas locales y CI ampliadas a PostgreSQL aislado y navegador. QuadMinds queda pendiente de credenciales.
+
 Nexora OS gestiona clientes, envíos, recepción, rutas, flota, entregas e incidencias. El servidor local ya usa PostgreSQL de Supabase mediante una conexión privada; SQLite queda disponible para DEMO y pruebas. Ver [configuración de Supabase](docs/SUPABASE.md). Esto no completa el alcance del Prompt Maestro V0.1 ni constituye un despliegue de producción.
 
 Código del OS en el [repositorio privado](https://github.com/bjjrage/nexora-logistic-os). La web pública se mantiene en su repositorio separado. Ver [fixes y verificaciones del 17-10-2026](docs/FIXES_VERIFICADOS_2026-10-17.md) y el [manual maestro](MANUAL_MAESTRO_NEXORA_OS.html).
