@@ -24,6 +24,12 @@ export function checkPassword(password: string, encoded: string) {
     const actual = scryptSync(password, salt, 64);
     return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
+// Verified against when the username is unknown, so login takes the same scrypt time either way.
+const decoyHash = passwordHash(randomBytes(16).toString('hex'));
+export function checkLogin(password: string, encoded: string | undefined) {
+    const ok = checkPassword(password, encoded ?? decoyHash);
+    return ok && encoded !== undefined;
+}
 export async function actorFromRequest(store: Database, req: Request): Promise<Actor | null> {
     const token = req.headers.cookie?.split(';').map(x => x.trim()).find(x => x.startsWith('logistics_session='))?.split('=')[1];
     if (!token || !/^[a-f0-9]{64}$/.test(token))

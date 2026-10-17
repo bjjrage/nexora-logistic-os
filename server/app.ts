@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { camel } from './db.ts';
 import type { Database } from './database.ts';
 import { Logistics } from './domain.ts';
-import { actorFromRequest, checkPassword, createSession, hash, setup, type Actor } from './auth.ts';
+import { actorFromRequest, checkLogin, checkPassword, createSession, hash, setup, type Actor } from './auth.ts';
 import { DomainError, ensure } from './errors.ts';
 import { schemas } from './validation.ts';
 import { createDriverDocument, renewDriverDocument } from './driver-documents.ts';
@@ -81,7 +81,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
         let user = await store.one('SELECT id,password_hash FROM users WHERE username=? AND enabled=1', b.username);
         const customer=!user;
         if(customer) user=await store.one('SELECT id,password_hash FROM customer_accounts WHERE username=? AND enabled=1',b.username);
-        ensure(user && checkPassword(b.password, user.password_hash), 'FORBIDDEN', 'Usuario o contraseña incorrectos.', 401);
+        ensure(checkLogin(b.password, user?.password_hash) && user, 'FORBIDDEN', 'Usuario o contraseña incorrectos.', 401);
         await createSession(store, user.id, res,customer);
         res.json({ id: user.id });
     });
