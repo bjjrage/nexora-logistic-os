@@ -22,6 +22,7 @@ import {Diagnostics,requestContext,WindowLimiter} from './observability.ts';
 import {reconcileInventory} from './reconciliation.ts';
 import {PasswordRecovery} from './password-recovery.ts';
 import {latestParcelAssignment} from './driver-access.ts';
+import {installBillingRoutes} from './billing.ts';
 export function createApp(store: Database, tracking = new QuadMindsTracking(store), quad = new QuadOperations(store),diagnostics=new Diagnostics()) {
     const app = express(), domain = new Logistics(store);
     const traccar = new TraccarTracking(store);
@@ -101,6 +102,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     app.use('/api',async(req,_res,next)=>{const actor=await auth(req);ensure(actor.role!=='CUSTOMER','FORBIDDEN','Este recurso es interno de operaciones.',403);next();});
     app.get('/api/bootstrap', async (req, res) => { const actor = await auth(req); res.json({ ...await domain.bootstrap(actor), tracking: { ...tracking.status(actor.orgId), traccar: await traccar.health() } }); });
     app.get('/api/company',async(req,res)=>res.json(await new CompanyAdministration(store).read(await auth(req))));
+    installBillingRoutes(app,store,auth);
     app.post('/api/company',async(req,res)=>res.json(await new CompanyAdministration(store).update(await auth(req),req.body)));
     app.post('/api/users/:id/delete',async(req,res)=>res.json(await new CompanyAdministration(store).remove(await auth(req),String(req.params.id),req.body)));
     app.post('/api/users/:id/access',async(req,res)=>res.json(await new CompanyAdministration(store).setAccess(await auth(req),String(req.params.id),req.body)));

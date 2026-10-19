@@ -90,7 +90,7 @@ export class PostgresStore implements Database {
   }
   async verify() {
     const versions = await this.all('SELECT version FROM schema_migrations ORDER BY version');
-    if (versions.map(row => row.version).join(',') !== '1,2,3,4,5,6,7,8,9,10,11,12,13,14') throw new Error('La base de Nexora no tiene las migraciones esperadas.');
+    if (versions.map(row => row.version).join(',') !== '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15') throw new Error('La base de Nexora no tiene las migraciones esperadas.');
   }
   async close() { await this.pool.end(); }
 }

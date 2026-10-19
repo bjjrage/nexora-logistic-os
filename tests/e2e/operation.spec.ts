@@ -123,3 +123,35 @@ test('browser: isolated API fixtures → dispatch → photo evidence → Nexora 
  await page.getByRole('button',{name:'Cerrar ruta',exact:true}).click();
  await expect.poll(async()=>{const b=await(await page.request.get('/api/bootstrap')).json();return b.routes.find((r:any)=>r.id===route)?.state;}).toBe('OPERATIONALLY_CLOSED');
 });
+
+
+test('billing: admin setup, customer, issuer, draft, edit, confirm, print data and fiscal gate',async({page})=>{
+ const crashes:string[]=[];page.on('pageerror',e=>crashes.push(e.message));
+ const headers={'X-Requested-With':'logistics-os'};
+ const send=async(path:string,data:object)=>{const r=await page.request.post(path,{headers,data:{commandId:randomUUID(),...data}});expect(r.ok(),await r.text()).toBeTruthy();return r.json();};
+ const session=await (await page.request.get('/api/session')).json();
+ if(session.setupRequired)await send('/api/setup',{organizationName:'QA Facturación',timezone:'America/Asuncion',username:'qa-browser',password:'QA-Browser-Isolated-2026!'});
+ else await send('/api/login',{username:'qa-browser',password:'QA-Browser-Isolated-2026!'});
+ await send('/api/clients',{name:'Cliente facturación E2E',legalName:'Cliente factura S.A.',taxId:'80022222-1',address:'Dirección sintética'});
+ await page.goto('/');await page.getByRole('button',{name:'Facturación',exact:true}).click();
+ await page.getByRole('button',{name:'Datos del emisor',exact:true}).click();
+ await page.getByLabel('Razón social',{exact:true}).fill('Nexora QA fiscal');await page.getByLabel('RUC con dígito verificador').fill('80033333-2');await page.getByLabel('Dirección fiscal').fill('Oficina de prueba');
+ await page.getByRole('button',{name:'Guardar datos del emisor'}).click();await expect(page.getByRole('status')).toContainText('Datos del emisor guardados');
+ await page.getByRole('button',{name:'Proformas',exact:true}).click();await page.getByRole('button',{name:'Nueva proforma'}).click();
+ await page.getByRole('combobox',{name:'Cliente',exact:true}).selectOption({label:'Cliente facturación E2E'});
+ await page.getByLabel('Descripción',{exact:true}).fill('Distribución QA');await page.getByLabel('Cantidad',{exact:true}).fill('2');await page.getByLabel('Precio unitario (Gs.)',{exact:true}).fill('55000');
+ await page.getByRole('button',{name:'Guardar borrador'}).click();await expect(page.getByRole('status')).toContainText('Borrador guardado');
+ await page.getByRole('button',{name:'Abrir PF-000001'}).click();await expect(page.locator('.billing').getByText(/SIN VALIDEZ FISCAL · Borrador/)).toBeVisible();
+ await page.getByRole('button',{name:'Editar',exact:true}).click();await page.getByLabel('Cantidad',{exact:true}).fill('3');await page.getByRole('button',{name:'Guardar borrador'}).click();
+ await page.getByRole('button',{name:'Abrir PF-000001'}).click();await page.getByRole('button',{name:'Confirmar proforma'}).click();await expect(page.getByRole('status')).toContainText('Proforma confirmada');
+ await page.reload();await page.getByRole('button',{name:'Facturación',exact:true}).click();await page.getByRole('button',{name:'Abrir PF-000001'}).click();
+ await expect(page.getByRole('button',{name:'Editar',exact:true})).toHaveCount(0);await expect(page.locator('.billing').getByText('SIN VALIDEZ FISCAL · Confirmada')).toBeVisible();
+ const download=page.waitForEvent('download');await page.getByRole('button',{name:'Exportar datos'}).click();expect((await download).suggestedFilename()).toBe('PF-000001.json');
+ await page.screenshot({path:'.local/billing-desktop.png',fullPage:true});
+ await page.setViewportSize({width:390,height:844});await page.screenshot({path:'.local/billing-mobile.png',fullPage:true});
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
+ await page.setViewportSize({width:1280,height:720});
+ await page.emulateMedia({media:'print'});await expect(page.locator('#billing-print-view')).toBeVisible();await expect(page.locator('#billing-print-view')).toContainText('Distribución QA');await page.emulateMedia({media:'screen'});
+ await page.getByRole('button',{name:'Emisión electrónica',exact:true}).click();await expect(page.getByRole('heading',{name:'Activar factura electrónica'})).toBeVisible();await expect(page.getByText('Pendiente de habilitación',{exact:true})).toBeVisible();
+ expect(crashes).toEqual([]);
+});

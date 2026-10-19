@@ -1,4 +1,4 @@
-import { ChangeEvent, Component, ErrorInfo, FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, Component, ErrorInfo, FormEvent, ReactNode, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MaintenancePanel from './MaintenancePanel';
 import TaskDisclosure from './TaskDisclosure';
 import ReturnOperations from './ReturnOperations';
@@ -11,6 +11,7 @@ import InventoryPanel from './InventoryPanel';
 import CustomerPortal from './CustomerPortal';
 import ClientsPanel, {type ClientRecord} from './ClientsPanel';
 import CompanyPanel from './CompanyPanel';
+const BillingPanel=lazy(()=>import('./BillingPanel'));
 import {api,type ApiProblem} from './api';
 import {reportClientError,sourcePosition} from './diagnostics';
 import PasswordReset from './PasswordReset';
@@ -129,7 +130,7 @@ type Bootstrap = {
   tracking: { status: string; message: string };
 };
 
-type Page = "home" | "shipments" | "routes" | "fleet" | "clients" | "tracking" | "inventory" | "orders" | "customerAccess" | "company";
+type Page = "home" | "shipments" | "routes" | "fleet" | "clients" | "tracking" | "inventory" | "orders" | "customerAccess" | "company" | "billing";
 type Action = (path: string, payload: Record<string, unknown>, successMessage: string,onResult?:(result:Record<string,unknown>)=>void) => Promise<boolean>;
 type EvidenceUpload = (parcelId: string | null, file: File) => Promise<string | null>;
 
@@ -555,6 +556,7 @@ function AppContent() {
       { id: "shipments", label: "Envíos", icon: <Package /> },
       { id: "routes", label: "Rutas", icon: <RouteIcon /> },
       { id: "tracking", label: "Tracking", icon: <Radio /> },
+      ...(role === "ADMIN" ? [{ id: "billing" as Page, label: "Facturación", icon: <ClipboardList /> }] : []),
       ...(role === "ADMIN" ? [{ id: "company" as Page, label: "Empresa y equipo", icon: <Users /> }] : []),
       { id: "clients", label: "Clientes", icon: <Users /> },
       { id: "fleet", label: "Flota", icon: <Truck /> },
@@ -600,6 +602,7 @@ function AppContent() {
           {page === "fleet" && !isDriver && <FleetView data={bootstrap} action={mutate} busy={pending} uploadEvidence={uploadEvidence} role={role} />}
           {page === "clients" && isOpsRole(role) && <ClientsPanel profileEnabled={bootstrap.clientProfilesEnabled===true} initialClientId={preferredClientId} clients={bootstrap.clients} shipments={bootstrap.shipments} canManage={true} action={mutate} busy={pending} actionError={error} onInventory={(clientId,view)=>{changePage('inventory');setInventoryEntry({clientId,view});}}/>}
           {page === "company" && role === "ADMIN" && <CompanyPanel organization={bootstrap.organization} currentUserId={session.user.id} action={mutate} busy={pending} actionError={error} onFleet={()=>changePage('fleet')}/>}
+          {page === "billing" && role === "ADMIN" && <Suspense fallback={<p role="status">Cargando facturación…</p>}><BillingPanel clients={bootstrap.clients}/></Suspense>}
           {page === "inventory" && !isDriver && <InventoryPanel key={inventoryEntry?inventoryEntry.clientId+':'+inventoryEntry.view:'inventory'} initialClientId={inventoryEntry?.clientId} initialView={inventoryEntry?.view} onReturnToClient={inventoryEntry?(clientId)=>changePage('clients',clientId):undefined} section="inventory" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
           {page === "orders" && !isDriver && <InventoryPanel section="orders" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
           {page === "customerAccess" && role === "ADMIN" && <InventoryPanel section="customerAccess" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
@@ -1307,7 +1310,7 @@ function canSendReturnToSender(state: string): boolean {
 
 function pageLabel(page: Page): string {
   const labels: Record<string, string> = { home: "Inicio", shipments: "Envíos", routes: "Rutas", fleet: "Flota", clients: "Clientes", company: "Empresa y equipo", tracking: "Tracking" };
-  return labels[page] ?? ({ inventory: "Inventario", orders: "Pedidos", customerAccess: "Accesos cliente" } as Partial<Record<Page, string>>)[page] ?? page;
+  return labels[page] ?? ({ inventory: "Inventario", orders: "Pedidos", customerAccess: "Accesos cliente", billing: "Facturación" } as Partial<Record<Page, string>>)[page] ?? page;
 }
 
 function errorMessage(value: unknown): string {

@@ -4,7 +4,7 @@
     ['inicio','Antes de operar','01'],['empresa','Empresa y equipo','02'],['clientes','Clientes','03'],
     ['inventario','Inventario','04'],['pedidos','Pedidos','05'],['envios','Envíos','06'],
     ['flota','Flota','07'],['rutas','Rutas y reparto','08'],['tracking','Tracking','09'],
-    ['accesos','Accesos y control','10']
+    ['accesos','Accesos y control','10'],['facturacion','Facturación','11']
   ].map(([id,name,icon])=>({id,name,icon}));
   const A='Administración', O='Coordinación', D='Depósito', C='Chofer', U='Cliente';
   const guides=[];
@@ -223,12 +223,27 @@
     s('Separá el tipo de problema','¿Falta catálogo, stock, permisos, control de salida o GPS? Revisá el dato relacionado.','Ver diagnóstico','Buscá la causa más cercana en vez de registrar otra operación duplicada.',{rows:[['Código no encontrado','Cliente y catálogo'],['Reserva rechazada','Stock disponible del mismo SKU/cliente'],['Despacho bloqueado','Carga, horario y controles'],['No hay GPS','ID/URL, permisos, vínculo y medición']]}),
     s('Guardá la referencia del error','Si el problema persiste, anotá pantalla, acción, hora y referencia del error.','Preparar información de soporte','El equipo puede investigar la operación sin pedirte contraseñas.',{fields:[f('Pantalla','Rutas → Ruta Demo'),f('Acción','Despachar'),f('Mensaje','Transcribir el aviso exacto')],tip:'No compartas contraseñas, enlaces de recuperación, secretos GPS ni credenciales de base.'})
   ]);
+  g('facturacion-emisor','facturacion','Completar los datos fiscales de Nexora','Preparar el emisor de las proformas.',[A],'Ingresar con una cuenta de Administración.',[
+    s('Abrí Facturación','Elegí Datos del emisor. Son los datos de Nexora, no los del cliente.','Abrir emisor','Se abre la ficha fiscal de la empresa operadora.',{path:'Facturación → Datos del emisor'}),
+    s('Cargá los datos de Nexora','Completá razón social, RUC con dígito verificador y dirección fiscal.','Guardar datos del emisor','Estos datos se copian al confirmar cada proforma.',{fields:[f('Razón social','Nexora de ejemplo'),f('RUC con dígito verificador','RUC FICTICIO'),f('Dirección fiscal','Dirección de ejemplo')],why:'No ingreses claves, certificados ni CSC en el formulario. Elegir modalidad no conecta por sí solo a la DNIT.'})
+  ]);
+  g('facturacion-proforma','facturacion','Preparar y confirmar una proforma','Cargar los servicios que Nexora cobra al cliente.',[A],'Cliente con razón social, RUC y dirección; datos de Nexora completos.',[
+    s('Elegí al cliente','En Facturación → Proformas, abrí Nueva proforma.','Nueva proforma','La proforma se prepara para un cliente del OS.',{fields:[f('Cliente','Demo Hogar',['Demo Hogar','Demo Textil'])],path:'Facturación → Proformas'}),
+    s('Cargá el servicio','Indicá descripción, cantidad entera y precio unitario con IVA incluido.','Guardar borrador','El ejemplo suma 110.000 Gs. y queda editable.',{fields:[f('Descripción','Distribución de ejemplo'),f('Cantidad','2'),f('Precio unitario (Gs.)','55000'),f('IVA','10 %',['10 %','5 %','Exento'])],why:'La tasa debe corresponder al servicio y ser revisada con el contador. Un envío asociado debe estar entregado y queda reservado para evitar duplicarlo.'}),
+    s('Revisá antes de confirmar','Abrí la proforma y verificá datos e importes.','Confirmar proforma','Los datos e importes quedan fijos. La proforma sigue SIN VALIDEZ FISCAL.',{rows:[['Cliente','Demo Hogar · ejemplo'],['Total','110.000 Gs.'],['Estado','Borrador']],why:'Confirmar no emite una factura fiscal y seleccionar Contado no registra un cobro.'}),
+    s('Compartí o corregí la preparación','Usá Imprimir / PDF o Exportar datos. Para corregir una confirmada, descartala y creá otra.','Imprimir proforma de ejemplo','La impresión conserva el aviso SIN VALIDEZ FISCAL. Descartar libera los envíos asociados.',{tip:'El JSON exportado es un formato de Nexora, no un XML fiscal ni un archivo de importación oficial de DNIT.'})
+  ]);
+  g('facturacion-electronica','facturacion','Entender qué falta para emitir','Separar la proforma de la factura electrónica.',[A],'Coordinar los trámites con el contador.',[
+    s('Consultá la habilitación','Abrí Facturación → Emisión electrónica.','Ver pasos pendientes','La emisión permanece bloqueada mientras falta la conexión fiscal.',{path:'Facturación → Emisión electrónica',rows:[['Proformas','Preparación comercial'],['Factura electrónica','Pendiente de habilitación e integración']]}),
+    s('Definí la modalidad','Confirmá con el contador si corresponde e-Kuatia, un proveedor con API o e-Kuatia’i.','Registrar decisión de ejemplo','La modalidad define el trámite y el desarrollo del conector.',{why:'Obtener timbrado no termina la integración: faltan firma, envío y consulta, aprobación, conservación, KuDE y eventos, probados antes de producción.'})
+  ]);
   guides.find(g=>g.id==='catalogo').steps[1].download='catalogo';
   guides.find(g=>g.id==='pedido-importar').steps[0].download='pedidos';
   const journeys=[
     {id:'completo',title:'De recibir a entregar',description:'El circuito de productos, de punta a punta.',ids:['cliente-alta','circuito','deposito','catalogo','recibir-cantidad','pedido-importar','pedido-reservar','chofer','vehiculo','telefono','telefono-vehiculo','ruta-crear','ruta-asignar','ruta-gps','ruta-confirmar','ruta-cargar','inspeccion','ruta-despachar','entrega','ruta-cerrar','web-codigo']},
     {id:'bultos',title:'Repartir bultos sueltos',description:'Sin catálogo ni inventario por producto.',ids:['cliente-alta','circuito','envio-crear','envio-recibir','ruta-crear','ruta-asignar','ruta-gps','ruta-confirmar','ruta-cargar','ruta-despachar','entrega','ruta-cerrar']},
-    {id:'gps',title:'Conectar y probar mi celular',description:'Teléfono → vehículo → ruta → mapa.',ids:['circuito','telefono','telefono-vehiculo','ruta-gps','mapa','web-codigo']}
+    {id:'gps',title:'Conectar y probar mi celular',description:'Teléfono → vehículo → ruta → mapa.',ids:['circuito','telefono','telefono-vehiculo','ruta-gps','mapa','web-codigo']},
+    {id:'facturacion',title:'Preparar la facturación',description:'Emisor → servicios del cliente → proforma → habilitación pendiente.',ids:['facturacion-emisor','facturacion-proforma','facturacion-electronica']}
   ];
   window.NEXORA_MANUAL={modules,guides,journeys,roles:[A,O,D,C,U]};
 })();
