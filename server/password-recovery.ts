@@ -1,3 +1,4 @@
+import {MIN_PASSWORD} from './validation.ts';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import type {Database} from './database.ts';
@@ -21,7 +22,7 @@ export class PasswordRecovery {
   });
  }
  async redeem(input:unknown){
-  const body=z.object({token:z.string().regex(/^[a-f0-9]{64}$/),password:z.string().min(6).max(128)}).strict().parse(input);
+  const body=z.object({token:z.string().regex(/^[a-f0-9]{64}$/),password:z.string().min(MIN_PASSWORD).max(128)}).strict().parse(input);
   return this.store.transaction(async()=>{
    const row=await this.store.one('SELECT * FROM password_recovery WHERE token_hash=? AND used_at IS NULL AND expires_at>?',hash(body.token),new Date().toISOString());
    ensure(row?.issuer_id,'FORBIDDEN','El enlace no es válido o venció. Solicitá uno nuevo a Administración.',401);

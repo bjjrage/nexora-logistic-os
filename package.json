@@ -19,6 +19,7 @@
     "release:check": "node scripts/check-release.ts",
     "test:postgres": "node --env-file=.env --test --test-concurrency=1 tests/postgres.integration.ts tests/postgres.traccar.ts tests/postgres.company.ts tests/postgres.client-profiles.ts",
     "check:secrets": "node scripts/check-secrets.mjs",
+    "check:secrets:history": "node scripts/check-secrets-history.mjs",
     "check:migrations": "node scripts/check-migrations.ts",
     "seed:demo": "node scripts/seed-demo.ts",
     "preview": "node scripts/preview.ts start",

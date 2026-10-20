@@ -6,6 +6,7 @@ import { loadEnvFile } from 'node:process';
 import { PostgresStore } from './postgres.ts';
 import type { Database } from './database.ts';
 import {Diagnostics} from './observability.ts';
+import {alertingSink} from './alerts.ts';
 
 if (existsSync('.env')) loadEnvFile('.env');
 if(!process.env.RELEASE_SHA&&process.env.RAILWAY_GIT_COMMIT_SHA)process.env.RELEASE_SHA=process.env.RAILWAY_GIT_COMMIT_SHA;
@@ -19,7 +20,7 @@ if(store instanceof PostgresStore) await store.verify();
 const port=Number(process.env.PORT??3001);
 const host=process.env.HOST??'127.0.0.1';
 if(!Number.isInteger(port)||port<1||port>65535) throw new Error('PORT debe ser un puerto TCP válido.');
-const diagnostics=new Diagnostics();
+const diagnostics=new Diagnostics(alertingSink());
 const server=createApp(store,undefined,undefined,diagnostics).listen(port,host,()=>diagnostics.emit('server.started',{host,port,database:store.kind}));
 const shutdown=()=>{setTimeout(()=>process.exit(1),10000).unref();server.close(async()=>{await store.close();process.exit(0);});server.closeIdleConnections();};
 process.on('SIGINT',shutdown);process.on('SIGTERM',shutdown);

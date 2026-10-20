@@ -1,3 +1,4 @@
+import {MIN_PASSWORD} from './validation.ts';
 import type { Express, Request } from 'express';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -7,7 +8,7 @@ import { Logistics } from './domain.ts';
 import { ensure } from './errors.ts';
 import { camel } from './db.ts';
 
-const createSchema=z.object({commandId:z.uuid(),clientId:z.uuid(),name:z.string().trim().min(1).max(200),username:z.string().trim().min(3).max(80).regex(/^[a-zA-Z0-9_.@-]+$/),password:z.string().min(6).max(128)});
+const createSchema=z.object({commandId:z.uuid(),clientId:z.uuid(),name:z.string().trim().min(1).max(200),username:z.string().trim().min(3).max(80).regex(/^[a-zA-Z0-9_.@-]+$/),password:z.string().min(MIN_PASSWORD).max(128)});
 export function installCustomerAccess(app:Express,store:Database,auth:(req:Request)=>Promise<Actor>) {
   const domain=new Logistics(store);
   app.get('/api/customer-access',async(req,res)=>{
