@@ -52,6 +52,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     const auth = async (req: Request): Promise<Actor> => { const actor = await actorFromRequest(store, req); ensure(actor, 'FORBIDDEN', 'Iniciá sesión para continuar.', 401); const context=requestContext.getStore();if(context){context.userId=actor.id;context.orgId=actor.orgId;} return actor; };
     installLivePortal(app,store,auth);
     const loginAttempts = new WindowLimiter(20,60000);
+    const userAttempts = new WindowLimiter(10,300000);
     const recovery=new PasswordRecovery(store),recoveryIssues=new WindowLimiter(20,3600000);
     const loginLimit = (req: Request) => {
         ensure(loginAttempts.allow(req.ip??req.socket.remoteAddress??'local'),'FORBIDDEN','Demasiados intentos. Esperá un minuto.',429);
@@ -79,6 +80,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     app.post('/api/login', async (req, res) => {
         loginLimit(req);
         const b = schemas.login.parse(req.body);
+        ensure(userAttempts.allow(b.username.toLowerCase()),'FORBIDDEN','Demasiados intentos para este usuario. Esperá unos minutos.',429);
         let user = await store.one('SELECT id,password_hash FROM users WHERE username=? AND enabled=1', b.username);
         const customer=!user;
         if(customer) user=await store.one('SELECT id,password_hash FROM customer_accounts WHERE username=? AND enabled=1',b.username);
