@@ -78,7 +78,7 @@ export class Logistics {
     }
     async createDriver(actor: Actor, b: Row) {
         return await this.command(actor, 'drivers.create', b, OPS, async () => {
-            ensure(!await this.store.one('SELECT id FROM customer_accounts WHERE username=?',b.username),'VALIDATION_ERROR','El nombre de usuario ya existe.',409);
+            ensure(!await this.store.one('SELECT id FROM users WHERE lower(username)=lower(?)',b.username)&&!await this.store.one('SELECT id FROM customer_accounts WHERE lower(username)=lower(?)',b.username),'VALIDATION_ERROR','El nombre de usuario ya existe, aunque cambien las mayúsculas.',409);
             const id = randomUUID();
             await this.store.run('INSERT INTO drivers VALUES(?,?,?,1)', id, actor.orgId, b.name);
             await this.store.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,?)', randomUUID(), actor.orgId, b.username, b.name, passwordHash(b.password), 'DRIVER', id);
@@ -87,7 +87,7 @@ export class Logistics {
     }
     async createUser(actor: Actor, b: Row) {
         return await this.command(actor, 'users.create', b, ['ADMIN'], async () => {
-            ensure(!await this.store.one('SELECT id FROM customer_accounts WHERE username=?',b.username),'VALIDATION_ERROR','El nombre de usuario ya existe.',409);
+            ensure(!await this.store.one('SELECT id FROM users WHERE lower(username)=lower(?)',b.username)&&!await this.store.one('SELECT id FROM customer_accounts WHERE lower(username)=lower(?)',b.username),'VALIDATION_ERROR','El nombre de usuario ya existe, aunque cambien las mayúsculas.',409);
             const id = randomUUID();
             await this.store.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)', id, actor.orgId, b.username, b.name, passwordHash(b.password), b.role);
             return { id };

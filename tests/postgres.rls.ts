@@ -20,12 +20,16 @@ test('isolated PostgreSQL: direct portal RLS denies foreign tenants, membership 
  const denied=async(sql:string,args:unknown[]=[])=>{await db.query('SAVEPOINT denial');try{await assert.rejects(db.query(sql,args),(e:any)=>e.code==='42501');}finally{await db.query('ROLLBACK TO SAVEPOINT denial');}};
  await denied("UPDATE public.portal_memberships SET company_id=$1 WHERE user_id=$2",[ca,b]);
  await denied("UPDATE nexora.users SET role='ADMIN'");
- await denied('SELECT * FROM nexora.client_profiles');await denied('SELECT * FROM nexora.password_recovery');
+ await denied('SELECT * FROM nexora.client_profiles');await denied('SELECT * FROM nexora.password_recovery');await denied('SELECT * FROM nexora.org_owners');
  await denied(`INSERT INTO public.portal_shipping_requests(id,company_id,reference,origin_text,destination_text,recipient_name,parcel_count) VALUES($1,$2,'QA-CROSS','A','B','QA',1)`,[randomUUID(),ca]);
  await denied(`DELETE FROM public.portal_shipping_requests WHERE id=$1`,[ra]);
  await denied("SELECT nexora.portal_registered_user('rls-a@example.test')");
  await db.query('RESET ROLE');await db.query('SET LOCAL ROLE anon');
- await denied('SELECT * FROM public.portal_memberships');
+ await denied('SELECT * FROM public.portal_memberships');await denied('SELECT * FROM nexora.org_owners');
  assert.equal((await db.query("SELECT public.track_order('B-FFFFFFFFFFFFFFFFFFFF') AS result")).rows[0].result,null);
+ await db.query('RESET ROLE');await db.query('SET LOCAL ROLE nexora_runtime');
+ await db.query('SELECT * FROM nexora.org_owners WHERE false');
+ await denied('DELETE FROM nexora.org_owners WHERE false');
+ await denied("UPDATE nexora.org_owners SET user_id=user_id WHERE false");
  }finally{await db.query('ROLLBACK');await db.end();}
 });

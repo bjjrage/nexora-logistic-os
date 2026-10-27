@@ -82,8 +82,14 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
         const b = schemas.login.parse(req.body);
         ensure(userAttempts.allow(b.username.toLowerCase()),'FORBIDDEN','Demasiados intentos para este usuario. Esperá unos minutos.',429);
         let user = await store.one('SELECT id,password_hash FROM users WHERE username=? AND enabled=1', b.username);
-        const customer=!user;
-        if(customer) user=await store.one('SELECT id,password_hash FROM customer_accounts WHERE username=? AND enabled=1',b.username);
+        let customer=false;
+        if(!user){user=await store.one('SELECT id,password_hash FROM customer_accounts WHERE username=? AND enabled=1',b.username);customer=!!user;}
+        if(!user){
+            const staff=await store.all('SELECT id,password_hash FROM users WHERE lower(username)=lower(?) AND enabled=1',b.username);
+            const customers=await store.all('SELECT id,password_hash FROM customer_accounts WHERE lower(username)=lower(?) AND enabled=1',b.username);
+            // Never guess between legacy accounts whose names differ only by case.
+            if(staff.length+customers.length===1){user=staff[0]??customers[0];customer=!staff.length;}
+        }
         ensure(checkLogin(b.password, user?.password_hash) && user, 'FORBIDDEN', 'Usuario o contraseña incorrectos.', 401);
         await createSession(store, user.id, res,customer);
         res.json({ id: user.id });

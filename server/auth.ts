@@ -10,6 +10,7 @@ export interface Actor {
     role: Role;
     driverId: string | null;
     clientId?: string | null;
+    isSuperAdmin?: boolean;
 }
 export const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 export function passwordHash(password: string) {
@@ -34,8 +35,8 @@ export async function actorFromRequest(store: Database, req: Request): Promise<A
     const token = req.headers.cookie?.split(';').map(x => x.trim()).find(x => x.startsWith('logistics_session='))?.split('=')[1];
     if (!token || !/^[a-f0-9]{64}$/.test(token))
         return null;
-    const user = await store.one('SELECT u.id,u.org_id,u.name,u.role,u.driver_id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.enabled=1', hash(token), new Date().toISOString());
-    if(user) return { id: user.id, orgId: user.org_id, name: user.name, role: user.role, driverId: user.driver_id, clientId:null };
+    const user = await store.one('SELECT u.id,u.org_id,u.name,u.role,u.driver_id,CASE WHEN EXISTS(SELECT 1 FROM org_owners o WHERE o.org_id=u.org_id AND o.user_id=u.id) THEN 1 ELSE 0 END AS is_super_admin FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.enabled=1', hash(token), new Date().toISOString());
+    if(user) return { id: user.id, orgId: user.org_id, name: user.name, role: user.role, driverId: user.driver_id, clientId:null, isSuperAdmin:!!user.is_super_admin };
     const account=await store.one('SELECT a.id,a.org_id,a.name,a.client_id FROM customer_sessions s JOIN customer_accounts a ON a.id=s.account_id WHERE s.token_hash=? AND s.expires_at>? AND a.enabled=1',hash(token),new Date().toISOString());
     return account ? {id:account.id,orgId:account.org_id,name:account.name,role:'CUSTOMER',driverId:null,clientId:account.client_id} : null;
 }

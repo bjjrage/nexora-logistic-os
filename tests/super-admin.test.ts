@@ -1,0 +1,32 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {Store} from '../server/db.ts';
+import {setup,hash,type Actor} from '../server/auth.ts';
+import {Logistics} from '../server/domain.ts';
+import {CompanyAdministration} from '../server/company.ts';
+import {PasswordRecovery} from '../server/password-recovery.ts';
+import {createApp} from '../server/app.ts';
+
+test('Super Admin has separate protected identity; another admin cannot disable, delete or reset it',async t=>{
+ const store=new Store(':memory:');t.after(()=>store.close());
+ const base=await setup(store,{organizationName:'QA',timezone:'America/Asuncion',username:'Marcelo',password:'QA-owner-123'});
+ const owner:Actor={id:base.userId,orgId:base.orgId,name:'Marcelo',role:'ADMIN',driverId:null,isSuperAdmin:true},domain=new Logistics(store),command=()=>({commandId:randomUUID()});
+ const otherId=(await domain.createUser(owner,{...command(),name:'Magy QA',username:'Magy',password:'QA-admin-123',role:'ADMIN'})).id;
+ const other:Actor={id:otherId,orgId:base.orgId,name:'Magy QA',role:'ADMIN',driverId:null};
+ const recovery=new PasswordRecovery(store),company=new CompanyAdministration(store);
+ const legacy=await recovery.issue(other,{kind:'USER',id:owner.id});
+ await store.run('INSERT INTO org_owners(org_id,user_id,created_at) VALUES(?,?,?)',owner.orgId,owner.id,new Date().toISOString());
+ await assert.rejects(()=>company.setAccess(other,owner.id,{...command(),enabled:false}),(e:any)=>e.code==='FORBIDDEN');
+ await assert.rejects(()=>company.remove(other,owner.id,command()),(e:any)=>e.code==='FORBIDDEN');
+ await assert.rejects(()=>recovery.issue(other,{kind:'USER',id:owner.id}),(e:any)=>e.code==='FORBIDDEN');
+ await assert.rejects(()=>recovery.redeem({token:legacy.token,password:'QA-reset-123'}),(e:any)=>e.code==='FORBIDDEN');
+ const team=(await company.read(other)).team;assert.equal(team.find(u=>u.id===owner.id)?.isSuperAdmin,true);assert.equal(team.find(u=>u.id===other.id)?.isSuperAdmin,false);
+ const ownRecovery=await recovery.issue(owner,{kind:'USER',id:owner.id});assert.equal((await recovery.redeem({token:ownRecovery.token,password:'QA-new-owner-123'})).reset,true);
+ const token='a'.repeat(64);await store.run('INSERT INTO sessions VALUES(?,?,?)',hash(token),owner.id,new Date(Date.now()+60000).toISOString());
+ const server=createApp(store).listen(0,'127.0.0.1');t.after(()=>new Promise<void>(r=>server.close(()=>r())));await new Promise<void>(r=>server.once('listening',r));
+ const response=await fetch('http://127.0.0.1:'+(server.address() as {port:number}).port+'/api/session',{headers:{Cookie:'logistics_session='+token}});
+ assert.equal((await response.json()).user.isSuperAdmin,true);
+ await company.setAccess(owner,other.id,{...command(),enabled:false});
+ assert.equal((await store.one('SELECT enabled FROM users WHERE id=?',owner.id))?.enabled,1);
+});

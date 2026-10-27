@@ -19,8 +19,19 @@ test('importa Excel de reparto completo después de validar, sin crear pedidos a
  }
  const book=XLSX.read(buffer,{type:'buffer'}),catalog=XLSX.utils.sheet_to_json<unknown[]>(book.Sheets[book.SheetNames[1]],{header:1,defval:''}).slice(1).filter(row=>row[0]&&row[1]);
  const name='Excel QA '+randomUUID().slice(0,8),client=(await post('/api/clients',{name})).id;
- for(const row of catalog)await post('/api/inventory/products',{clientId:client,sku:String(row[0]),name:String(row[1]),tracking:'QUANTITY',weightGrams:100,volumeCm3:100});
- await page.goto('/');await page.getByRole('button',{name:'Pedidos',exact:true}).click();await page.getByRole('button',{name:'Importar pedido',exact:true}).first().click();
+ await page.goto('/');await page.getByRole('button',{name:'Clientes',exact:true}).click();
+ await page.getByRole('row').filter({hasText:name}).getByRole('button',{name:'Abrir ficha'}).click();
+ await page.getByRole('button',{name:'Importar catálogo',exact:true}).click();
+ const catalogCsv=XLSX.utils.sheet_to_csv(book.Sheets[book.SheetNames[1]]);
+ await page.getByLabel('Archivo CSV o Excel (.xlsx)').setInputFiles({name:'catalogo.csv',mimeType:'text/csv',buffer:Buffer.from(catalogCsv)});
+ await page.getByRole('button',{name:'Validar archivo',exact:true}).click();
+ await expect(page.getByText('No se guardó ningún producto.')).toBeVisible();
+ await expect(page.getByText('Sin indicar').first()).toBeVisible();await expect(page.getByRole('cell',{name:'Revisar'}).first()).toBeVisible();
+ await page.getByLabel('Seguimiento para filas nuevas sin tipo').selectOption('QUANTITY');
+ await page.getByRole('button',{name:'Validar archivo',exact:true}).click();await expect(page.getByRole('heading',{name:'Vista previa validada'})).toBeVisible();
+ await page.getByRole('button',{name:'Confirmar importación',exact:true}).click();await expect(page.getByText('Catálogo actualizado desde el archivo.')).toBeVisible();
+ const saved=await(await page.request.get('/api/inventory/products?clientId='+client)).json();expect(saved.items).toHaveLength(catalog.length);
+ await page.getByRole('button',{name:'Pedidos',exact:true}).click();await page.getByRole('button',{name:'Importar pedido',exact:true}).first().click();
  await page.getByRole('combobox',{name:'Cliente',exact:true}).selectOption(client);
  await page.getByLabel('Archivo Excel (.xlsx)').setInputFiles({name:'reparto.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer});
  await page.getByRole('button',{name:'Validar pedidos'}).click();await expect(page.getByText('20 pedido(s) de 20 aceptados.')).toBeVisible();

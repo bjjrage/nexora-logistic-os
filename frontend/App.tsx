@@ -21,7 +21,7 @@ import QuadOperationsPanel from './QuadOperationsPanel';
 import { LayoutDashboard, Package, Route as RouteIcon, Truck, Users, Radio, Plus, ArrowUpRight, ArrowRight, LogOut, ChevronRight, CircleAlert, Boxes, ClipboardList, Shield } from 'lucide-react';
 
 type Role = "ADMIN" | "OPERATIONS" | "DEPOT" | "DRIVER" | "CUSTOMER" | string;
-type User = { id: string; name: string; role: Role; driverId?: string | null; clientId?: string | null };
+type User = { id: string; name: string; role: Role; driverId?: string | null; clientId?: string | null; isSuperAdmin?: boolean };
 type Session = { user: User | null; setupRequired: boolean };
 type Entity = { id: string; [key: string]: unknown };
 type Client = Entity & ClientRecord;
@@ -583,7 +583,7 @@ function AppContent() {
         </nav></div>
         <div className="sidebar-footer">
           <a className="text-button" href="/manual.html" target="_blank" rel="noreferrer">Guía interactiva ↗</a>
-          <div className="user-chip" aria-label={'Cuenta en uso: '+bootstrap.user.name}><span className="avatar">{bootstrap.user.name.slice(0, 1).toUpperCase()}</span><span><strong>{bootstrap.user.name}</strong><small>{displayState(bootstrap.user.role)}</small></span></div>
+          <div className="user-chip" aria-label={'Cuenta en uso: '+bootstrap.user.name}><span className="avatar">{bootstrap.user.name.slice(0, 1).toUpperCase()}</span><span><strong>{bootstrap.user.name}</strong><small>{bootstrap.user.isSuperAdmin?'Super Admin':displayState(bootstrap.user.role)}</small></span></div>
           <button className="text-button signout" onClick={logout} disabled={pending}><LogOut aria-hidden="true" />Cerrar sesión</button>
         </div>
       </aside>
