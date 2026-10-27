@@ -25,7 +25,12 @@ try{
  await db.query(readFileSync('scripts/sql/tracking-worker-role.sql','utf8'));
  for(const file of readdirSync('supabase/migrations').filter(f=>f.endsWith('.sql')).sort()){
   if((await db.query('SELECT 1 FROM public.test_migrations WHERE version=$1',[file])).rowCount)continue;
-  await db.query('BEGIN');try{await db.query(readFileSync(`supabase/migrations/${file}`,'utf8').replace(/^\uFEFF/,''));await db.query('INSERT INTO public.test_migrations VALUES($1)',[file]);await db.query('COMMIT');}catch(e){await db.query('ROLLBACK');throw e;}
+  await db.query('BEGIN');try{
+   // The registration migration requires the real operator to exist. A fresh,
+   // strictly local test database has no production data, so seed a test operator.
+   if(file.endsWith('_individual_customer_registration.sql'))await db.query("INSERT INTO nexora.organizations(id,name,timezone) SELECT $1,'Nexora Logistic','America/Asuncion' WHERE NOT EXISTS(SELECT 1 FROM nexora.organizations WHERE lower(btrim(name))='nexora logistic')",[randomUUID()]);
+   await db.query(readFileSync(`supabase/migrations/${file}`,'utf8').replace(/^\uFEFF/,''));await db.query('INSERT INTO public.test_migrations VALUES($1)',[file]);await db.query('COMMIT');
+  }catch(e){await db.query('ROLLBACK');throw e;}
  }
  const password=randomBytes(32).toString('hex');
  await db.query(`ALTER ROLE nexora_runtime LOGIN PASSWORD '${password}'`);
