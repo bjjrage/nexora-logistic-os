@@ -3,6 +3,8 @@ import type { Database } from './database.ts';
 import type { Actor } from './auth.ts';
 import { Inventory, inventorySchemas, type InventoryActor } from './inventory.ts';
 import { CatalogImport } from './catalog-import.ts';
+import {parseOrdersXlsx} from './order-xlsx.ts';
+import {authorize} from './auth.ts';
 
 export type InventoryAuth = (req: Request) => Promise<Actor | InventoryActor>;
 const actorForInventory = async (auth: InventoryAuth, req: Request) => await auth(req) as InventoryActor;
@@ -12,6 +14,7 @@ const queryString = (value: unknown): string | undefined => typeof value === 'st
 export function installInventoryRoutes(app: Express, store: Database, auth: InventoryAuth) {
   const inventory = new Inventory(store);
   const catalog = new CatalogImport(store);
+  app.post('/api/orders/import/xlsx',async(req,res)=>{const actor=await auth(req);authorize(actor as Actor,['ADMIN','OPERATIONS']);res.json(parseOrdersXlsx(req.body));});
   app.get('/api/inventory/products',async(req,res)=>res.json(await inventory.catalogPage(await actorForInventory(auth,req),req.query)));
   app.get('/api/inventory/stock',async(req,res)=>res.json(await inventory.stockPage(await actorForInventory(auth,req),req.query)));
   app.get('/api/inventory/lookup',async(req,res)=>res.json(await inventory.lookupCode(await actorForInventory(auth,req),req.query)));

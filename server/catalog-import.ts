@@ -133,7 +133,7 @@ function parseCsv(source: string): FileContent {
   return { rows: records, errors: [] };
 }
 
-function preflightZip(buffer: Buffer): string | null {
+export function preflightZip(buffer: Buffer): string | null {
   if (buffer.length < 22 || buffer.readUInt32LE(0) !== 0x04034b50) return 'El archivo no es un Excel .xlsx válido.';
   const start = Math.max(0, buffer.length - 65_557);
   let eocd = -1;
