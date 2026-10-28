@@ -156,7 +156,7 @@ export class Logistics {
             ensure(await this.store.one('SELECT id FROM users WHERE org_id=? AND driver_id=? AND enabled=1',actor.orgId,b.driverId),'INVALID_TRANSITION','El acceso del chofer está suspendido.');
             if(b.vehicleId!==route.vehicle_id){
                 const loaded=await this.store.one("SELECT p.id FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id WHERE a.org_id=? AND a.route_id=? AND a.active=1 AND p.custody_type='VEHICLE' LIMIT 1",actor.orgId,id);
-                ensure(!loaded,'INVALID_TRANSITION','Antes de cambiar de vehículo, bajá al depósito los bultos cargados desde Paradas → Bajar al depósito.');
+                ensure(!loaded,'INVALID_TRANSITION','Antes de cambiar de vehículo, bajá al depósito los bultos desde la pestaña Bajar artículos.');
             }
             const setting=await this.store.one('SELECT provider FROM route_tracking_settings WHERE org_id=? AND route_id=?',actor.orgId,id);
             const provider=b.trackingProvider??setting?.provider??'QUADMINDS';
@@ -247,6 +247,8 @@ export class Logistics {
             await this.routeAvailability(r, actor, false);
             await validateRouteProvider(this.store,actor.orgId,id);
             const capacity = await this.capacity(r, actor);
+            const pending = await this.store.one("SELECT p.id FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id WHERE a.org_id=? AND a.route_id=? AND a.active=1 AND a.pickup=0 AND (p.state<>'LOADED' OR p.custody_type<>'VEHICLE' OR p.custody_id IS NULL OR p.custody_id<>?) LIMIT 1", actor.orgId, id, r.vehicle_id);
+            ensure(!pending, 'INVALID_TRANSITION', 'Primero cargá todos los artículos de esta ruta en el vehículo. Después confirmá la ruta.');
             await this.store.run("UPDATE routes SET state='READY',version=version+1 WHERE id=?", id);
             return { id, state: 'READY', version: r.version + 1, capacityVerified: capacity.verified };
         });
@@ -267,7 +269,7 @@ export class Logistics {
     async load(actor: Actor, id: string, b: Row) {
         return await this.command(actor, `routes.${id}.load`, b, DEPOT, async () => {
             const r = await this.route(id, actor, b.expectedVersion);
-            ensure(r.state === 'READY', 'INVALID_TRANSITION', 'La ruta debe estar confirmada.');
+            ensure(['DRAFT','READY'].includes(r.state), 'INVALID_TRANSITION', 'Solo se cargan artículos antes de salir de ruta.');
             const p = await this.store.one('SELECT p.* FROM parcels p JOIN route_assignments a ON a.parcel_id=p.id WHERE a.route_id=? AND p.code=? AND a.active=1 AND a.pickup=0 AND p.org_id=?', id, b.code, actor.orgId);
             ensure(p, 'NOT_FOUND', 'El bulto no pertenece al manifiesto de carga.', 404);
             if (p.state === 'LOADED' && p.custody_type === 'VEHICLE' && p.custody_id === r.vehicle_id)
@@ -275,7 +277,7 @@ export class Logistics {
             ensure(['RECEIVED', 'RETURNED_TO_DEPOT'].includes(p.state) && p.custody_type === 'DEPOT', 'INVALID_TRANSITION', 'El bulto no está en depósito.');
             await this.vehicleCapacity(actor,r.vehicle_id,[p]);
             await this.move(p, actor, 'LOADED', 'VEHICLE', r.vehicle_id, 'LOADED', b.commandId);
-            await this.bump(id);
+            await this.store.run("UPDATE routes SET state='DRAFT',version=version+1 WHERE id=? AND org_id=?",id,actor.orgId);
             return { id, version: r.version + 1 };
         });
     }
@@ -283,7 +285,7 @@ export class Logistics {
         const b=schemas.loadSelected.parse(input);
         return this.command(actor,`routes.${id}.load-selected`,b,DEPOT,async()=>{
             const route=await this.route(id,actor,b.expectedVersion);
-            ensure(route.state==='READY','INVALID_TRANSITION','Confirmá el plan de la ruta antes de cargar.');
+            ensure(['DRAFT','READY'].includes(route.state),'INVALID_TRANSITION','Solo se cargan artículos antes de salir de ruta.');
             const selected=await this.store.all(`SELECT p.* FROM parcels p JOIN route_assignments a ON a.parcel_id=p.id AND a.org_id=p.org_id WHERE a.org_id=? AND a.route_id=? AND a.active=1 AND a.pickup=0 AND p.id IN (${b.parcelIds.map(()=>'?').join(',')})`,actor.orgId,id,...b.parcelIds);
             ensure(selected.length===b.parcelIds.length,'NOT_FOUND','Algún bulto no pertenece a la carga de esta ruta.',404);
             const pending=selected.filter(p=>!(p.state==='LOADED'&&p.custody_type==='VEHICLE'&&p.custody_id===route.vehicle_id));
@@ -291,7 +293,7 @@ export class Logistics {
             if(!pending.length)return {id,version:route.version,alreadyLoaded:true,loaded:0};
             await this.vehicleCapacity(actor,route.vehicle_id,pending);
             for(const parcel of pending)await this.move(parcel,actor,'LOADED','VEHICLE',route.vehicle_id,'LOADED',b.commandId);
-            await this.bump(id);
+            await this.store.run("UPDATE routes SET state='DRAFT',version=version+1 WHERE id=? AND org_id=?",id,actor.orgId);
             return {id,version:route.version+1,loaded:pending.length};
         });
     }
@@ -335,11 +337,7 @@ export class Logistics {
                     await this.store.run('DELETE FROM stops WHERE org_id=? AND route_id=? AND shipment_id=? AND NOT EXISTS(SELECT 1 FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id WHERE a.org_id=stops.org_id AND a.route_id=stops.route_id AND a.active=1 AND p.shipment_id=stops.shipment_id)',actor.orgId,id,parcel.shipment_id);
                 }
             }
-            if(mode==='unload')await this.bump(id);
-            else{
-                const remaining=await this.store.one('SELECT id FROM route_assignments WHERE org_id=? AND route_id=? AND active=1 LIMIT 1',actor.orgId,id);
-                await this.store.run("UPDATE routes SET state=CASE WHEN state='READY' AND ?=0 THEN 'DRAFT' ELSE state END,version=version+1 WHERE id=? AND org_id=?",remaining?1:0,id,actor.orgId);
-            }
+            await this.store.run("UPDATE routes SET state='DRAFT',version=version+1 WHERE id=? AND org_id=?",id,actor.orgId);
             return single?{id,parcelId:parcelIds[0],...(mode==='unload'?{state:'RECEIVED'}:{shipmentId}),version:route.version+1}:{id,parcelIds,version:route.version+1,...(mode==='unload'?{unloaded:parcelIds.length}:{unassigned:parcelIds.length})};
         });
     }

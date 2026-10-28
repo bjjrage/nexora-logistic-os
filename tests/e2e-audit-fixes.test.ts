@@ -32,8 +32,8 @@ async function fixture(t:any){
   const id=await route();
   await domain.receive(actor,{...command(),shipmentId:p.shipment_id,codes:parcels.map(p=>p.code),location:'QA depot'});
   await domain.assign(actor,id,{...command(),expectedVersion:await version(id),parcelIds:parcels.map(p=>p.id),pickup:false});
-  await domain.ready(actor,id,{...command(),expectedVersion:await version(id)});
   for(const parcel of parcels)await domain.load(actor,id,{...command(),expectedVersion:await version(id),code:parcel.code});
+  await domain.ready(actor,id,{...command(),expectedVersion:await version(id)});
   await domain.inspect(actor,vehicleId,{...command(),odometer:0,fuelPercent:80,items:[{label:'QA brakes',severity:'OK',note:''}]});
   await domain.dispatch(actor,id,{...command(),expectedVersion:await version(id)});
   return {id,stop:(await store.one("SELECT * FROM stops WHERE route_id=? AND kind='DELIVERY'",id))!};
@@ -97,13 +97,13 @@ for(const dimension of ['weight','volume'])test('H3: la carga real de otras ruta
  const next=await f.shipment(dimension==='weight'?8000:1000,dimension==='volume'?8000:1000),r=await f.route();
  await f.domain.receive(f.actor,{...command(),shipmentId:next.shipment_id,codes:[next.code],location:'QA'});
  await f.domain.assign(f.actor,r,{...command(),expectedVersion:await f.version(r),parcelIds:[next.id],pickup:false});
- await f.domain.ready(f.actor,r,{...command(),expectedVersion:await f.version(r)});
  const expectedVersion=await f.version(r);
  await assert.rejects(()=>f.domain.load(f.actor,r,{...command(),expectedVersion,code:next.code}),errorCode('CAPACITY_EXCEEDED'));
  assert.equal((await f.store.one('SELECT state FROM parcels WHERE id=?',next.id))!.state,'RECEIVED');
  // Protección también al despachar datos legacy cargados antes de esta corrección.
  await f.store.run("UPDATE parcels SET state='LOADED',custody_type='VEHICLE',custody_id=? WHERE id=?",f.vehicleId,next.id);
- await assert.rejects(()=>f.domain.dispatch(f.actor,r,{...command(),expectedVersion}),errorCode('CAPACITY_EXCEEDED'));
+ await f.domain.ready(f.actor,r,{...command(),expectedVersion});
+ await assert.rejects(async()=>f.domain.dispatch(f.actor,r,{...command(),expectedVersion:await f.version(r)}),errorCode('CAPACITY_EXCEEDED'));
  assert.equal((await f.store.one('SELECT state FROM routes WHERE id=?',r))!.state,'READY');
 });
 
@@ -166,7 +166,6 @@ test('H3: carga de pedido de inventario tampoco puede sobrecargar el vehículo',
  const order=await f.inventory.createOrder(f.actor,{...command(),clientId:f.clientId,externalId:'QA capacity',orderDate:'2026-10-17',destination:'QA',recipientName:'QA',lines:[{productId:product.id,quantity:1}]});
  const reserved=await f.inventory.reserveOrder(f.actor,order.id,command()),route=await f.route(),parcel=reserved.parcels[0];
  await f.domain.assign(f.actor,route,{...command(),expectedVersion:await f.version(route),parcelIds:[parcel.id],pickup:false});
- await f.domain.ready(f.actor,route,{...command(),expectedVersion:await f.version(route)});
  const expectedVersion=await f.version(route);
  await assert.rejects(()=>f.inventory.loadOrder(f.actor,order.id,{...command(),routeId:route,expectedVersion,codes:[parcel.code]}),errorCode('CAPACITY_EXCEEDED'));
  assert.equal((await f.store.one('SELECT state FROM parcels WHERE id=?',parcel.id))!.state,'RECEIVED');
@@ -208,7 +207,6 @@ test('H3: dos cargas simultáneas no superan la capacidad compartida',async t=>{
   if(i===0)await f.store.run('UPDATE routes SET start_at=?,end_at=? WHERE id=?',new Date(Date.now()-7200000).toISOString(),new Date(Date.now()-3600000).toISOString(),route);
   await f.domain.receive(f.actor,{...command(),shipmentId:parcel.shipment_id,codes:[parcel.code],location:'QA'});
   await f.domain.assign(f.actor,route,{...command(),expectedVersion:await f.version(route),parcelIds:[parcel.id],pickup:false});
-  await f.domain.ready(f.actor,route,{...command(),expectedVersion:await f.version(route)});
   entries.push({route,parcel,version:await f.version(route)});
  }
  const results=await Promise.allSettled(entries.map(entry=>f.domain.load(f.actor,entry.route,{...command(),expectedVersion:entry.version,code:entry.parcel.code})));

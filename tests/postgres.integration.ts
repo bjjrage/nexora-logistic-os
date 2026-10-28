@@ -55,8 +55,8 @@ test('PostgreSQL: desreserva de ruta confirmada revierte stock y permite reserva
   const vehicle=(await domain.createVehicle(actor,{...cmd(),plate:'QA-'+randomUUID().slice(0,8),capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0})).id;
   const route=await domain.createRoute(actor,{...cmd(),name:'Ruta',driverId:driver,vehicleId:vehicle,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()});
   await domain.assign(actor,route.id,{...cmd(),expectedVersion:route.version,parcelIds:reserved.parcels.map((p:any)=>p.id),pickup:false});
-  await domain.ready(actor,route.id,{...cmd(),expectedVersion:(await db.one('SELECT version FROM routes WHERE id=?',route.id))!.version});
   await domain.loadSelected(actor,route.id,{...cmd(),expectedVersion:(await db.one('SELECT version FROM routes WHERE id=?',route.id))!.version,parcelIds:reserved.parcels.map((p:any)=>p.id)});
+  await domain.ready(actor,route.id,{...cmd(),expectedVersion:(await db.one('SELECT version FROM routes WHERE id=?',route.id))!.version});
   assert.equal((await db.one('SELECT status FROM inventory_orders WHERE id=?',order))!.status,'LOADED');
   const currentVersion=(await db.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
   await assert.rejects(domain.unloadSelected(actor,route.id,{...cmd(),expectedVersion:currentVersion,parcelIds:[reserved.parcels[0].id,randomUUID()]}));
@@ -186,9 +186,10 @@ test('Supabase: recepción, concurrencia protegida por constraints, despacho, fo
       const version=async()=> (await domain.route(route.id,actor)).version;
       await domain.assign(actor,route.id,{...command(),parcelIds:parcels.slice(0,2).map(p=>p.id),pickup:false,expectedVersion:await version()});
       await assert.rejects(db.transaction(()=>db.run('INSERT INTO route_assignments VALUES(?,?,?,?,?,?)',randomUUID(),orgId,conflict.id,parcels[0].id,0,1)),{code:'VERSION_CONFLICT'});
+
+      for(const parcel of parcels.slice(0,2))await domain.load(actor,route.id,{...command(),expectedVersion:await version(),code:parcel.code});
       await domain.ready(actor,route.id,{...command(),expectedVersion:await version()});
       await assert.rejects(db.transaction(()=>db.run("UPDATE routes SET state='READY' WHERE id=?",conflict.id)),{code:'VERSION_CONFLICT'});
-      for(const parcel of parcels.slice(0,2))await domain.load(actor,route.id,{...command(),expectedVersion:await version(),code:parcel.code});
       const document=await createDriverDocument(domain,actor,driver.id,{...command(),name:'Control QA',expiresAt:new Date(Date.now()-1000).toISOString(),blocksDispatch:true});
       await assert.rejects(domain.dispatch(actor,route.id,{...command(),expectedVersion:await version()}),{code:'INVALID_TRANSITION'});
       await renewDriverDocument(domain,actor,document.id,{...command(),expiresAt:new Date(Date.now()+86_400_000).toISOString()});

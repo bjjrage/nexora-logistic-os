@@ -8,6 +8,7 @@ import QuadMindsPanel from './QuadMindsPanel';
 import ClientDeliveryPanel from './ClientDeliveryPanel';
 import RouteSetup from './RouteSetup';
 import RouteLoadPanel from './RouteLoadPanel';
+import RouteParcelActions from './RouteParcelActions';
 import KpiDetails, { type KpiKind } from './KpiDetails';
 import InventoryPanel from './InventoryPanel';
 import CustomerPortal from './CustomerPortal';
@@ -184,7 +185,7 @@ function commandId(): string {
 
 function displayState(value?: string | null): string {
   if (!value) return "Sin estado";
-  const labels: Record<string,string> = {ADMIN:'Administración',OPERATIONS:'Coordinación logística',DEPOT:'Depósito',DRIVER:'Chofer',EXPECTED:'Esperado',RECEIVED:'Recibido',LOADED:'Cargado',IN_TRANSIT:'En tránsito',DELIVERED:'Entregado',RETURN_PENDING:'Retorno pendiente',RETURNED_TO_DEPOT:'Devuelto al depósito',RETURNED_TO_SENDER:'Devuelto al remitente',DRAFT:'Borrador',READY:'Plan confirmado',IN_PROGRESS:'En curso',OPERATIONALLY_CLOSED:'Cerrada operativamente',PENDING:'Pendiente',PARTIAL:'Parcial',COMPLETED:'Completada',FAILED:'Intento fallido',OPEN:'Abierta',RETURN_AUTHORIZED:'Devolución autorizada',RESOLVED:'Resuelta',AUTHORIZED:'Autorizada',AT_DEPOT:'En depósito',SENT_TO_SENDER:'Entregada al remitente',RECEIVER:'Nombre del receptor',RECEIVER_PHOTO:'Receptor y foto',CRITICAL:'Crítico',MINOR:'Menor',OK:'Correcto',SENDER:'Remitente',VEHICLE:'Vehículo',RECIPIENT:'Destinatario',PICKUP:'Retiro',DELIVERY:'Entrega',ABSENT:'Ausente',REFUSED:'Rechazado',ADDRESS_ISSUE:'Problema de dirección',DAMAGED:'Dañado',OTHER:'Otro'};
+  const labels: Record<string,string> = {ADMIN:'Administración',OPERATIONS:'Coordinación logística',DEPOT:'Depósito',DRIVER:'Chofer',EXPECTED:'Esperado',RECEIVED:'Recibido',LOADED:'Cargado',IN_TRANSIT:'En tránsito',DELIVERED:'Entregado',RETURN_PENDING:'Retorno pendiente',RETURNED_TO_DEPOT:'Devuelto al depósito',RETURNED_TO_SENDER:'Devuelto al remitente',DRAFT:'Borrador',READY:'Ruta confirmada',IN_PROGRESS:'En curso',OPERATIONALLY_CLOSED:'Cerrada operativamente',PENDING:'Pendiente',PARTIAL:'Parcial',COMPLETED:'Completada',FAILED:'Intento fallido',OPEN:'Abierta',RETURN_AUTHORIZED:'Devolución autorizada',RESOLVED:'Resuelta',AUTHORIZED:'Autorizada',AT_DEPOT:'En depósito',SENT_TO_SENDER:'Entregada al remitente',RECEIVER:'Nombre del receptor',RECEIVER_PHOTO:'Receptor y foto',CRITICAL:'Crítico',MINOR:'Menor',OK:'Correcto',SENDER:'Remitente',VEHICLE:'Vehículo',RECIPIENT:'Destinatario',PICKUP:'Retiro',DELIVERY:'Entrega',ABSENT:'Ausente',REFUSED:'Rechazado',ADDRESS_ISSUE:'Problema de dirección',DAMAGED:'Dañado',OTHER:'Otro'};
   if(labels[value.toUpperCase()]) return labels[value.toUpperCase()];
   return value.toLowerCase().replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
@@ -198,7 +199,7 @@ function auditLabel(action:string):string {
   if(operation==='routes.unload-selected')return 'Bultos bajados al depósito';
   if(operation==='routes.unassign-selected')return 'Bultos quitados de la ruta';
   if(operation==='routes.update')return 'Ruta actualizada';
-  const labels:Record<string,string>={'clients.create':'Cliente registrado','drivers.create':'Chofer registrado','users.create':'Usuario habilitado','vehicles.create':'Vehículo registrado','shipments.create':'Envío registrado','receipts.create':'Recepción registrada','routes.create':'Ruta creada','routes.assign':'Bultos asignados','routes.order':'Paradas ordenadas','routes.ready':'Plan confirmado','routes.load':'Carga verificada','routes.dispatch':'Ruta despachada','routes.close':'Ruta cerrada','stops.pickup':'Retiro registrado','stops.attempt':'Intento registrado','incidents.return':'Devolución autorizada','returns.receive':'Retorno recibido en depósito','returns.sender':'Entrega al remitente confirmada','vehicles.inspect':'Inspección registrada','vehicles.document':'Documento registrado','defects.resolve':'Defecto resuelto','vehicles.maintenance':'Mantenimiento programado','maintenance.complete':'Mantenimiento completado','evidence.store':'Evidencia guardada'};
+  const labels:Record<string,string>={'clients.create':'Cliente registrado','drivers.create':'Chofer registrado','users.create':'Usuario habilitado','vehicles.create':'Vehículo registrado','shipments.create':'Envío registrado','receipts.create':'Recepción registrada','routes.create':'Ruta creada','routes.assign':'Bultos asignados','routes.order':'Paradas ordenadas','routes.ready':'Ruta confirmada','routes.load':'Carga verificada','routes.dispatch':'Ruta despachada','routes.close':'Ruta cerrada','stops.pickup':'Retiro registrado','stops.attempt':'Intento registrado','incidents.return':'Devolución autorizada','returns.receive':'Retorno recibido en depósito','returns.sender':'Entrega al remitente confirmada','vehicles.inspect':'Inspección registrada','vehicles.document':'Documento registrado','defects.resolve':'Defecto resuelto','vehicles.maintenance':'Mantenimiento programado','maintenance.complete':'Mantenimiento completado','evidence.store':'Evidencia guardada'};
   return labels[operation]??'Movimiento registrado';
 }
 
@@ -220,7 +221,7 @@ function formatMeasure(value: number | null | undefined, unit: string): string {
   return value == null ? "Sin declarar" : new Intl.NumberFormat("es").format(value) + " " + unit;
 }
 
-function StateBadge({ value }: { value: string }) {
+function StateBadge({ value, label }: { value: string; label?:string }) {
   const normalized = value.toUpperCase();
   const tone = /DELIVER|CLOSED|COMPLETE|RESOLVED|READY|RECEIVED|OK/.test(normalized)
     ? "badge-success"
@@ -229,7 +230,7 @@ function StateBadge({ value }: { value: string }) {
     : /PENDING|PLANN|OPEN|RETURN|IN_PROGRESS|IN_TRANSIT|LOADED|ASSIGNED|DRAFT/.test(normalized)
         ? "badge-warning"
         : "badge-neutral";
-  return <span className={"badge " + tone}>{displayState(value)}</span>;
+  return <span className={"badge " + tone}>{label??displayState(value)}</span>;
 }
 
 function SectionTitle({ eyebrow, title, description, action }: {
@@ -646,7 +647,7 @@ function HomeView({ data, go, role }: { data: Bootstrap; go: (page: Page, routeI
   const queue = [
     {label:'Bultos anunciados por recibir',count:data.parcels.filter(p=>p.state==='EXPECTED').length,page:'shipments' as Page},
     {label:'Bultos en depósito sin ruta',count:data.parcels.filter(p=>['RECEIVED','RETURNED_TO_DEPOT'].includes(p.state)&&!assigned.has(p.id)).length,page:'routes' as Page},
-    {label:'Rutas con plan confirmado',count:data.routes.filter(r=>r.state==='READY').length,page:'routes' as Page},
+    {label:'Rutas confirmadas',count:data.routes.filter(r=>r.state==='READY').length,page:'routes' as Page},
     {label:'Incidencias por resolver',count:openIncidents,page:'routes' as Page},
     {label:'Defectos críticos abiertos',count:data.defects.filter(d=>d.severity==='CRITICAL'&&d.state==='OPEN').length,page:'fleet' as Page},
   ].filter(q=>q.count>0&&(q.page!=='fleet'||isOpsRole(role)));
@@ -848,7 +849,7 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
   const [editRouteId,setEditRouteId]=useState('');
   const [routeTab, setRouteTab] = useState(()=>{
     const route=visibleRoutes.find(item=>item.id===initialRouteId);
-    return route?.state==='DRAFT'&&canPlan?'planning':route?.state==='READY'&&canLoad?'loading':'stops';
+    return route&&['DRAFT','READY'].includes(route.state)&&canLoad?'loading':'stops';
   });
   const [routeSearch, setRouteSearch] = useState('');
   const [routeFilter, setRouteFilter] = useState('ALL');
@@ -856,7 +857,6 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
   const filteredRoutes = visibleRoutes.filter(route => (routeFilter === 'ALL' || route.state === routeFilter) && (route.name + ' ' + (data.drivers.find(d=>d.id===route.driverId)?.name??'') + ' ' + (data.vehicles.find(v=>v.id===route.vehicleId)?.plate??'')).toLocaleLowerCase().includes(routeSearch.toLocaleLowerCase()));
   const displayedRoutes = filteredRoutes.slice(routePage*8,routePage*8+8);
   const [assignmentIds, setAssignmentIds] = useState<string[]>([]);
-  const [correctionIds,setCorrectionIds]=useState<string[]>([]);
   const [pickupMode, setPickupMode] = useState(false);
   const [scanCode, setScanCode] = useState("");
   const [stopId, setStopId] = useState("");
@@ -873,7 +873,7 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
   const [driverInspectionItems, setDriverInspectionItems] = useState<InspectionItem[]>([{ label: "", severity: "OK", note: "" }]);
   const selectedRoute = visibleRoutes.find((route) => route.id === selectedRouteId);
   const resetRouteTask = () => {
-    setEditRouteId(''); setAssignmentIds([]); setCorrectionIds([]); setPickupMode(false); setScanCode(''); setStopId('');
+    setEditRouteId(''); setAssignmentIds([]); setPickupMode(false); setScanCode(''); setStopId('');
     setDeliveredIds([]); setFailedIds([]); setReceiverName(''); setReasonCode(''); setNextAction('');
     setEvidenceIds([]); setEvidenceParcelId(''); setLastEvidenceId('');
     setDriverInspectionOdometer(''); setDriverFuelPercent('');
@@ -884,22 +884,8 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
   const routeAssignmentIds = new Set(data.assignments.filter((assignment) => assignment.routeId === selectedRoute?.id && assignment.active).map((assignment) => assignment.parcelId));
   const routeParcels = data.parcels.filter((parcel) => routeAssignmentIds.has(parcel.id));
   const isLoadedHere=(parcel:Parcel)=>parcel.state==='LOADED'&&parcel.custodyType==='VEHICLE'&&parcel.custodyId===selectedRoute?.vehicleId;
-  const canCorrectParcel=(parcel:Parcel)=>isLoadedHere(parcel)?canLoad:canPlan&&['EXPECTED','RECEIVED','RETURNED_TO_DEPOT'].includes(parcel.state)&&['SENDER','DEPOT'].includes(parcel.custodyType);
-  const correctableParcels=routeParcels.filter(canCorrectParcel);
-  const selectedCorrections=correctableParcels.filter(parcel=>correctionIds.includes(parcel.id));
-  const selectedLoaded=selectedCorrections.filter(isLoadedHere),selectedUnloaded=selectedCorrections.filter(parcel=>!isLoadedHere(parcel));
-  const toggleCorrections=(ids:string[])=>{
-    const allSelected=ids.every(id=>correctionIds.includes(id));
-    setCorrectionIds(allSelected?selectedCorrections.filter(parcel=>!ids.includes(parcel.id)).map(parcel=>parcel.id):[...new Set([...selectedCorrections.map(parcel=>parcel.id),...ids])].slice(0,200));
-  };
-  const correctSelected=async(mode:'unload'|'unassign')=>{
-    if(!selectedRoute)return;
-    const ids=(mode==='unload'?selectedLoaded:selectedUnloaded).map(parcel=>parcel.id);
-    if(!ids.length)return;
-    const question=mode==='unload'?`¿Confirmás que bajaste estos ${ids.length} bultos del vehículo al depósito? La reserva del pedido se mantiene.`:`¿Quitar estos ${ids.length} bultos de la ruta? La reserva del pedido se mantiene y podrás asignarlos a otra ruta.`;
-    if(!window.confirm(question))return;
-    if(await action('/api/routes/'+encodeURIComponent(selectedRoute.id)+'/'+mode+'-selected',{commandId:commandId(),expectedVersion:selectedRoute.version,parcelIds:ids},mode==='unload'?`${ids.length} bulto(s) bajados al depósito. La reserva se mantiene.`:`${ids.length} bulto(s) quitados de la ruta. La reserva se mantiene.`))setCorrectionIds(current=>current.filter(id=>!ids.includes(id)));
-  };
+  const loadedParcels=routeParcels.filter(isLoadedHere);
+  const removableParcels=routeParcels.filter(parcel=>['EXPECTED','RECEIVED','RETURNED_TO_DEPOT'].includes(parcel.state)&&['SENDER','DEPOT'].includes(parcel.custodyType));
   const depotLoadParcels = routeParcels.filter(parcel=>data.assignments.some(a=>a.routeId===selectedRoute?.id&&a.parcelId===parcel.id&&a.active&&!a.pickup));
   const pendingLoadCount=depotLoadParcels.filter(p=>!(p.state==='LOADED'&&p.custodyType==='VEHICLE'&&p.custodyId===selectedRoute?.vehicleId)).length;
   const capacityIncomplete = routeParcels.some((parcel) => parcel.weightGrams == null || parcel.volumeCm3 == null);
@@ -914,8 +900,8 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
 
   useEffect(()=>{
     if(!selectedRoute)return;
-    if(routeTab==='planning' && selectedRoute.state!=='DRAFT')setRouteTab(selectedRoute.state==='READY' && canLoad?'loading':'stops');
-    if(routeTab==='loading' && selectedRoute.state!=='READY')setRouteTab('stops');
+    if(['loading','unloading'].includes(routeTab) && !['DRAFT','READY'].includes(selectedRoute.state))setRouteTab('stops');
+    if(routeTab==='checks' && selectedRoute.state==='DRAFT')setRouteTab(canLoad?'loading':'stops');
   },[selectedRoute?.state,routeTab,canLoad]);
   const refreshRoutes=async()=>{setRefreshing(true);setCreateError('');try{await onRefresh();}catch(error){setCreateError(errorMessage(error));}finally{setRefreshing(false);}};
   const submitAssign = async (event: FormEvent) => {
@@ -928,6 +914,7 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
     if (!selectedRoute) return;
     const saved=await action("/api/routes/" + encodeURIComponent(selectedRoute.id) + "/" + suffix, { expectedVersion: selectedRoute.version, commandId: commandId() }, message);
     if(saved&&suffix==='dispatch')setRouteTab('stops');
+    if(saved&&suffix==='ready')setRouteTab(canOperateRoad?'checks':'stops');
   };
   const submitScan = async (event: FormEvent) => {
     event.preventDefault();
@@ -973,15 +960,15 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
     <>
       <SectionTitle eyebrow="PLANIFICACIÓN Y CALLE" title={showCreate ? 'Nueva ruta' : selectedRoute?.name ?? (driverId ? 'Mis rutas' : 'Rutas')} description={selectedRoute && !showCreate ? `Chofer: ${data.drivers.find(item=>item.id===selectedRoute.driverId)?.name ?? selectedRoute.driverId} · Vehículo: ${data.vehicles.find(item=>item.id===selectedRoute.vehicleId)?.plate ?? selectedRoute.vehicleId}` : showCreate ? undefined : driverId ? 'Tus recorridos asignados.' : 'Elegí una ruta para trabajar.'} action={<div className="heading-actions">{(selectedRoute || showCreate) && <button type="button" className="button button-secondary" disabled={busy} onClick={backToRoutes}>← Volver a rutas</button>}<button className="button button-secondary" disabled={busy||refreshing} onClick={()=>void refreshRoutes()}>{refreshing?'Actualizando…':'Actualizar'}</button>{canPlan&&!selectedRoute&&!showCreate&&<button className="button button-primary" disabled={busy} onClick={()=>{resetRouteTask();setShowCreate(true);setCreateError('');}}><Plus aria-hidden="true" />Nueva ruta</button>}</div>} />
       {createError&&<p className="notice error" role="alert">{createError}</p>}
-      {canPlan && showCreate && <Panel title="Nueva ruta"><RouteSetup drivers={data.drivers} vehicles={data.vehicles} action={action} busy={busy} operationError={operationError} onCancel={()=>setShowCreate(false)} onSaved={result=>{if(typeof result.id==='string'){setJustCreated({...result,id:result.id,state:'DRAFT',version:Number(result.version??1)} as Route);setSelectedRouteId(result.id);setRouteTab('planning');setShowCreate(false);}}}/></Panel>}
+      {canPlan && showCreate && <Panel title="Nueva ruta"><RouteSetup drivers={data.drivers} vehicles={data.vehicles} action={action} busy={busy} operationError={operationError} onCancel={()=>setShowCreate(false)} onSaved={result=>{if(typeof result.id==='string'){setJustCreated({...result,id:result.id,state:'DRAFT',version:Number(result.version??1)} as Route);setSelectedRouteId(result.id);setRouteTab('loading');setShowCreate(false);}}}/></Panel>}
       {!showCreate && <div className={"routes-layout " + (!selectedRoute ? "routes-layout--list" : "routes-layout--detail")}>
         {!selectedRoute && <Panel title="Listado de rutas">
-          <div className="workspace-filters"><label className="field"><span>Buscar ruta</span><input type="search" value={routeSearch} placeholder="Nombre, chofer o matrícula" onChange={event=>{setRouteSearch(event.target.value);setRoutePage(0);}} /></label><label className="field"><span>Estado de ruta</span><select value={routeFilter} onChange={event=>{setRouteFilter(event.target.value);setRoutePage(0);}}><option value="ALL">Todas</option><option value="DRAFT">Borradores</option><option value="READY">Planes confirmados</option><option value="IN_PROGRESS">En curso</option><option value="CLOSED">Cerradas</option></select></label></div>
+          <div className="workspace-filters"><label className="field"><span>Buscar ruta</span><input type="search" value={routeSearch} placeholder="Nombre, chofer o matrícula" onChange={event=>{setRouteSearch(event.target.value);setRoutePage(0);}} /></label><label className="field"><span>Estado de ruta</span><select value={routeFilter} onChange={event=>{setRouteFilter(event.target.value);setRoutePage(0);}}><option value="ALL">Todas</option><option value="DRAFT">Sin confirmar</option><option value="READY">Rutas confirmadas</option><option value="IN_PROGRESS">En curso</option><option value="CLOSED">Cerradas</option></select></label></div>
           {filteredRoutes.length === 0 ? <EmptyState>{role==='DRIVER'?`Todavía no tenés recorridos asignados. El equipo de ${data.organization.name} prepara la ruta y te la asigna.`:'No hay rutas para este filtro.'}</EmptyState> : <div className="route-list">{displayedRoutes.map((route) => {
             const driver = data.drivers.find((item) => item.id === route.driverId);
             const vehicle = data.vehicles.find((item) => item.id === route.vehicleId);
-            return <button className="route-card" key={route.id} onClick={() => { resetRouteTask(); setSelectedRouteId(route.id); setRouteTab(route.state === "DRAFT" && canPlan ? "planning" : route.state === "READY" && canLoad ? "loading" : "stops"); }}>
-              <div className="row"><strong>{route.name}</strong><StateBadge value={route.state} /></div>
+            return <button className="route-card" key={route.id} onClick={() => { resetRouteTask(); setSelectedRouteId(route.id); setRouteTab(['DRAFT','READY'].includes(route.state)&&canLoad?'loading':'stops'); }}>
+              <div className="row"><strong>{route.name}</strong><StateBadge value={route.state} label={route.state==='DRAFT'?'Sin confirmar':undefined} /></div>
               <small>{driver?.name ?? route.driverId} · {vehicle?.plate ?? route.vehicleId}</small>
               <small>{formatDate(route.startAt, data.organization.timezone)}</small>
             </button>;
@@ -991,24 +978,28 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
         {selectedRoute ? <Panel title="Pedidos y operación">
           {canPlan && editRouteId!==selectedRoute.id && ['DRAFT','READY'].includes(selectedRoute.state) && <button type="button" className="button button-secondary" disabled={busy} onClick={()=>setEditRouteId(selectedRoute.id)}>Editar ruta</button>}
           {canPlan && editRouteId===selectedRoute.id && <Panel title="Editar ruta"><RouteSetup key={selectedRoute.id+':'+selectedRoute.version} route={selectedRoute} drivers={data.drivers} vehicles={data.vehicles} action={action} busy={busy} operationError={operationError} onCancel={()=>setEditRouteId('')} onSaved={()=>setEditRouteId('')}/></Panel>}
-          {editRouteId!==selectedRoute.id && <><div className="route-toolbar"><StateBadge value={selectedRoute.state} /><span className="muted">Inicio: {formatDate(selectedRoute.startAt,data.organization.timezone)} · Fin: {formatDate(selectedRoute.endAt,data.organization.timezone)}</span></div>
+          {editRouteId!==selectedRoute.id && <><div className="route-toolbar"><StateBadge value={selectedRoute.state==='READY'&&pendingLoadCount>0?'DRAFT':selectedRoute.state} label={pendingLoadCount>0&&['DRAFT','READY'].includes(selectedRoute.state)?'Carga pendiente':selectedRoute.state==='DRAFT'?'Sin confirmar':undefined} /><span className="muted">Inicio: {formatDate(selectedRoute.startAt,data.organization.timezone)} · Fin: {formatDate(selectedRoute.endAt,data.organization.timezone)}</span></div>
           {selectedRoute.state === 'READY' && new Date(selectedRoute.startAt).getTime() > Date.now() && <p className="muted">Esta ruta está programada para más adelante. Para salir ahora, cambiá el inicio y el fin en «Editar ruta».</p>}
           {selectedRoute.state === 'READY' && new Date(selectedRoute.endAt).getTime() < Date.now() && <p className="muted">El horario previsto de esta ruta ya terminó. Actualizá el inicio y el fin en «Editar ruta» antes de despachar.</p>}
           <div className="button-row">
-            {canPlan && selectedRoute.state === "DRAFT" && <button className="button button-secondary" disabled={busy} onClick={() => simpleRouteAction("ready", "Ruta confirmada para operación.")}>Confirmar plan</button>}
             {capacityIncomplete && <p className="muted">Hay bultos sin peso o volumen. Podés continuar; la capacidad total no está verificada.</p>}
-            {selectedRoute.state === 'READY' && <p className="muted" role="status">{pendingLoadCount ? `Plan confirmado · falta cargar ${pendingLoadCount} bulto(s).` : 'Carga completa · revisá el control de salida antes de despachar.'}</p>}
             {canOperateRoad && selectedRoute.state === "READY" && <button className="button button-secondary" disabled={busy||pendingLoadCount>0} onClick={() => simpleRouteAction("dispatch", "Salida de ruta registrada.")}>Despachar</button>}
             {canOperateRoad && selectedRoute.state === "IN_PROGRESS" && <button className="button button-secondary" disabled={busy} onClick={() => simpleRouteAction("close", "Cierre de ruta solicitado.")}>Cerrar ruta</button>}
           </div>
-          <nav className="workspace-tabs" aria-label="Tareas de la ruta">
+          {['DRAFT','READY'].includes(selectedRoute.state)&&<section className="route-next-step" aria-label="Próximo paso de la ruta">
+            <p className="muted">Reservar pedido → Cargar vehículo → Confirmar ruta → Control de salida → Despachar</p>
+            <p role="status">{!routeParcels.length?'Agregá los artículos reservados que vas a llevar en esta ruta.':pendingLoadCount>0?`Falta cargar ${pendingLoadCount} bulto(s). La ruta se confirma después de cargar el vehículo.`:selectedRoute.state==='DRAFT'?depotLoadParcels.length?'Carga lista. Revisá el orden en Paradas y confirmá la ruta.':'Esta ruta tiene retiros en origen. Revisá Paradas y confirmá la ruta; los artículos se cargan al retirarlos.':'Ruta confirmada. Completá el control de salida y despachá.'}</p>
+            {canPlan&&selectedRoute.state==='DRAFT'&&<button type="button" className="button button-primary" disabled={busy||pendingLoadCount>0||!routeParcels.length} onClick={()=>void simpleRouteAction('ready','Ruta confirmada. Continuá con el control de salida.')}>Confirmar ruta</button>}
+            {!canPlan&&selectedRoute.state==='DRAFT'&&routeParcels.length>0&&pendingLoadCount===0&&<p className="muted">La carga está lista. Coordinación logística debe confirmar la ruta.</p>}
+          </section>}
+          <nav className="workspace-tabs route-task-tabs" aria-label="Tareas de la ruta">
+            {canLoad&&['DRAFT','READY'].includes(selectedRoute.state)&&<button type="button" aria-pressed={routeTab==='loading'} onClick={()=>setRouteTab('loading')}>Cargar artículos ({pendingLoadCount})</button>}
+            {canLoad&&['DRAFT','READY'].includes(selectedRoute.state)&&<button type="button" aria-pressed={routeTab==='unloading'} onClick={()=>setRouteTab('unloading')}>Bajar artículos ({loadedParcels.length})</button>}
             <button type="button" aria-pressed={routeTab==='stops'} onClick={()=>setRouteTab('stops')}>Paradas ({stops.length})</button>
-            {canPlan && selectedRoute.state==='DRAFT' && <button type="button" aria-pressed={routeTab==='planning'} onClick={()=>setRouteTab('planning')}>Preparar ruta</button>}
-            {canLoad && selectedRoute.state==='READY' && <button type="button" aria-pressed={routeTab==='loading'} onClick={()=>setRouteTab('loading')}>Cargar vehículo</button>}
             {canOperateRoad && ['READY','IN_PROGRESS'].includes(selectedRoute.state) && <button type="button" aria-pressed={routeTab==='checks'} onClick={()=>setRouteTab('checks')}>Control de salida</button>}
             {(openIncidents.length>0 || routeReturnItems.length>0) && <button type="button" aria-pressed={routeTab==='issues'} onClick={()=>setRouteTab('issues')}>Incidencias y retornos ({openIncidents.length+routeReturnItems.length})</button>}
           </nav>
-          {canPlan && selectedRoute.state === "DRAFT" && routeTab === 'planning' && <div className="route-operations">
+          {canPlan && selectedRoute.state === "DRAFT" && routeTab === 'loading' && <TaskDisclosure label="Agregar artículos reservados o retiros a esta ruta" open={depotLoadParcels.length===0?true:undefined}><div className="route-operations">
             <form className="stack form-divider" onSubmit={submitAssign}>
               <h3>{pickupMode ? "Agregar retiro al remitente" : "Asignar bultos recibidos"}</h3>
               <label className="checkbox-field"><input type="checkbox" disabled={busy} checked={pickupMode} onChange={(event) => { setPickupMode(event.target.checked); setAssignmentIds([]); }} /> Incluir retiro directo desde el remitente</label>
@@ -1019,11 +1010,12 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
               })}</div>}
               <button className="button button-secondary" disabled={busy || assignmentIds.length === 0}>Asignar selección</button>
             </form>
-          </div>}
-          {canLoad && selectedRoute.state === "READY" && routeTab === "loading" && <div className="route-operations"><RouteLoadPanel route={selectedRoute} parcels={depotLoadParcels} shipments={data.shipments} busy={busy} action={action} onContinue={canOperateRoad?()=>setRouteTab('checks'):undefined}/>{pendingLoadCount>0&&<details><summary>Usar lector o ingresar código</summary><form className="stack form-divider" onSubmit={submitScan}>
+          </div></TaskDisclosure>}
+          {canLoad && ['DRAFT','READY'].includes(selectedRoute.state) && routeTab === "loading" && <div className="route-operations"><RouteLoadPanel key={selectedRoute.id} route={selectedRoute} parcels={depotLoadParcels} shipments={data.shipments} busy={busy} action={action}/>{pendingLoadCount>0&&<details><summary>Usar lector o ingresar código</summary><form className="stack form-divider" onSubmit={submitScan}>
             <Field label="Código del bulto"><input required value={scanCode} onChange={(event) => setScanCode(event.target.value)} placeholder="Escaneá o escribí el código" /></Field>
             <button className="button button-secondary" disabled={busy || !scanCode.trim()}>Registrar escaneo</button>
-          </form></details>}</div>}
+          </form></details>}{canPlan&&removableParcels.length>0&&<TaskDisclosure label="Quitar artículos sin cargar de esta ruta"><RouteParcelActions key={selectedRoute.id+':unassign'} route={selectedRoute} parcels={removableParcels} shipments={data.shipments} mode="unassign" busy={busy} action={action}/></TaskDisclosure>}</div>}
+          {canLoad&&['DRAFT','READY'].includes(selectedRoute.state)&&routeTab==='unloading'&&<RouteParcelActions key={selectedRoute.id+':unload'} route={selectedRoute} parcels={loadedParcels} shipments={data.shipments} mode="unload" busy={busy} action={action}/>}
           {canOperateRoad && routeTab === "checks" && <Panel title="Checklist de salida" description={"Inspección del vehículo " + (data.vehicles.find((vehicle) => vehicle.id === selectedRoute.vehicleId)?.plate ?? selectedRoute.vehicleId) + ". Guardá solo controles observados."}>
             {selectedRoute.state !== "READY" && selectedRoute.state !== "IN_PROGRESS" ? <p className="muted">La inspección estará disponible cuando la ruta esté lista para salir.</p> : <form className="stack" onSubmit={submitDriverInspection}>
               <fieldset disabled={busy}>
@@ -1038,14 +1030,9 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
               <button className="button button-primary" disabled={busy || !driverInspectionOdometer || !driverFuelPercent || driverInspectionItems.every((item) => !item.label.trim())}>Guardar checklist</button>
             </form>}
           </Panel>}
-          {canPlan && selectedRoute.state === "DRAFT" && routeTab === "planning" && stops.length > 1 && <TaskDisclosure label="Cambiar orden de paradas"><StopOrderEditor key={selectedRoute.id} stops={stops} route={selectedRoute} action={action} busy={busy} shipmentLabel={id=>data.shipments.find(shipment=>shipment.id===id)?.reference??"Envío"} /></TaskDisclosure>}
+          {canPlan && selectedRoute.state === "DRAFT" && routeTab === "stops" && stops.length > 1 && <TaskDisclosure label="Cambiar orden de paradas"><StopOrderEditor key={selectedRoute.id} stops={stops} route={selectedRoute} action={action} busy={busy} shipmentLabel={id=>data.shipments.find(shipment=>shipment.id===id)?.reference??"Envío"} /></TaskDisclosure>}
           {routeTab === "stops" && <div className="route-stop-list">
             <h3>Paradas</h3>
-            {['DRAFT','READY'].includes(selectedRoute.state)&&correctableParcels.length>0&&<section className="route-bulk-actions" aria-label="Gestionar varios bultos">
-              <div className="button-row"><button type="button" className="button button-secondary" disabled={busy} onClick={()=>toggleCorrections(correctableParcels.slice(0,200).map(parcel=>parcel.id))}>{correctableParcels.slice(0,200).every(parcel=>correctionIds.includes(parcel.id))?'Quitar selección':'Seleccionar todos'}</button><span role="status">{selectedCorrections.length} seleccionados{selectedCorrections.length>0?` · ${selectedLoaded.length} en vehículo · ${selectedUnloaded.length} sin cargar`:''}</span></div>
-              {selectedCorrections.length>0&&<div className="button-row">{selectedLoaded.length>0&&<button type="button" className="button button-primary" disabled={busy} onClick={()=>void correctSelected('unload')}>Bajar al depósito ({selectedLoaded.length})</button>}{selectedUnloaded.length>0&&<button type="button" className="button button-secondary" disabled={busy} onClick={()=>void correctSelected('unassign')}>Quitar de la ruta ({selectedUnloaded.length})</button>}</div>}
-              {correctableParcels.length>200&&<small>Podés procesar hasta 200 bultos por operación.</small>}
-            </section>}
             {stops.length === 0 ? <EmptyState>Aún no hay paradas asignadas.</EmptyState> : stops.map((stop) => {
               const shipment = data.shipments.find((item) => item.id === stop.shipmentId);
               const stopParcels = routeParcels.filter(parcel => parcel.shipmentId === stop.shipmentId);
@@ -1059,15 +1046,7 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
                 <div className="row"><strong>{String(stop.sequence).padStart(2, "0")} · {shipment?.reference ?? stop.shipmentId}</strong><StateBadge value={stop.state} /></div>
                 <p>{stop.kind==='PICKUP' ? 'Retiro en origen' : shipment?.recipientName ?? 'Destinatario no informado'} · {stop.kind==='PICKUP' ? shipment?.originText ?? 'Origen no informado' : shipment?.destinationText ?? 'Destino no informado'}</p>
                 {products.size > 0 && <p>{[...products.values()].map(item => `${item.name} × ${item.count}`).join(' · ')}</p>}
-                {['DRAFT','READY'].includes(selectedRoute.state) && <div className="stack">{stopParcels.filter(canCorrectParcel).length>1&&<button type="button" className="text-button" disabled={busy} onClick={()=>toggleCorrections(stopParcels.filter(canCorrectParcel).map(parcel=>parcel.id))}>{stopParcels.filter(canCorrectParcel).every(parcel=>correctionIds.includes(parcel.id))?'Quitar selección del pedido':'Seleccionar este pedido'}</button>}{stopParcels.map((parcel,index) => {
-                  const loaded=isLoadedHere(parcel);
-                  const removable=['EXPECTED','RECEIVED','RETURNED_TO_DEPOT'].includes(parcel.state) && ['SENDER','DEPOT'].includes(parcel.custodyType);
-                  if (!(loaded && canLoad) && !(removable && canPlan)) return null;
-                  return <div className="row route-correction-row" key={parcel.id}><label className="checkbox-field"><input type="checkbox" checked={correctionIds.includes(parcel.id)} disabled={busy||!correctionIds.includes(parcel.id)&&selectedCorrections.length>=200} onChange={()=>toggleCorrections([parcel.id])}/><span>{parcel.product?.name || 'Bulto'} · unidad {index+1} · {loaded?'En el vehículo':'Sin cargar'}</span></label><button type="button" className="button button-secondary" disabled={busy} onClick={() => {
-                    const question=loaded?'¿Confirmás que bajaste este bulto del vehículo al depósito? Seguirá reservado para el pedido.':'¿Quitar este bulto de la ruta? Seguirá reservado para el pedido y podrás asignarlo a otra ruta.';
-                    if(window.confirm(question))void action('/api/routes/'+encodeURIComponent(selectedRoute.id)+(loaded?'/unload':'/unassign'),{commandId:commandId(),expectedVersion:selectedRoute.version,parcelId:parcel.id},loaded?'Bulto bajado al depósito. Sigue reservado para el pedido.':'Bulto quitado de la ruta. Sigue reservado para el pedido.');
-                  }}>{loaded?'Bajar al depósito':'Quitar de la ruta'}</button></div>;
-                })}</div>}
+                {['DRAFT','READY'].includes(selectedRoute.state)&&<p className="muted">{stopParcels.filter(isLoadedHere).length} de {stopParcels.length} bultos en el vehículo · {selectedRoute.state==='DRAFT'?'Ruta sin confirmar':'Ruta confirmada'}</p>}
                 <details className="parcel-code-details"><summary>{stopParcels.length} {stopParcels.length === 1 ? 'bulto' : 'bultos'} · ver códigos</summary><div className="parcel-tags">{stopParcels.map((parcel) => <span key={parcel.id}>{parcel.code} · {displayState(parcel.state)}</span>)}</div></details>
                 {!isClosed(stop.state) && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && stop.kind?.toUpperCase() === "PICKUP" && <PickupAction stop={stop} route={selectedRoute} parcels={routeParcels.filter((parcel) => parcel.shipmentId === stop.shipmentId)} action={action} busy={busy} />}
                 {!isClosed(stop.state) && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && stop.kind?.toUpperCase() !== "PICKUP" && <button type="button" className="text-button" onClick={() => { setStopId(stop.id); setDeliveredIds([]); setFailedIds([]); setEvidenceIds([]); setEvidenceParcelId(""); setReasonCode(""); setNextAction(""); }}>Registrar intento en esta parada</button>}

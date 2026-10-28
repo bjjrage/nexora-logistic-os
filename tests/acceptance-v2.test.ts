@@ -121,15 +121,15 @@ test('recepción rechaza código inexistente o de otro cliente sin efectos', asy
     assert.deepEqual(await counts(f.store, watched), before);
     assert.equal((await f.store.one('SELECT state FROM parcels WHERE id=?', otherClientShipment.parcels[0].id))!.state, 'EXPECTED');
 });
-test('medidas desconocidas permiten confirmar, cargar y despachar sin inventar valores', async (t) => {
+test('medidas desconocidas permiten cargar, confirmar y despachar sin inventar valores', async (t) => {
     const f = await fileFixture(t);
     const shipment = await f.shipment({ volumeCm3: null });
     const routeId = await f.route();
     await f.receive(shipment);
     await f.assign(routeId, shipment.parcels.map(parcel => parcel.id));
+    await f.domain.load(f.actor, routeId, { ...await f.command(), expectedVersion: await f.version(routeId), code: shipment.parcels[0].code });
     const ready = await f.domain.ready(f.actor, routeId, { ...await f.command(), expectedVersion: await f.version(routeId) });
     assert.equal(ready.capacityVerified, false);
-    await f.domain.load(f.actor, routeId, { ...await f.command(), expectedVersion: await f.version(routeId), code: shipment.parcels[0].code });
     await f.domain.inspect(f.actor, f.vehicleId, { ...await f.command(), odometer: 100, fuelPercent: 70, items: [{ label: 'Frenos', severity: 'OK', note: '' }] });
     await f.domain.dispatch(f.actor, routeId, { ...await f.command(), expectedVersion: await f.version(routeId) });
     assert.equal((await f.store.one('SELECT volume_cm3 FROM parcels WHERE id=?', shipment.parcels[0].id))!.volume_cm3, null);
@@ -150,8 +150,8 @@ test('reintento de intento de entrega con el mismo commandId no duplica intento,
     const routeId = await f.route();
     await f.receive(shipment);
     await f.assign(routeId, shipment.parcels.map(parcel => parcel.id));
-    await f.domain.ready(f.actor, routeId, { ...await f.command(), expectedVersion: await f.version(routeId) });
     await f.domain.load(f.actor, routeId, { ...await f.command(), expectedVersion: await f.version(routeId), code: shipment.parcels[0].code });
+    await f.domain.ready(f.actor, routeId, { ...await f.command(), expectedVersion: await f.version(routeId) });
     await f.domain.inspect(f.actor, f.vehicleId, { ...await f.command(), odometer: 100, fuelPercent: 70, items: [{ label: 'Frenos QA', severity: 'OK', note: 'Correcto' }] });
     await f.domain.dispatch(f.actor, routeId, { ...await f.command(), expectedVersion: await f.version(routeId) });
     const stopId = (await f.store.one('SELECT id FROM stops WHERE route_id=?', routeId))!.id as string;
@@ -213,6 +213,8 @@ test('dos sesiones ops que confirman rutas con el mismo chofer y vehículo produ
     await f.receive(shipmentB);
     await f.assign(routeA, shipmentA.parcels.map(parcel => parcel.id));
     await f.assign(routeB, shipmentB.parcels.map(parcel => parcel.id));
+    await f.domain.load(f.actor,routeA,{...await f.command(),expectedVersion:await f.version(routeA),code:shipmentA.parcels[0].code});
+    await f.domain.load(f.actor,routeB,{...await f.command(),expectedVersion:await f.version(routeB),code:shipmentB.parcels[0].code});
     const opsA = `ops-a-${randomUUID().slice(0, 8)}`;
     const opsB = `ops-b-${randomUUID().slice(0, 8)}`;
     await f.domain.createUser(f.actor, { ...await f.command(), name: 'Operaciones QA A', username: opsA, password, role: 'OPERATIONS' });

@@ -105,8 +105,8 @@ test('Nexora: pedido de inventario se entrega sin QuadMinds solo con política p
  const order:any=await inv.order(f.actor,orderId),parcel=await f.store.one('SELECT * FROM parcels WHERE shipment_id=?',order.shipmentId);
  const version=async()=>(await f.domain.route(f.route.id,f.actor)).version;
  await f.domain.assign(f.actor,f.route.id,{...command(),expectedVersion:await version(),parcelIds:[parcel!.id],pickup:false});
- await f.domain.ready(f.actor,f.route.id,{...command(),expectedVersion:await version()});
  await inv.loadOrder(f.actor,orderId,{...command(),routeId:f.route.id,expectedVersion:await version(),codes:[parcel!.code]});
+ await f.domain.ready(f.actor,f.route.id,{...command(),expectedVersion:await version()});
  await f.domain.inspect(f.actor,f.vehicle.id,{...command(),odometer:0,fuelPercent:100,items:[{label:'QA',severity:'OK',note:''}]});
  await f.domain.dispatch(f.actor,f.route.id,{...command(),expectedVersion:await version()});
  const stop=await f.store.one('SELECT id FROM stops WHERE route_id=?',f.route.id);

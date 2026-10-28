@@ -25,25 +25,30 @@ async function fixture(t:any){
  const route=(await d.createRoute(actor,{...cmd(),name:'QA route',driverId:driver,vehicleId:vehicle,trackingProvider:'TRACCAR',startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()})).id;
  const version=async()=>(await d.route(route,actor)).version;
  await d.assign(actor,route,{...cmd(),expectedVersion:await version(),parcelIds:reserved.parcels.map((p:any)=>p.id),pickup:false});
- await d.ready(actor,route,{...cmd(),expectedVersion:await version()});
  return {db,d,inv,actor,order,route,vehicle,product,credentials,version,parcels:reserved.parcels};
 }
 test('route loading is the only physical confirmation: partial/full, retry, unload and dispatch update order and stock',async t=>{
  const f=await fixture(t),ids=f.parcels.map((p:any)=>p.id);
  assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.order))!.status,'RESERVED');
+ await assert.rejects(f.d.ready(f.actor,f.route,{...cmd(),expectedVersion:await f.version()}),{code:'INVALID_TRANSITION'});
  const first={...cmd(),expectedVersion:await f.version(),parcelIds:[ids[0]]};
  const result=await f.d.loadSelected(f.actor,f.route,first);
  assert.deepEqual(await f.d.loadSelected(f.actor,f.route,first),result);
  assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.order))!.status,'PARTIALLY_LOADED');
+ await assert.rejects(f.d.ready(f.actor,f.route,{...cmd(),expectedVersion:await f.version()}),{code:'INVALID_TRANSITION'});
  await f.d.loadSelected(f.actor,f.route,{...cmd(),expectedVersion:await f.version(),parcelIds:ids});
  assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.order))!.status,'LOADED');
  const version=await f.version();
  assert.equal((await f.d.loadSelected(f.actor,f.route,{...cmd(),expectedVersion:version,parcelIds:ids})).loaded,0);
  assert.equal(await f.version(),version);
  assert.equal(Number((await f.db.one("SELECT count(*) n FROM custody_events WHERE action='LOADED'"))!.n),2);
+ await f.d.ready(f.actor,f.route,{...cmd(),expectedVersion:await f.version()});
  await f.d.unload(f.actor,f.route,{...cmd(),expectedVersion:await f.version(),parcelId:ids[0]});
+ assert.equal((await f.d.route(f.route,f.actor)).state,'DRAFT');
+ await assert.rejects(f.d.ready(f.actor,f.route,{...cmd(),expectedVersion:await f.version()}),{code:'INVALID_TRANSITION'});
  assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.order))!.status,'PARTIALLY_LOADED');
  await f.d.loadSelected(f.actor,f.route,{...cmd(),expectedVersion:await f.version(),parcelIds:[ids[0]]});
+ await f.d.ready(f.actor,f.route,{...cmd(),expectedVersion:await f.version()});
  await f.d.inspect(f.actor,f.vehicle,{...cmd(),odometer:0,fuelPercent:90,items:[{label:'Observed QA',severity:'OK',note:''}]});
  await f.d.dispatch(f.actor,f.route,{...cmd(),expectedVersion:await f.version()});
  assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.order))!.status,'IN_TRANSIT');

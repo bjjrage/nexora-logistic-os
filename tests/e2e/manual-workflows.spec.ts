@@ -1,7 +1,7 @@
 import {test,expect} from '@playwright/test';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
-const key='nexora.workflows.v2';
+const key='nexora.workflows.v3';
 async function saved(page:any,id:string){return page.evaluate(({key,id}:any)=>JSON.parse(localStorage.getItem(key)||'{}')[id],{key,id});}
 async function openFlow(page:any,id:string){await page.goto('/manual.html#flujo/'+id);await page.locator('.wf-tools [data-wf-reset]').click();}
 async function execute(page:any){
@@ -43,7 +43,7 @@ test('manual: blocked steps, role boundaries, partial load, reload and undo keep
  await openFlow(page,'reparto');
  await page.locator('[data-wf-step="5"]').click();
  await page.getByRole('button',{name:'Despachar',exact:true}).click();
- await expect(page.getByRole('alert')).toContainText('Confirmá el plan');
+ await expect(page.getByRole('alert')).toContainText('Confirmá la ruta');
  expect(await saved(page,'reparto')).toBeTruthy();
  await page.locator('#wf-actor').selectOption('DEPOT');
  await page.getByRole('button',{name:'Despachar',exact:true}).click();
@@ -53,7 +53,6 @@ test('manual: blocked steps, role boundaries, partial load, reload and undo keep
  await execute(page); // reserve
  let s=await saved(page,'reparto');expect(s.reserved).toBe(2);expect(s.loaded).toBe(0);
  await execute(page); // assign
- await execute(page); // confirm plan
  await page.getByRole('button',{name:'Confirmar carga',exact:true}).click();
  await expect(page.getByRole('alert')).toContainText('Seleccioná al menos una unidad');
  await page.locator('input[name="units"][value="1"]').check();
@@ -64,7 +63,7 @@ test('manual: blocked steps, role boundaries, partial load, reload and undo keep
  await expect(page.locator('input[name="units"][value="1"]')).toBeDisabled();
  await page.locator('input[name="units"][value="2"]').check();
  await page.getByRole('button',{name:'Confirmar carga',exact:true}).click();
- await expect(page.locator('.wf-task-title h2')).toHaveText('Hacer el control de salida');
+ await expect(page.locator('.wf-task-title h2')).toHaveText('Confirmar la ruta');
  await page.getByRole('button',{name:'Deshacer práctica',exact:true}).click();
  s=await saved(page,'reparto');expect(s.loaded).toBe(1);expect(s.reserved).toBe(2);
  await expect(page.locator('.wf-task-title h2')).toHaveText('Cargar el vehículo');

@@ -33,7 +33,7 @@ test('PostgreSQL aislado: revocación, última asignación, capacidad real y rei
    const version=async()=>(await store.one('SELECT version FROM routes WHERE id=?',routeId))!.version;
    await domain.receive(actor,{...command(),shipmentId,codes:[p.code],location:'QA'});
    await domain.assign(actor,routeId,{...command(),expectedVersion:await version(),parcelIds:[p.id],pickup:false});
-   await domain.ready(actor,routeId,{...command(),expectedVersion:await version()});await domain.load(actor,routeId,{...command(),expectedVersion:await version(),code:p.code});
+   await domain.load(actor,routeId,{...command(),expectedVersion:await version(),code:p.code});await domain.ready(actor,routeId,{...command(),expectedVersion:await version()});
    await domain.inspect(actor,vehicleId,{...command(),odometer:0,fuelPercent:80,items:[{label:'QA',severity:'OK',note:''}]});
    await domain.dispatch(actor,routeId,{...command(),expectedVersion:await version()});
    const stop=(await store.one("SELECT id FROM stops WHERE route_id=? AND kind='DELIVERY'",routeId))!;

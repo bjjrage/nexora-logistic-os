@@ -724,8 +724,7 @@ export class Inventory {
       for (const routeId of new Set(assigned.map(item=>item.route_id as string))) {
         await this.store.run(`UPDATE route_assignments SET active=0 WHERE org_id=? AND route_id=? AND active=1 AND parcel_id IN (${items.map(()=>'?').join(',')})`,actor.orgId,routeId,...items.map(item=>item.parcel_id));
         await this.store.run('DELETE FROM stops WHERE org_id=? AND route_id=? AND shipment_id=? AND NOT EXISTS(SELECT 1 FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id WHERE a.org_id=stops.org_id AND a.route_id=stops.route_id AND a.active=1 AND p.shipment_id=stops.shipment_id)',actor.orgId,routeId,order.shipment_id);
-        const remaining=await this.store.one('SELECT id FROM route_assignments WHERE org_id=? AND route_id=? AND active=1 LIMIT 1',actor.orgId,routeId);
-        await this.store.run("UPDATE routes SET state=CASE WHEN state='READY' AND ?=0 THEN 'DRAFT' ELSE state END,version=version+1 WHERE id=? AND org_id=?",remaining?1:0,routeId,actor.orgId);
+        await this.store.run("UPDATE routes SET state='DRAFT',version=version+1 WHERE id=? AND org_id=?",routeId,actor.orgId);
       }
       await this.store.run('UPDATE inventory_order_lines SET reserved_quantity=0 WHERE org_id=? AND order_id=?',actor.orgId,order.id);
       const updated=await this.store.run("UPDATE inventory_orders SET status='DRAFT',updated_at=? WHERE id=? AND org_id=? AND status='RESERVED'",now(),order.id,actor.orgId);
@@ -739,7 +738,7 @@ export class Inventory {
     return this.command(actor, `orders.${orderId}.load`, b, async () => {
       const order = await this.record('inventory_orders', orderId, actor), route = await this.record('routes', b.routeId, actor);
       await this.client(actor, order.client_id);
-      ensure(route.state === 'READY' && route.version === b.expectedVersion, 'VERSION_CONFLICT', 'La ruta cambió; actualizá los datos antes de cargar.');
+      ensure(['DRAFT','READY'].includes(route.state) && route.version === b.expectedVersion, 'VERSION_CONFLICT', 'La ruta cambió; actualizá los datos antes de cargar.');
       const vehicleId = route.vehicle_id, claimed = new Set<string>(), parcels: Row[] = [];
       const candidates = await this.store.all(`SELECT op.*,p.code,p.state AS parcel_state,p.custody_type,p.custody_id,p.id AS actual_parcel_id,
           pr.barcode AS product_barcode,u.serial AS unit_serial,u.barcode AS unit_barcode,
@@ -780,7 +779,7 @@ export class Inventory {
       }
       const loaded = parcels.filter(parcel => !parcel.alreadyLoaded).length;
       const version = route.version + (loaded ? 1 : 0);
-      if (loaded) await this.store.run('UPDATE routes SET version=version+1 WHERE id=? AND org_id=? AND version=?', route.id, actor.orgId, route.version);
+      if (loaded) await this.store.run("UPDATE routes SET state='DRAFT',version=version+1 WHERE id=? AND org_id=? AND version=?", route.id, actor.orgId, route.version);
       return { id: order.id, orderId: order.id, routeId: route.id, loaded, alreadyLoaded: parcels.length - loaded, version, parcels, status: (await this.record('inventory_orders', order.id, actor)).status };
     });
   }

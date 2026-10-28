@@ -41,11 +41,11 @@ export async function warehouseStory(store:Database){
   const routeId=(await domain.createRoute(actor,{...command(),name:'QA route',driverId,vehicleId,startAt,endAt})).id;
   const version=async()=>(await domain.route(routeId,actor)).version;
   await domain.assign(actor,routeId,{...command(),expectedVersion:await version(),parcelIds:parcels.map(p=>p.id),pickup:false});
-  await domain.ready(actor,routeId,{...command(),expectedVersion:await version()});
   await new QuadOperations(store,null).queue(actor,order.shipmentId,{...command(),poiId:25,date:'2026-10-15'});
   const load={...command(),routeId,expectedVersion:await version(),codes:parcels.map(p=>p.code)};
   const loaded=await inventory.loadOrder(actor,orderId,load);assert.equal(loaded.loaded,3);
   assert.deepEqual(await inventory.loadOrder(actor,orderId,load),loaded);
+  await domain.ready(actor,routeId,{...command(),expectedVersion:await version()});
   await domain.inspect(actor,vehicleId,{...command(),odometer:0,fuelPercent:100,items:[{label:'QA check',severity:'OK',note:''}]});
   await domain.dispatch(actor,routeId,{...command(),expectedVersion:await version()});
   const stop=await store.one('SELECT * FROM stops WHERE route_id=?',routeId);

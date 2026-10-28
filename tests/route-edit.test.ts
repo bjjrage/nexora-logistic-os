@@ -32,19 +32,20 @@ test('editar ruta cambia datos, chofer, vehículo y celular sin perder bultos; i
  await assert.rejects(()=>f.domain.updateRoute(f.actor,f.route.id,{...input,...cmd(),expectedVersion:1}),{code:'VERSION_CONFLICT'});
 });
 test('ruta confirmada permite editar; vehículo cargado exige descargar; ruta despachada conserva su historial',async t=>{
- const f=await fixture(t);await f.domain.ready(f.actor,f.route.id,{...cmd(),expectedVersion:await f.version()});
+ const f=await fixture(t);
  await f.domain.load(f.actor,f.route.id,{...cmd(),expectedVersion:await f.version(),code:f.parcel.code});
+ await f.domain.ready(f.actor,f.route.id,{...cmd(),expectedVersion:await f.version()});
  const before=await f.domain.route(f.route.id,f.actor);
  await assert.rejects(()=>f.domain.updateRoute(f.actor,f.route.id,{...cmd(),...f.body,name:'No guardar',vehicleId:f.otherVehicle.id,expectedVersion:before.version}),{code:'INVALID_TRANSITION'});
  assert.equal((await f.domain.route(f.route.id,f.actor)).name,f.body.name);
  await f.domain.unload(f.actor,f.route.id,{...cmd(),expectedVersion:await f.version(),parcelId:f.parcel.id});
  await f.domain.updateRoute(f.actor,f.route.id,{...cmd(),...f.body,vehicleId:f.otherVehicle.id,driverId:f.otherDriver.id,expectedVersion:await f.version()});
- assert.equal((await f.domain.route(f.route.id,f.actor)).state,'READY');
+ assert.equal((await f.domain.route(f.route.id,f.actor)).state,'DRAFT');
  await f.store.run("UPDATE routes SET state='IN_PROGRESS' WHERE id=?",f.route.id);
  await assert.rejects(async()=>f.domain.updateRoute(f.actor,f.route.id,{...cmd(),...f.body,expectedVersion:await f.version()}),{code:'INVALID_TRANSITION'});
 });
 test('editar horario de ruta confirmada detecta chofer y vehículo ocupados y conserva horario anterior',async t=>{
- const f=await fixture(t);await f.domain.ready(f.actor,f.route.id,{...cmd(),expectedVersion:await f.version()});
+ const f=await fixture(t);await f.domain.load(f.actor,f.route.id,{...cmd(),expectedVersion:await f.version(),code:f.parcel.code});await f.domain.ready(f.actor,f.route.id,{...cmd(),expectedVersion:await f.version()});
  const start=new Date(Date.now()+7200000).toISOString(),end=new Date(Date.now()+10800000).toISOString();
  const other=await f.domain.createRoute(f.actor,{...cmd(),...f.body,name:'Ruta posterior',startAt:start,endAt:end});
  await f.store.run("UPDATE routes SET state='READY' WHERE id=?",other.id);
@@ -52,7 +53,7 @@ test('editar horario de ruta confirmada detecta chofer y vehículo ocupados y co
  assert.equal((await f.domain.route(f.route.id,f.actor)).start_at,f.body.startAt);
 });
 test('guardar el mismo circuito y GPS no falla con una ruta confirmada',async t=>{
- const f=await fixture(t);await f.domain.ready(f.actor,f.route.id,{...cmd(),expectedVersion:await f.version()});
+ const f=await fixture(t);await f.domain.load(f.actor,f.route.id,{...cmd(),expectedVersion:await f.version(),code:f.parcel.code});await f.domain.ready(f.actor,f.route.id,{...cmd(),expectedVersion:await f.version()});
  assert.equal((await f.tracking.clientPolicy(f.actor,f.client.id,{...cmd(),deliveryProvider:'NEXORA'})).unchanged,true);
  assert.equal((await f.tracking.routePolicy(f.actor,f.route.id,{...cmd(),provider:'TRACCAR'})).unchanged,true);
 });

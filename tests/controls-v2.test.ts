@@ -87,8 +87,8 @@ async function fixture(t: any) {
     const readyAndLoaded = async (routeId: string, shipmentId: string, code: string) => {
         await domain.receive(actor, { ...await command(), shipmentId, codes: [code], location: 'Depósito QA' });
         await domain.assign(actor, routeId, { ...await command(), parcelIds: [(await store.one('SELECT id FROM parcels WHERE code=?', code))!.id], pickup: false, expectedVersion: await version(routeId) });
-        await domain.ready(actor, routeId, { ...await command(), expectedVersion: await version(routeId) });
         await domain.load(actor, routeId, { ...await command(), expectedVersion: await version(routeId), code });
+        await domain.ready(actor, routeId, { ...await command(), expectedVersion: await version(routeId) });
         await domain.inspect(actor, vehicleId, {
             ...await command(), odometer: 100, fuelPercent: 70,
             items: [{ label: 'Frenos QA', severity: 'OK', note: 'Correcto' }],

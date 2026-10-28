@@ -222,8 +222,6 @@ async function prepareAndDispatch(client: ReturnType<typeof clientFor>, store: S
         fuelPercent: 100,
         items: [{ label: 'Checklist de salida', severity: 'OK', note: '' }],
     }));
-    const ready = ok(await client.post(`/api/routes/${routeId}/ready`, { expectedVersion: version }));
-    version = ready.version as number;
     for (const [index, parcel] of parcels.entries()) {
         const scanBody = { expectedVersion: version, code: parcel.code as string };
         const commandId = randomUUID();
@@ -242,6 +240,8 @@ async function prepareAndDispatch(client: ReturnType<typeof clientFor>, store: S
             assert.equal((await store.one('SELECT COUNT(*) AS n FROM custody_events WHERE parcel_id=?', parcel.id))!.n, eventCountBefore + 1);
         }
     }
+    const ready = ok(await client.post(`/api/routes/${routeId}/ready`, { expectedVersion: version }));
+    version = ready.version as number;
     const dispatched = ok(await client.post(`/api/routes/${routeId}/dispatch`, { expectedVersion: version }));
     return { routeId, version: dispatched.version as number };
 }

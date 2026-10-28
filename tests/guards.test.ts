@@ -29,7 +29,11 @@ async function fixture(t: any) {
     const receive = async (s: Awaited<Awaited<ReturnType<typeof shipment>>>) => await d.receive(actor, { ...cmd(), shipmentId: s.id, codes: s.parcels.map(p => p.code), location: 'Depósito QA' });
     const version = async (id: string) => (await store.one('SELECT version FROM routes WHERE id=?', id))!.version;
     const assign = async (id: string, ids: string[], pickup = false) => await d.assign(actor, id, { ...cmd(), parcelIds: ids, pickup, expectedVersion: await version(id) });
-    const ready = async (id: string) => await d.ready(actor, id, { ...cmd(), expectedVersion: await version(id) });
+    const ready = async (id: string) => {
+        const pending=await store.all("SELECT p.id FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id WHERE a.route_id=? AND a.active=1 AND a.pickup=0 AND p.custody_type='DEPOT'",id);
+        if(pending.length)await d.loadSelected(actor,id,{...cmd(),expectedVersion:await version(id),parcelIds:pending.map(p=>p.id)});
+        return d.ready(actor, id, { ...cmd(), expectedVersion: await version(id) });
+    };
     const inspect = async (severity = 'OK') => await d.inspect(actor, vehicle, { ...cmd(), odometer: 100, fuelPercent: 70, items: [{ label: 'Frenos', severity, note: severity === 'OK' ? 'Correcto' : 'Defecto QA' }] });
     const loaded = async () => {
         const s = await shipment(), r = await route();

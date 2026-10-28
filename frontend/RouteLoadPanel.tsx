@@ -3,15 +3,14 @@ import { useEffect, useState } from 'react';
 type Parcel = {id:string;code:string;shipmentId:string;state:string;custodyType:string;custodyId:string|null;product?:{name:string;sku:string;serial?:string|null}|null};
 type Shipment = {id:string;reference:string;recipientName:string};
 type Props = {
-  route:{id:string;vehicleId:string;version:number};
+  route:{id:string;vehicleId:string;version:number;state:string};
   parcels:Parcel[];
   shipments:Shipment[];
   busy:boolean;
-  onContinue?:()=>void;
   action:(path:string,payload:Record<string,unknown>,message:string)=>Promise<boolean>;
 };
 
-export default function RouteLoadPanel({route,parcels,shipments,busy,action,onContinue}:Props){
+export default function RouteLoadPanel({route,parcels,shipments,busy,action}:Props){
   const [selected,setSelected]=useState<string[]>([]);
   const pending=parcels.filter(p=>['RECEIVED','RETURNED_TO_DEPOT'].includes(p.state)&&p.custodyType==='DEPOT');
   const loaded=parcels.filter(p=>p.state==='LOADED'&&p.custodyType==='VEHICLE'&&p.custodyId===route.vehicleId);
@@ -28,7 +27,7 @@ export default function RouteLoadPanel({route,parcels,shipments,busy,action,onCo
       <p>Marcá cada artículo cuando lo subas al vehículo y confirmá la carga aquí.</p>
       <button type="button" className="text-button" disabled={busy} onClick={()=>setSelected(selectedPending.length===Math.min(pending.length,200)?[]:pending.slice(0,200).map(p=>p.id))}>{selectedPending.length===Math.min(pending.length,200)?'Quitar selección':'Seleccionar pendientes'}</button>
     </>}
-    <div className="parcel-picker">{parcels.map(parcel=>{
+    <div className="parcel-picker">{pending.map(parcel=>{
       const shipment=shipments.find(s=>s.id===parcel.shipmentId);
       const isLoaded=loaded.some(p=>p.id===parcel.id),canLoad=pending.some(p=>p.id===parcel.id);
       const unit=parcels.filter(p=>p.shipmentId===parcel.shipmentId).findIndex(p=>p.id===parcel.id)+1;
@@ -36,8 +35,7 @@ export default function RouteLoadPanel({route,parcels,shipments,busy,action,onCo
     })}</div>
     {pending.length>200&&<p className="muted">Podés confirmar hasta 200 bultos por operación.</p>}
     {pending.length>0&&<button type="button" className="button button-primary" disabled={busy||!selectedPending.length} onClick={()=>void confirm()}>Confirmar carga</button>}
-    {parcels.length>0&&loaded.length===parcels.length&&<p className="notice success">Carga completa. No tenés que confirmar nada en Pedidos.</p>}
-    {parcels.length>0&&loaded.length===parcels.length&&onContinue&&<button type="button" className="button button-primary" disabled={busy} onClick={onContinue}>Continuar al control de salida</button>}
+    {parcels.length>0&&loaded.length===parcels.length&&<p className="notice success">{route.state==='DRAFT'?'Carga completa. Revisá las paradas y confirmá la ruta con el botón de arriba.':'Carga completa y ruta confirmada. Continuá con el control de salida.'} Para bajar un artículo, abrí Bajar artículos.</p>}
     {!parcels.length&&<p className="muted">Esta ruta no tiene bultos que deban cargarse en depósito.</p>}
   </section>;
 }

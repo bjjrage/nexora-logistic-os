@@ -28,12 +28,12 @@ async function fixture(t:any){
  const route=(await d.createRoute(actor,{...cmd(),name:'QA bulk',driverId:driver,vehicleId:vehicle,trackingProvider:'TRACCAR',startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()})).id;
  const version=async()=>(await d.route(route,actor)).version;
  await d.assign(actor,route,{...cmd(),expectedVersion:await version(),parcelIds:ids,pickup:false});
- await d.ready(actor,route,{...cmd(),expectedVersion:await version()});
  return {db,actor,d,inv,orders,ids,route,version};
 }
 test('bulk unload and unassign reconcile ten quantity/serial units, reservations and stops, and retries apply once',async t=>{
  const f=await fixture(t);
  await f.d.loadSelected(f.actor,f.route,{...cmd(),expectedVersion:await f.version(),parcelIds:f.ids});
+ await f.d.ready(f.actor,f.route,{...cmd(),expectedVersion:await f.version()});
  const version=await f.version(),request={...cmd(),expectedVersion:version,parcelIds:[f.ids[0],f.ids[5]]};
  const result=await f.d.unloadSelected(f.actor,f.route,request);
  assert.deepEqual(await f.d.unloadSelected(f.actor,f.route,request),result);assert.equal(result.unloaded,2);assert.equal(await f.version(),version+1);
@@ -45,7 +45,7 @@ test('bulk unload and unassign reconcile ten quantity/serial units, reservations
  const first={...cmd(),expectedVersion:await f.version(),parcelIds:f.ids.slice(0,5)};
  const removed=await f.d.unassignSelected(f.actor,f.route,first);assert.deepEqual(await f.d.unassignSelected(f.actor,f.route,first),removed);
  assert.equal((await f.db.one('SELECT COUNT(*) AS n FROM stops WHERE route_id=?',f.route))!.n,1);
- assert.equal((await f.d.route(f.route,f.actor)).state,'READY');
+ assert.equal((await f.d.route(f.route,f.actor)).state,'DRAFT');
  await f.d.unassignSelected(f.actor,f.route,{...cmd(),expectedVersion:await f.version(),parcelIds:f.ids.slice(5)});
  assert.equal((await f.d.route(f.route,f.actor)).state,'DRAFT');assert.equal((await f.db.one('SELECT COUNT(*) AS n FROM stops WHERE route_id=?',f.route))!.n,0);
  for(const order of f.orders)await f.inv.unreserveOrder(f.actor,order,cmd());

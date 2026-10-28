@@ -76,12 +76,12 @@ test('desreservar libera stock, retira solo el pedido de la ruta y admite una nu
   const route=await f.domain.createRoute(f.actor,{...f.command(),name:'Ruta',driverId,vehicleId,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()});
   await f.domain.assign(f.actor,route.id,{...f.command(),expectedVersion:route.version,parcelIds:[...reserved.parcels,...other.parcels].map((p:any)=>p.id),pickup:false});
   let version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
-  await f.domain.ready(f.actor,route.id,{...f.command(),expectedVersion:version});
+
   const command=f.command(); const result=await f.inventory.unreserveOrder(f.actor,first.id,command);
   assert.equal(result.released,2);assert.deepEqual(await f.inventory.unreserveOrder(f.actor,first.id,command),result);
   assert.equal((await f.inventory.order(f.actor,first.id)).parcels.length,0);
   assert.equal((await f.store.one("SELECT quantity FROM inventory_balances WHERE product_id=? AND status='AVAILABLE'",f.product.id))!.quantity,2);
-  assert.equal((await f.store.one('SELECT state FROM routes WHERE id=?',route.id))!.state,'READY');
+  assert.equal((await f.store.one('SELECT state FROM routes WHERE id=?',route.id))!.state,'DRAFT');
   assert.equal((await f.store.one('SELECT count(*) AS n FROM route_assignments WHERE route_id=? AND active=1',route.id))!.n,1);
   assert.equal((await f.store.one('SELECT count(*) AS n FROM stops WHERE route_id=?',route.id))!.n,1);
   assert.equal((await reconcileInventory(f.store,f.actor)).ok,true);
@@ -102,7 +102,6 @@ test('descargar y quitar de ruta revierte la carga y permite reasignar, recargar
   const route=await f.domain.createRoute(f.actor,{...f.command(),name:'Ruta',driverId,vehicleId,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()});
   await f.domain.assign(f.actor,route.id,{...f.command(),expectedVersion:route.version,parcelIds:[reserved.parcels[0].id],pickup:false});
   let version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
-  await f.domain.ready(f.actor,route.id,{...f.command(),expectedVersion:version});version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
   await f.domain.load(f.actor,route.id,{...f.command(),expectedVersion:version,code:reserved.parcels[0].code});
   await assert.rejects(()=>f.inventory.unreserveOrder(f.actor,order.id,f.command()),code('INVALID_TRANSITION'));
   assert.equal((await f.store.one('SELECT state FROM parcels WHERE id=?',reserved.parcels[0].id))!.state,'LOADED');
@@ -119,8 +118,6 @@ test('descargar y quitar de ruta revierte la carga y permite reasignar, recargar
   assert.equal((await f.store.one('SELECT count(*) AS n FROM stops WHERE route_id=?',route.id))!.n,0);
   version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
   await f.domain.assign(f.actor,route.id,{...f.command(),expectedVersion:version,parcelIds:[reserved.parcels[0].id],pickup:false});
-  version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
-  await f.domain.ready(f.actor,route.id,{...f.command(),expectedVersion:version});
   version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
   await f.domain.load(f.actor,route.id,{...f.command(),expectedVersion:version,code:reserved.parcels[0].code});
   version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
@@ -139,7 +136,6 @@ test('desreservar conserva la serie y permite editar o reservar de nuevo', async
   const route=await f.domain.createRoute(f.actor,{...f.command(),name:'Ruta',driverId,vehicleId,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()});
   await f.domain.assign(f.actor,route.id,{...f.command(),expectedVersion:route.version,parcelIds:[reserved.parcels[0].id],pickup:false});
   let version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
-  await f.domain.ready(f.actor,route.id,{...f.command(),expectedVersion:version});version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
   await f.domain.load(f.actor,route.id,{...f.command(),expectedVersion:version,code:reserved.parcels[0].code});version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
   await f.domain.unload(f.actor,route.id,{...f.command(),expectedVersion:version,parcelId:reserved.parcels[0].id});
   await f.inventory.unreserveOrder(f.actor,order.id,f.command());
@@ -287,10 +283,8 @@ test('parcels por unidad enlazan ruta, bloquean cierre manual, entregan parcial 
   const driverUser = await f.store.one('SELECT id FROM users WHERE org_id=? AND driver_id=?', f.actor.orgId, driverId);
   const driverBootstrap = await f.domain.bootstrap({ ...f.actor, id: driverUser!.id, role: 'DRIVER', driverId });
   assert.deepEqual(driverBootstrap.parcels.find((parcel: any) => parcel.id === reservation.parcels[0].id)?.product, { name: f.product.name, sku: f.product.sku });
-  const version = (await f.store.one('SELECT version FROM routes WHERE id=?', route.id))!.version;
-  await f.domain.ready(f.actor, route.id, { ...f.command(), expectedVersion: version });
-  const readyVersion = (await f.store.one('SELECT version FROM routes WHERE id=?', route.id))!.version;
-  const loaded = await f.inventory.loadOrder(f.actor, order.id, { ...f.command(), routeId: route.id, expectedVersion: readyVersion, codes: [f.product.barcode, f.product.barcode, reservation.parcels[2].code] });
+  const loadVersion = (await f.store.one('SELECT version FROM routes WHERE id=?', route.id))!.version;
+  const loaded = await f.inventory.loadOrder(f.actor, order.id, { ...f.command(), routeId: route.id, expectedVersion: loadVersion, codes: [f.product.barcode, f.product.barcode, reservation.parcels[2].code] });
   assert.equal(loaded.loaded, 3);
   assert.equal(loaded.status, 'LOADED');
   assert.equal((await f.inventory.order(f.actor, order.id)).lines[0].loaded, 3);
@@ -299,6 +293,8 @@ test('parcels por unidad enlazan ruta, bloquean cierre manual, entregan parcial 
   await assert.rejects(() => f.inventory.syncParcelTransition(f.actor, packages[0].parcel_id, 'IN_TRANSIT', 'DELIVERED', 'RECIPIENT', 'Receptor QA', randomUUID()), code('EVIDENCE_REQUIRED'));
   await f.domain.inspect(f.actor, vehicleId, { ...f.command(), odometer: 0, fuelPercent: 90, items: [{ severity: 'OK', label: 'Inspección QA', note: '' }] });
   let currentVersion = (await f.store.one('SELECT version FROM routes WHERE id=?', route.id))!.version;
+  await f.domain.ready(f.actor,route.id,{...f.command(),expectedVersion:currentVersion});
+  currentVersion=(await f.domain.route(route.id,f.actor)).version;
   await f.domain.dispatch(f.actor, route.id, { ...f.command(), expectedVersion: currentVersion });
   const stop = await f.store.one('SELECT id FROM stops WHERE route_id=? AND shipment_id=?', route.id, order.shipmentId);
   assert(stop);
@@ -363,7 +359,7 @@ for (const tracking of ['QUANTITY', 'SERIAL'] as const) test(`carga ${tracking}:
   const vehicleId = (await f.domain.createVehicle(f.actor, { ...f.command(), plate: 'MIXED-' + randomUUID(), capacityWeightGrams: 10000, capacityVolumeCm3: 10000, odometer: 0 })).id;
   const route = await f.domain.createRoute(f.actor, { ...f.command(), name: 'QA mixed scans', driverId, vehicleId, startAt: new Date(Date.now() - 60000).toISOString(), endAt: new Date(Date.now() + 3600000).toISOString() });
   await f.domain.assign(f.actor, route.id, { ...f.command(), expectedVersion: route.version, parcelIds: reservation.parcels.map((p: any) => p.id), pickup: false });
-  await f.domain.ready(f.actor, route.id, { ...f.command(), expectedVersion: (await f.domain.route(route.id, f.actor)).version });
+
   const version = (await f.domain.route(route.id, f.actor)).version;
   await assert.rejects(f.inventory.loadOrder(f.actor, order.id, { ...f.command(), routeId: route.id, expectedVersion: version, codes: [explicit.code, explicit.code] }), code('NOT_FOUND'));
   assert.equal((await f.store.one("SELECT count(*) n FROM parcels WHERE shipment_id=? AND state='LOADED'", order.shipmentId))!.n, 0);
