@@ -6,6 +6,7 @@ import DriverDocumentsPanel from './DriverDocumentsPanel';
 import Brand from './Brand';
 import QuadMindsPanel from './QuadMindsPanel';
 import TraccarPanel from './TraccarPanel';
+import RouteSetup from './RouteSetup';
 import KpiDetails, { type KpiKind } from './KpiDetails';
 import InventoryPanel from './InventoryPanel';
 import CustomerPortal from './CustomerPortal';
@@ -193,6 +194,7 @@ function auditLabel(action:string):string {
   if (controls[operation]) return controls[operation];
   if(operation==='routes.unload')return 'Bulto bajado al depósito';
   if(operation==='routes.unassign')return 'Bulto quitado de la ruta';
+  if(operation==='routes.update')return 'Ruta actualizada';
   const labels:Record<string,string>={'clients.create':'Cliente registrado','drivers.create':'Chofer registrado','users.create':'Usuario habilitado','vehicles.create':'Vehículo registrado','shipments.create':'Envío registrado','receipts.create':'Recepción registrada','routes.create':'Ruta creada','routes.assign':'Bultos asignados','routes.order':'Paradas ordenadas','routes.ready':'Plan confirmado','routes.load':'Carga verificada','routes.dispatch':'Ruta despachada','routes.close':'Ruta cerrada','stops.pickup':'Retiro registrado','stops.attempt':'Intento registrado','incidents.return':'Devolución autorizada','returns.receive':'Retorno recibido en depósito','returns.sender':'Entrega al remitente confirmada','vehicles.inspect':'Inspección registrada','vehicles.document':'Documento registrado','defects.resolve':'Defecto resuelto','vehicles.maintenance':'Mantenimiento programado','maintenance.complete':'Mantenimiento completado','evidence.store':'Evidencia guardada'};
   return labels[operation]??'Movimiento registrado';
 }
@@ -602,14 +604,14 @@ function AppContent() {
           {page === "home" && !isDriver && <HomeView data={bootstrap} go={changePage} role={role} />}
           {page === "shipments" && !isDriver && <ShipmentsView initialShipmentId={preferredShipmentId} data={bootstrap} action={mutate} busy={pending} uploadEvidence={uploadEvidence} role={role} />}
           {page === "routes" && <RoutesView initialRouteId={preferredRouteId} data={bootstrap} action={mutate} busy={pending} operationError={error} onRefresh={async()=>{await refreshBootstrap();setError('');}} uploadEvidence={uploadEvidence} role={role} driverId={isDriver ? session.user.driverId ?? null : null} />}
-          {page === "fleet" && !isDriver && <FleetView data={bootstrap} action={mutate} busy={pending} uploadEvidence={uploadEvidence} role={role} />}
+          {page === "fleet" && !isDriver && <FleetView data={bootstrap} action={mutate} busy={pending} uploadEvidence={uploadEvidence} role={role} onPrepareRoute={()=>changePage('routes','new')} />}
           {page === "clients" && isOpsRole(role) && <ClientsPanel profileEnabled={bootstrap.clientProfilesEnabled===true} initialClientId={preferredClientId} clients={bootstrap.clients} shipments={bootstrap.shipments} canManage={true} action={mutate} busy={pending} actionError={error} onInventory={(clientId,view)=>{changePage('inventory');setInventoryEntry({clientId,view});}}/>}
           {page === "company" && role === "ADMIN" && <CompanyPanel organization={bootstrap.organization} currentUserId={session.user.id} action={mutate} busy={pending} actionError={error} onFleet={()=>changePage('fleet')}/>}
           {page === "billing" && role === "ADMIN" && <Suspense fallback={<p role="status">Cargando facturación…</p>}><BillingPanel clients={bootstrap.clients}/></Suspense>}
           {page === "inventory" && !isDriver && <InventoryPanel key={inventoryEntry?inventoryEntry.clientId+':'+inventoryEntry.view:'inventory'} initialClientId={inventoryEntry?.clientId} initialView={inventoryEntry?.view} onReturnToClient={inventoryEntry?(clientId)=>changePage('clients',clientId):undefined} section="inventory" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
           {page === "orders" && !isDriver && <InventoryPanel section="orders" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} onOpenRoutes={(routeId)=>changePage('routes',routeId)} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
           {page === "customerAccess" && role === "ADMIN" && <InventoryPanel section="customerAccess" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
-          {page === "tracking" && <TrackingView data={bootstrap} action={mutate} busy={pending} operationError={error} onRefresh={refreshBootstrap} />}
+          {page === "tracking" && <TrackingView data={bootstrap} action={mutate} busy={pending} operationError={error} onRefresh={refreshBootstrap} onPrepareRoute={()=>changePage('routes','new')} />}
         </div>
       </main>
       <nav className="mobile-nav" aria-label="Navegación móvil" inert={reauthentication} aria-hidden={reauthentication||undefined}>
@@ -839,18 +841,14 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
   const availableRoutes=justCreated&&!data.routes.some(route=>route.id===justCreated.id)?[justCreated,...data.routes]:data.routes;
   const visibleRoutes = driverId ? availableRoutes.filter((route) => route.driverId === driverId) : availableRoutes;
   const [selectedRouteId, setSelectedRouteId] = useState(initialRouteId);
-  const [showCreate, setShowCreate] = useState(false);
+  const [showCreate, setShowCreate] = useState(initialRouteId==='new');
+  const [editRouteId,setEditRouteId]=useState('');
   const [routeTab, setRouteTab] = useState('stops');
   const [routeSearch, setRouteSearch] = useState('');
   const [routeFilter, setRouteFilter] = useState('ALL');
   const [routePage, setRoutePage] = useState(0);
   const filteredRoutes = visibleRoutes.filter(route => (routeFilter === 'ALL' || route.state === routeFilter) && (route.name + ' ' + (data.drivers.find(d=>d.id===route.driverId)?.name??'') + ' ' + (data.vehicles.find(v=>v.id===route.vehicleId)?.plate??'')).toLocaleLowerCase().includes(routeSearch.toLocaleLowerCase()));
   const displayedRoutes = filteredRoutes.slice(routePage*8,routePage*8+8);
-  const [routeName, setRouteName] = useState("");
-  const [newDriverId, setNewDriverId] = useState("");
-  const [newVehicleId, setNewVehicleId] = useState("");
-  const [startAt, setStartAt] = useState("");
-  const [endAt, setEndAt] = useState("");
   const [assignmentIds, setAssignmentIds] = useState<string[]>([]);
   const [pickupMode, setPickupMode] = useState(false);
   const [scanCode, setScanCode] = useState("");
@@ -885,23 +883,6 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
     if(routeTab==='planning' && selectedRoute.state!=='DRAFT')setRouteTab(selectedRoute.state==='READY' && canLoad?'loading':'stops');
     if(routeTab==='loading' && selectedRoute.state!=='READY')setRouteTab('stops');
   },[selectedRoute?.state,routeTab,canLoad]);
-  const submitCreate = async (event: FormEvent) => {
-    event.preventDefault();
-    setCreateError('');
-    const formValues=new FormData(event.currentTarget as HTMLFormElement);
-    const start=new Date(String(formValues.get('startAt')||startAt)),end=new Date(String(formValues.get('endAt')||endAt));
-    if(!Number.isFinite(start.getTime())||!Number.isFinite(end.getTime())||end<=start){setCreateError('El fin previsto debe ser posterior al inicio.');return;}
-    const body={
-      name: routeName.trim(), driverId: newDriverId, vehicleId: newVehicleId,
-      startAt: start.toISOString(), endAt: end.toISOString(),
-    };
-    const ok = await action("/api/routes", body, "Ruta creada.",result=>{
-      if(typeof result.id!=='string')return;
-      setJustCreated({...body,id:result.id,state:String(result.state??'DRAFT'),version:Number(result.version??1)});
-      setSelectedRouteId(result.id);setRouteTab('planning');setShowCreate(false);
-    });
-    if (ok) { setRouteName(""); setStartAt(""); setEndAt(""); setShowCreate(false); }
-  };
   const refreshRoutes=async()=>{setRefreshing(true);setCreateError('');try{await onRefresh();}catch(error){setCreateError(errorMessage(error));}finally{setRefreshing(false);}};
   const submitAssign = async (event: FormEvent) => {
     event.preventDefault();
@@ -957,18 +938,8 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
     <>
       <SectionTitle eyebrow="PLANIFICACIÓN Y CALLE" title={driverId ? "Mis rutas" : "Rutas"} description={driverId ? "Tus recorridos asignados." : "Elegí una ruta para trabajar."} action={<div className="heading-actions"><button className="button button-secondary" disabled={busy||refreshing} onClick={()=>void refreshRoutes()}>{refreshing?'Actualizando…':'Actualizar'}</button>{canPlan&&<button className="button button-primary" disabled={busy} onClick={()=>{setShowCreate(value=>!value);setCreateError('');}}><Plus aria-hidden="true" />{showCreate ? "Cerrar nueva ruta" : "Nueva ruta"}</button>}</div>} />
       {createError&&<p className="notice error" role="alert">{createError}</p>}
-      {canPlan && showCreate && <Panel title="Nueva ruta">
-        {data.drivers.filter((driver) => isAvailable(driver.available)).length === 0 || data.vehicles.filter((vehicle) => isAvailable(vehicle.available)).length === 0 ? <div className="notice notice-neutral">Registrá y habilitá al menos un chofer y un vehículo antes de crear una ruta.</div> : (
-          <form className="stack" onSubmit={submitCreate}><fieldset disabled={busy}><div className="form-grid">
-            <Field label="Nombre de ruta"><input required value={routeName} onChange={(event) => setRouteName(event.target.value)} /></Field>
-            <Field label="Chofer"><select required value={newDriverId} onChange={(event) => setNewDriverId(event.target.value)}><option value="">Seleccionar chofer</option>{data.drivers.filter((driver) => isAvailable(driver.available)).map((driver) => <option key={driver.id} value={driver.id}>{driver.name}</option>)}</select></Field>
-            <Field label="Vehículo"><select required value={newVehicleId} onChange={(event) => setNewVehicleId(event.target.value)}><option value="">Seleccionar vehículo</option>{data.vehicles.filter((vehicle) => isAvailable(vehicle.available)).map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.plate}</option>)}</select></Field>
-            <Field label="Inicio previsto" hint={timeZoneHint(data.organization.timezone)}><input required name="startAt" type="datetime-local" value={startAt} onChange={(event) => setStartAt(event.target.value)} /></Field>
-            <Field label="Fin previsto" hint={timeZoneHint(data.organization.timezone)}><input required name="endAt" type="datetime-local" value={endAt} onChange={(event) => setEndAt(event.target.value)} /></Field>
-          </div></fieldset>{operationError&&<p className="notice error" role="alert">{operationError}</p>}<button className="button button-primary" disabled={busy || !newDriverId || !newVehicleId}>{busy?'Guardando ruta…':'Crear ruta'}</button>{busy&&<p className="muted" role="status">Esperando confirmación del servidor…</p>}</form>
-        )}
-      </Panel>}
-      <div className={"grid-2 routes-layout " + (!selectedRoute ? "routes-layout--list" : "")}>
+      {canPlan && showCreate && <Panel title="Nueva ruta"><RouteSetup drivers={data.drivers} vehicles={data.vehicles} action={action} busy={busy} operationError={operationError} onCancel={()=>setShowCreate(false)} onSaved={result=>{if(typeof result.id==='string'){setJustCreated({...result,id:result.id,state:'DRAFT',version:Number(result.version??1)} as Route);setSelectedRouteId(result.id);setRouteTab('planning');setShowCreate(false);}}}/></Panel>}
+      {!showCreate && <div className={"grid-2 routes-layout " + (!selectedRoute ? "routes-layout--list" : "")}>
         <Panel title="Rutas">
           <div className="workspace-filters"><label className="field"><span>Buscar ruta</span><input type="search" value={routeSearch} placeholder="Nombre, chofer o matrícula" onChange={event=>{setRouteSearch(event.target.value);setRoutePage(0);}} /></label><label className="field"><span>Estado de ruta</span><select value={routeFilter} onChange={event=>{setRouteFilter(event.target.value);setRoutePage(0);}}><option value="ALL">Todas</option><option value="DRAFT">Borradores</option><option value="READY">Listas para salir</option><option value="IN_PROGRESS">En curso</option><option value="CLOSED">Cerradas</option></select></label></div>
           {filteredRoutes.length === 0 ? <EmptyState>{role==='DRIVER'?`Todavía no tenés recorridos asignados. El equipo de ${data.organization.name} prepara la ruta y te la asigna.`:'No hay rutas para este filtro.'}</EmptyState> : <div className="route-list">{displayedRoutes.map((route) => {
@@ -983,7 +954,9 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
           {filteredRoutes.length>8 && <div className="list-pagination"><button className="button button-secondary" disabled={routePage===0} onClick={()=>setRoutePage(p=>p-1)}>Anterior</button><span>{routePage+1} / {Math.ceil(filteredRoutes.length/8)}</span><button className="button button-secondary" disabled={(routePage+1)*8>=filteredRoutes.length} onClick={()=>setRoutePage(p=>p+1)}>Siguiente</button></div>}
         </Panel>
         {selectedRoute ? <Panel title={selectedRoute.name} description={"Chofer: " + (data.drivers.find((item) => item.id === selectedRoute.driverId)?.name ?? selectedRoute.driverId) + " · Vehículo: " + (data.vehicles.find((item) => item.id === selectedRoute.vehicleId)?.plate ?? selectedRoute.vehicleId)}>
-          <div className="route-toolbar"><StateBadge value={selectedRoute.state} /><span className="muted">{formatDate(selectedRoute.startAt,data.organization.timezone)}</span></div>
+          {canPlan && editRouteId!==selectedRoute.id && ['DRAFT','READY'].includes(selectedRoute.state) && <button type="button" className="button button-secondary" disabled={busy} onClick={()=>setEditRouteId(selectedRoute.id)}>Editar ruta</button>}
+          {canPlan && editRouteId===selectedRoute.id && <Panel title="Editar ruta"><RouteSetup key={selectedRoute.id+':'+selectedRoute.version} route={selectedRoute} drivers={data.drivers} vehicles={data.vehicles} action={action} busy={busy} operationError={operationError} onCancel={()=>setEditRouteId('')} onSaved={()=>setEditRouteId('')}/></Panel>}
+          {editRouteId!==selectedRoute.id && <><div className="route-toolbar"><StateBadge value={selectedRoute.state} /><span className="muted">{formatDate(selectedRoute.startAt,data.organization.timezone)}</span></div>
           <div className="button-row">
             {canPlan && selectedRoute.state === "DRAFT" && <button className="button button-secondary" disabled={busy} onClick={() => simpleRouteAction("ready", "Ruta confirmada para operación.")}>Confirmar plan</button>}
             {capacityIncomplete && <p className="muted">Hay bultos sin peso o volumen. Podés continuar; la capacidad total no está verificada.</p>}
@@ -1088,8 +1061,9 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
           {routeTab === "issues" && openIncidents.length > 0 && <div className="form-divider"><h3>Incidencias abiertas</h3>{openIncidents.map((incident) => <div className="incident-row" key={incident.id}><span><strong>{incident.reasonCode}</strong><small>{incident.nextAction} · {data.parcels.find(parcel=>parcel.id===incident.parcelId)?.code??"Bulto"}</small></span>{canPlan && <button className="button button-secondary" disabled={busy} onClick={() => void action("/api/incidents/" + encodeURIComponent(incident.id) + "/authorize-return", { commandId: commandId() }, "Devolución autorizada.")}>Autorizar devolución</button>}</div>)}</div>}
           {routeTab === "issues" && canReceiveReturns && routeReturnItems.length > 0 && <ReturnOperations canCorrect={isOpsRole(role)} returns={routeReturnItems} parcels={data.parcels} action={action} busy={busy} uploadEvidence={uploadEvidence} />}
           {routeTab === "stops" && stops.length > 0 && pendingStops.length === 0 && openIncidents.length === 0 && <div className="notice notice-neutral">No hay paradas o incidencias abiertas. El servidor validará si la ruta puede cerrarse.</div>}
+          </>}
         </Panel> : null}
-      </div>
+      </div>}
     </>
   );
 }
@@ -1148,8 +1122,8 @@ function StopOrderEditor({ stops, route, action, busy, shipmentLabel }: {
   </form>;
 }
 
-function FleetView({ data, action, busy, uploadEvidence, role }: {
-  data: Bootstrap; action: Action; busy: boolean; uploadEvidence: EvidenceUpload; role: Role;
+function FleetView({ data, action, busy, uploadEvidence, role,onPrepareRoute }: {
+  data: Bootstrap; action: Action; busy: boolean; uploadEvidence: EvidenceUpload; role: Role;onPrepareRoute:()=>void;
 }) {
   const canManage = isOpsRole(role);
   const [fleetTab,setFleetTab] = useState('vehicles');
@@ -1218,7 +1192,7 @@ function FleetView({ data, action, busy, uploadEvidence, role }: {
 
   return (
     <>
-      <SectionTitle eyebrow="RECURSOS Y CONTROLES" title="Flota" description="Vehículos y choferes, con sus controles." />
+      <SectionTitle eyebrow="RECURSOS Y CONTROLES" title="Flota" description="Vehículos y choferes, con sus controles." action={canManage?<button type="button" className="button button-primary" onClick={onPrepareRoute}>Preparar chofer, vehículo y celular</button>:undefined} />
       <nav className="workspace-tabs" aria-label="Secciones de flota">{[['vehicles','Vehículos'],['drivers','Choferes'],['documents','Documentos'],['inspections','Inspecciones'],['maintenance','Mantenimiento']].map(([key,label])=><button type="button" key={key} aria-pressed={fleetTab===key} onClick={()=>setFleetTab(key)}>{label}</button>)}</nav>
       {canManage && fleetTab === "drivers" && <TaskDisclosure label="Agregar chofer">
         <Panel title="Nuevo chofer"><form className="stack" onSubmit={submitDriver}><fieldset disabled={busy}><Field label="Nombre"><input required value={driverName} onChange={(event) => setDriverName(event.target.value)} /></Field><div className="form-grid"><Field label="Usuario"><input required value={driverUsername} onChange={(event) => setDriverUsername(event.target.value)} autoComplete="off" /></Field><Field label="Contraseña inicial" hint="Mínimo 6 caracteres."><input required minLength={6} type="password" value={driverPassword} onChange={(event) => setDriverPassword(event.target.value)} autoComplete="new-password" /></Field></div></fieldset><button className="button button-primary" disabled={busy || driverPassword.length < 6}>Registrar chofer</button></form></Panel>
@@ -1271,14 +1245,14 @@ function FleetView({ data, action, busy, uploadEvidence, role }: {
   );
 }
 
-function TrackingView({ data, action, busy, onRefresh, operationError }: { data: Bootstrap; action: Action; busy: boolean; onRefresh: () => Promise<void>; operationError:string }) {
+function TrackingView({ data, action, busy, onRefresh, operationError,onPrepareRoute }: { data: Bootstrap; action: Action; busy: boolean; onRefresh: () => Promise<void>; operationError:string;onPrepareRoute:()=>void }) {
   const [trackingTab,setTrackingTab] = useState('positions');
   const [trackingRouteId,setTrackingRouteId] = useState('');
   const canManage = isOpsRole(data.user.role);
   const routeClients=(routeId:string)=>[...new Set(data.assignments.filter(item=>item.active&&item.routeId===routeId).flatMap(item=>{const parcel=data.parcels.find(row=>row.id===item.parcelId),shipment=data.shipments.find(row=>row.id===parcel?.shipmentId);return shipment?.clientId?[shipment.clientId]:[];}))];
   const draftRoutes=data.routes.filter(route=>route.state==='DRAFT').map(route=>({...route,clientIds:routeClients(route.id)}));
   return <>
-    <SectionTitle eyebrow="SEGUIMIENTO" title="Tracking" description="Ubicación de tus repartos." />
+    <SectionTitle eyebrow="SEGUIMIENTO" title="Tracking" description="Ubicación de tus repartos." action={canManage?<button type="button" className="button button-primary" onClick={onPrepareRoute}>Preparar chofer, vehículo y celular</button>:undefined} />
     <nav className="workspace-tabs" aria-label="Vistas de seguimiento"><button aria-pressed={trackingTab==='positions'} onClick={()=>setTrackingTab('positions')}>Mapa</button>{canManage&&<><button aria-pressed={trackingTab==='phones'} onClick={()=>setTrackingTab('phones')}>Mi celular</button><button aria-pressed={trackingTab==='operations'||trackingTab==='quad-settings'} onClick={()=>setTrackingTab('operations')}>Universo · QuadMinds</button></>}<button aria-pressed={trackingTab==='routes'} onClick={()=>setTrackingTab('routes')}>Rutas</button></nav>
     {trackingTab === 'positions' && <QuadMindsPanel vehicles={data.vehicles} routes={data.routes} timezone={data.organization.timezone} canManage={false} action={action} busy={busy} initialRouteId={trackingRouteId} />}
     {trackingTab === 'phones' && canManage && <TraccarPanel vehicles={data.vehicles} routes={draftRoutes} clients={data.clients} canAdmin={data.user.role==='ADMIN'} action={action} busy={busy} actionError={operationError} onShowMap={vehicleId=>{setTrackingRouteId(data.routes.find(route=>route.vehicleId===vehicleId)?.id??'');setTrackingTab('positions');}}/>}

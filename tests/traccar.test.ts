@@ -65,8 +65,20 @@ test('Traccar: vinculación exige rol, organización, dispositivo propio y unici
  await assert.rejects(f.tracking.bind({...f.actor,role:'DRIVER'},f.vehicle.id,{...command(),deviceId:'123'}),{code:'FORBIDDEN'});
  await assert.rejects(f.tracking.bind({...f.actor,orgId:randomUUID()},f.vehicle.id,{...command(),deviceId:'123'}),{code:'NOT_FOUND'});
  const other=await f.domain.createVehicle(f.actor,{...command(),plate:'GPS-2',capacityWeightGrams:1000,capacityVolumeCm3:1000,odometer:0});
- await assert.rejects(f.tracking.bind(f.actor,other.id,{...command(),deviceId:'123'}),{code:'VALIDATION_ERROR'});
+ await f.tracking.bind(f.actor,other.id,{...command(),deviceId:'123'});
+ assert.equal((await f.store.one('SELECT vehicle_id FROM traccar_vehicle_bindings WHERE device_id=?','123'))!.vehicle_id,other.id);
+ assert.equal(await f.store.one('SELECT vehicle_id FROM traccar_vehicle_bindings WHERE vehicle_id=?',f.vehicle.id),undefined);
  await assert.rejects(f.tracking.route({...f.actor,role:'DRIVER',driverId:randomUUID()},f.route.id),{code:'FORBIDDEN'});
+});
+test('Traccar: guardar el mismo celular conserva señal; no se mueve un celular de un vehículo con ruta confirmada',async t=>{
+ const f=await fixture(t);assert.equal(await ingestTraccarPosition(f.store,f.point(1),time+1),true);
+ const before=await f.store.one('SELECT revision,latitude FROM traccar_latest WHERE vehicle_id=?',f.vehicle.id);
+ await f.tracking.bind(f.actor,f.vehicle.id,{...command(),deviceId:'123'});
+ assert.deepEqual(await f.store.one('SELECT revision,latitude FROM traccar_latest WHERE vehicle_id=?',f.vehicle.id),before);
+ await f.store.run("UPDATE routes SET state='READY' WHERE id=?",f.route.id);
+ const other=await f.domain.createVehicle(f.actor,{...command(),plate:'GPS-OTHER',capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0});
+ await assert.rejects(()=>f.tracking.bind(f.actor,other.id,{...command(),deviceId:'123'}),{code:'INVALID_TRANSITION'});
+ assert.equal((await f.store.one('SELECT vehicle_id FROM traccar_vehicle_bindings WHERE device_id=?','123'))!.vehicle_id,f.vehicle.id);
 });
 test('Traccar: no degrada Universo; rutas separadas y proveedor fijado antes de confirmar',async t=>{
  const f=await fixture(t),client=await f.domain.createClient(f.actor,{...command(),name:'Otro cliente'});

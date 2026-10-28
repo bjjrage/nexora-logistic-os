@@ -8,6 +8,7 @@ import {schemas} from './validation.ts';
 import {saveClientProfile,clientProfileSummaries} from './client-profiles.ts';
 import {latestParcelAssignment} from './driver-access.ts';
 import {verifyVehicleCapacity} from './vehicle-capacity.ts';
+import {bindVehiclePhone} from './vehicle-phone.ts';
 const now = () => new Date().toISOString();
 const canonical = (value: any): string => JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 const OPS: Role[] = ['ADMIN', 'OPERATIONS'];
@@ -139,7 +140,35 @@ export class Logistics {
             ensure(b.endAt > b.startAt, 'VALIDATION_ERROR', 'La ventana debe terminar después del inicio.', 400);
             const id = randomUUID();
             await this.store.run('INSERT INTO routes(id,org_id,name,driver_id,vehicle_id,start_at,end_at) VALUES(?,?,?,?,?,?,?)', id, actor.orgId, b.name, b.driverId, b.vehicleId, b.startAt, b.endAt);
+            if(b.trackingProvider)await this.store.run('INSERT INTO route_tracking_settings VALUES(?,?,?,?)',actor.orgId,id,b.trackingProvider,now());
+            if(b.phoneDeviceId!==undefined)await bindVehiclePhone(this.store,actor.orgId,b.vehicleId,b.phoneDeviceId);
             return { id, version: 1, state: 'DRAFT' };
+        });
+    }
+    async updateRoute(actor:Actor,id:string,input:Row){
+        const b=schemas.routeUpdate.parse(input);
+        return this.command(actor,`routes.${id}.update`,b,OPS,async()=>{
+            const route=await this.route(id,actor,b.expectedVersion);
+            ensure(['DRAFT','READY'].includes(route.state),'INVALID_TRANSITION','La ruta ya salió o está cerrada. Sus datos de salida quedan en el historial.');
+            ensure(b.endAt>b.startAt,'VALIDATION_ERROR','El fin previsto debe ser posterior al inicio.',400);
+            const driver=await this.record('drivers',b.driverId,actor),vehicle=await this.record('vehicles',b.vehicleId,actor);
+            ensure(driver.available&&vehicle.available,'INVALID_TRANSITION','El chofer o el vehículo no está disponible.');
+            ensure(await this.store.one('SELECT id FROM users WHERE org_id=? AND driver_id=? AND enabled=1',actor.orgId,b.driverId),'INVALID_TRANSITION','El acceso del chofer está suspendido.');
+            if(b.vehicleId!==route.vehicle_id){
+                const loaded=await this.store.one("SELECT p.id FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id WHERE a.org_id=? AND a.route_id=? AND a.active=1 AND p.custody_type='VEHICLE' LIMIT 1",actor.orgId,id);
+                ensure(!loaded,'INVALID_TRANSITION','Antes de cambiar de vehículo, bajá al depósito los bultos cargados desde Paradas → Bajar al depósito.');
+            }
+            const setting=await this.store.one('SELECT provider FROM route_tracking_settings WHERE org_id=? AND route_id=?',actor.orgId,id);
+            const provider=b.trackingProvider??setting?.provider??'QUADMINDS';
+            ensure(route.state==='DRAFT'||provider===(setting?.provider??'QUADMINDS'),'INVALID_TRANSITION','El sistema de seguimiento de una ruta confirmada no se cambia.');
+            if(provider==='TRACCAR')ensure(!await this.store.one('SELECT route_id FROM quad_route_links WHERE org_id=? AND route_id=?',actor.orgId,id),'INVALID_TRANSITION','La ruta está vinculada a QuadMinds.');
+            if(route.state==='READY'||provider!==(setting?.provider??'QUADMINDS'))await validateRouteProvider(this.store,actor.orgId,id,provider);
+            const next={...route,name:b.name,driver_id:b.driverId,vehicle_id:b.vehicleId,start_at:b.startAt,end_at:b.endAt};
+            if(route.state==='READY'){await this.routeAvailability(next,actor,false);await this.capacity(next,actor);}
+            await this.store.run('UPDATE routes SET name=?,driver_id=?,vehicle_id=?,start_at=?,end_at=?,version=version+1 WHERE id=? AND org_id=?',b.name,b.driverId,b.vehicleId,b.startAt,b.endAt,id,actor.orgId);
+            if(b.trackingProvider)await this.store.run('INSERT INTO route_tracking_settings VALUES(?,?,?,?) ON CONFLICT(org_id,route_id) DO UPDATE SET provider=excluded.provider,updated_at=excluded.updated_at',actor.orgId,id,provider,now());
+            if(b.phoneDeviceId!==undefined)await bindVehiclePhone(this.store,actor.orgId,b.vehicleId,b.phoneDeviceId);
+            return {id,state:route.state,version:route.version+1};
         });
     }
     async assign(actor: Actor, id: string, b: Row) {

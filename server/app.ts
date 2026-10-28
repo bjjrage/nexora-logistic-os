@@ -136,6 +136,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     post('/api/shipments', schemas.shipment, async (a, b) => await domain.createShipment(a, b));
     post('/api/receipts', schemas.receipt, async (a, b) => await domain.receive(a, b));
     post('/api/routes', schemas.route, async (a, b) => await domain.createRoute(a, b));
+    post('/api/routes/:id/update',schemas.routeUpdate,async(a,b,r)=>await domain.updateRoute(a,String(r.params.id),b));
     const routeId = (req: Request) => String(req.params.id);
     post('/api/routes/:id/assignments', schemas.assign, async (a, b, r) => await domain.assign(a, routeId(r), b));
     post('/api/routes/:id/unassign', schemas.routeParcel, async (a,b,r)=>await domain.unassign(a,routeId(r),b));

@@ -1,9 +1,9 @@
-import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Database } from './database.ts';
 import { authorize, type Actor } from './auth.ts';
 import { Logistics } from './domain.ts';
 import { ensure } from './errors.ts';
+import {bindVehiclePhone} from './vehicle-phone.ts';
 
 export const STALE_AFTER_MS = 180_000;
 export { normalizeTraccarPosition } from './traccar-position.ts';
@@ -45,11 +45,7 @@ export class TraccarTracking {
   async bind(actor: Actor, vehicleId: string, input: unknown) {
     const body=z.object({commandId:z.uuid(),deviceId:z.string().regex(/^\d+$/).nullable()}).parse(input),domain=new Logistics(this.store);
     return domain.command(actor,`vehicles.${vehicleId}.traccar`,body,['ADMIN','OPERATIONS'],async()=>{
-      await domain.record('vehicles',vehicleId,actor);
-      if(body.deviceId)ensure(await this.store.one('SELECT device_id FROM traccar_devices WHERE device_id=? AND org_id=?',body.deviceId,actor.orgId),'NOT_FOUND','Teléfono no autorizado.',404);
-      await this.store.run('DELETE FROM traccar_latest WHERE org_id=? AND vehicle_id=?',actor.orgId,vehicleId);
-      await this.store.run('DELETE FROM traccar_vehicle_bindings WHERE org_id=? AND vehicle_id=?',actor.orgId,vehicleId);
-      if(body.deviceId)await this.store.run('INSERT INTO traccar_vehicle_bindings VALUES(?,?,?,?,?)',actor.orgId,vehicleId,body.deviceId,randomUUID(),new Date(this.clock()).toISOString());
+      await bindVehiclePhone(this.store,actor.orgId,vehicleId,body.deviceId,this.clock);
       return {id:vehicleId,deviceId:body.deviceId};
     });
   }
@@ -59,6 +55,8 @@ export class TraccarTracking {
       await domain.record('clients',clientId,actor);
       const lock=await this.store.one('SELECT delivery_provider FROM client_delivery_locks WHERE org_id=? AND client_id=?',actor.orgId,clientId);
       ensure(!lock||lock.delivery_provider===body.deliveryProvider,'INVALID_TRANSITION','Este cliente tiene un circuito de reparto protegido por contrato.');
+      const current=await this.store.one('SELECT delivery_provider FROM client_delivery_policies WHERE org_id=? AND client_id=?',actor.orgId,clientId);
+      if(current?.delivery_provider===body.deliveryProvider)return {id:clientId,deliveryProvider:body.deliveryProvider,unchanged:true};
       ensure(!await this.store.one("SELECT a.id FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id JOIN shipments s ON s.id=p.shipment_id JOIN routes r ON r.id=a.route_id WHERE s.org_id=? AND s.client_id=? AND a.active=1 AND r.state IN('READY','IN_PROGRESS')",actor.orgId,clientId),'INVALID_TRANSITION','No se cambia el circuito de un cliente con repartos comprometidos.');
       if(body.deliveryProvider==='NEXORA')ensure(!await this.store.one('SELECT q.parcel_id FROM quad_parcel_links q JOIN parcels p ON p.id=q.parcel_id JOIN shipments s ON s.id=p.shipment_id WHERE s.org_id=? AND s.client_id=?',actor.orgId,clientId),'INVALID_TRANSITION','Este cliente tiene órdenes QuadMinds; conservá su circuito.');
       await this.store.run('INSERT INTO client_delivery_policies VALUES(?,?,?,?) ON CONFLICT(org_id,client_id) DO UPDATE SET delivery_provider=excluded.delivery_provider,updated_at=excluded.updated_at',actor.orgId,clientId,body.deliveryProvider,new Date(this.clock()).toISOString());
@@ -69,6 +67,8 @@ export class TraccarTracking {
     const body=z.object({commandId:z.uuid(),provider:z.enum(['QUADMINDS','TRACCAR'])}).parse(input),domain=new Logistics(this.store);
     return domain.command(actor,`routes.${routeId}.tracking-provider`,body,['ADMIN','OPERATIONS'],async()=>{
       const route=await domain.route(routeId,actor);
+      const current=await this.store.one('SELECT provider FROM route_tracking_settings WHERE org_id=? AND route_id=?',actor.orgId,routeId);
+      if(current?.provider===body.provider)return {id:routeId,provider:body.provider,unchanged:true};
       ensure(route.state==='DRAFT','INVALID_TRANSITION','Elegí el tracking antes de confirmar la ruta.');
       if(body.provider==='TRACCAR')ensure(!await this.store.one('SELECT route_id FROM quad_route_links WHERE org_id=? AND route_id=?',actor.orgId,routeId),'INVALID_TRANSITION','La ruta está vinculada a QuadMinds.');
       await validateRouteProvider(this.store,actor.orgId,routeId,body.provider);

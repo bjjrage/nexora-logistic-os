@@ -37,7 +37,9 @@ test('Supabase tracking: guardar y releer asignaciones conserva el contrato JSON
    await tracking.clientPolicy(actor,client,{...command(),deliveryProvider:'NEXORA'});
    const driver=(await domain.createDriver(actor,{...command(),name:'QA chofer',username:'qa-'+randomUUID(),password:randomUUID()})).id;
    const route=(await domain.createRoute(actor,{...command(),name:'QA ruta',driverId:driver,vehicleId:vehicle,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()})).id;
-   await tracking.routePolicy(actor,route,{...command(),provider:'TRACCAR'});
+   const before=await domain.route(route,actor);
+   await domain.updateRoute(actor,route,{...command(),expectedVersion:before.version,name:'QA ruta editada',driverId:driver,vehicleId:vehicle,startAt:before.start_at,endAt:before.end_at,trackingProvider:'TRACCAR',phoneDeviceId:device});
+   assert.equal((await domain.route(route,actor)).name,'QA ruta editada');
    // New service/read, as when the user reloads or selects the saved vehicle again.
    const readBack=JSON.parse(JSON.stringify(await new TraccarTracking(store).settings(actor)));
    assert.deepEqual(readBack.bindings,[{vehicleId:vehicle,deviceId:device}]);
