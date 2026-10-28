@@ -97,7 +97,7 @@ export async function validateRouteProvider(store: Database, orgId: string, rout
     JOIN shipments s ON s.id=p.shipment_id AND s.org_id=p.org_id JOIN clients cl ON cl.id=s.client_id AND cl.org_id=s.org_id
     LEFT JOIN client_delivery_policies c ON c.org_id=s.org_id AND c.client_id=s.client_id
     WHERE a.org_id=? AND a.route_id=? AND a.active=1 AND c.client_id IS NULL LIMIT 1`,orgId,routeId);
-  ensure(!missing,'INVALID_TRANSITION','Antes de elegir el GPS, definí el circuito de reparto de cada cliente en Tracking > Mi celular > Clientes. Universo conserva QuadMinds.');
+  ensure(!missing,'INVALID_TRANSITION','Antes de elegir el GPS, definí el circuito de reparto de cada cliente en Tracking > Sistema por cliente. Universo conserva QuadMinds.');
   const incompatible=await store.one(`SELECT a.id FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id
     JOIN shipments s ON s.id=p.shipment_id AND s.org_id=p.org_id JOIN clients cl ON cl.id=s.client_id AND cl.org_id=s.org_id LEFT JOIN client_delivery_policies c ON c.org_id=s.org_id AND c.client_id=s.client_id
     WHERE a.org_id=? AND a.route_id=? AND a.active=1 AND c.delivery_provider<>?`,orgId,routeId,provider==='TRACCAR'?'NEXORA':'QUADMINDS');
@@ -113,7 +113,7 @@ export async function validateParcelRouteProvider(store:Database,orgId:string,ro
       WHERE p.org_id=? AND p.id=?`,orgId,parcelId);
     ensure(client,'NOT_FOUND','El bulto no tiene un cliente válido.',404);
     const circuit=client.delivery_provider;
-    ensure(circuit||provider!=='TRACCAR','INVALID_TRANSITION',`Definí el circuito de ${client.name} en Tracking > Mi celular > Clientes antes de asignar este pedido a una ruta Traccar.`);
+    ensure(circuit||provider!=='TRACCAR','INVALID_TRANSITION',`Definí el circuito de ${client.name} en Tracking > Sistema por cliente antes de asignar este pedido a una ruta Traccar.`);
     ensure(!circuit||circuit===(provider==='TRACCAR'?'NEXORA':'QUADMINDS'),'INVALID_TRANSITION','Este pedido usa un circuito distinto al GPS de la ruta. Universo conserva QuadMinds; los repartos Nexora usan Traccar.');
   }
 }

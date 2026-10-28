@@ -5,7 +5,7 @@ import ReturnOperations from './ReturnOperations';
 import DriverDocumentsPanel from './DriverDocumentsPanel';
 import Brand from './Brand';
 import QuadMindsPanel from './QuadMindsPanel';
-import TraccarPanel from './TraccarPanel';
+import ClientDeliveryPanel from './ClientDeliveryPanel';
 import RouteSetup from './RouteSetup';
 import KpiDetails, { type KpiKind } from './KpiDetails';
 import InventoryPanel from './InventoryPanel';
@@ -611,7 +611,7 @@ function AppContent() {
           {page === "inventory" && !isDriver && <InventoryPanel key={inventoryEntry?inventoryEntry.clientId+':'+inventoryEntry.view:'inventory'} initialClientId={inventoryEntry?.clientId} initialView={inventoryEntry?.view} onReturnToClient={inventoryEntry?(clientId)=>changePage('clients',clientId):undefined} section="inventory" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
           {page === "orders" && !isDriver && <InventoryPanel section="orders" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} onOpenRoutes={(routeId)=>changePage('routes',routeId)} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
           {page === "customerAccess" && role === "ADMIN" && <InventoryPanel section="customerAccess" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
-          {page === "tracking" && <TrackingView data={bootstrap} action={mutate} busy={pending} operationError={error} onRefresh={refreshBootstrap} onPrepareRoute={()=>changePage('routes','new')} />}
+          {page === "tracking" && <TrackingView data={bootstrap} action={mutate} busy={pending} onRefresh={refreshBootstrap} onPrepareRoute={()=>changePage('routes','new')} />}
         </div>
       </main>
       <nav className="mobile-nav" aria-label="Navegación móvil" inert={reauthentication} aria-hidden={reauthentication||undefined}>
@@ -1247,22 +1247,17 @@ function FleetView({ data, action, busy, uploadEvidence, role,onPrepareRoute }: 
   );
 }
 
-function TrackingView({ data, action, busy, onRefresh, operationError,onPrepareRoute }: { data: Bootstrap; action: Action; busy: boolean; onRefresh: () => Promise<void>; operationError:string;onPrepareRoute:()=>void }) {
+function TrackingView({ data, action, busy, onRefresh,onPrepareRoute }: { data: Bootstrap; action: Action; busy: boolean; onRefresh: () => Promise<void>; onPrepareRoute:()=>void }) {
   const [trackingTab,setTrackingTab] = useState('positions');
-  const [trackingRouteId,setTrackingRouteId] = useState('');
   const canManage = isOpsRole(data.user.role);
-  const routeClients=(routeId:string)=>[...new Set(data.assignments.filter(item=>item.active&&item.routeId===routeId).flatMap(item=>{const parcel=data.parcels.find(row=>row.id===item.parcelId),shipment=data.shipments.find(row=>row.id===parcel?.shipmentId);return shipment?.clientId?[shipment.clientId]:[];}))];
-  const draftRoutes=data.routes.filter(route=>route.state==='DRAFT').map(route=>({...route,clientIds:routeClients(route.id)}));
   return <>
     <SectionTitle eyebrow="SEGUIMIENTO" title="Tracking" description="Ubicación de tus repartos." action={canManage?<button type="button" className="button button-primary" onClick={onPrepareRoute}>Preparar chofer, vehículo y celular</button>:undefined} />
-    <nav className="workspace-tabs" aria-label="Vistas de seguimiento"><button aria-pressed={trackingTab==='positions'} onClick={()=>setTrackingTab('positions')}>Mapa</button>{canManage&&<><button aria-pressed={trackingTab==='phones'} onClick={()=>setTrackingTab('phones')}>Mi celular</button><button aria-pressed={trackingTab==='operations'||trackingTab==='quad-settings'} onClick={()=>setTrackingTab('operations')}>Universo · QuadMinds</button></>}<button aria-pressed={trackingTab==='routes'} onClick={()=>setTrackingTab('routes')}>Rutas</button></nav>
-    {trackingTab === 'positions' && <QuadMindsPanel vehicles={data.vehicles} routes={data.routes} timezone={data.organization.timezone} canManage={false} action={action} busy={busy} initialRouteId={trackingRouteId} />}
-    {trackingTab === 'phones' && canManage && <TraccarPanel vehicles={data.vehicles} routes={draftRoutes} clients={data.clients} canAdmin={data.user.role==='ADMIN'} action={action} busy={busy} actionError={operationError} onShowMap={vehicleId=>{setTrackingRouteId(data.routes.find(route=>route.vehicleId===vehicleId)?.id??'');setTrackingTab('positions');}}/>}
+    <nav className="workspace-tabs" aria-label="Vistas de seguimiento"><button aria-pressed={trackingTab==='positions'} onClick={()=>setTrackingTab('positions')}>Mapa</button>{data.user.role==='ADMIN'&&<button aria-pressed={trackingTab==='clients'} onClick={()=>setTrackingTab('clients')}>Sistema por cliente</button>}{canManage&&<button aria-pressed={trackingTab==='operations'||trackingTab==='quad-settings'} onClick={()=>setTrackingTab('operations')}>Universo · QuadMinds</button>}</nav>
+    {trackingTab === 'positions' && <QuadMindsPanel vehicles={data.vehicles} routes={data.routes} timezone={data.organization.timezone} canManage={false} action={action} busy={busy} />}
+    {trackingTab === 'clients' && data.user.role==='ADMIN' && <ClientDeliveryPanel clients={data.clients} action={action} busy={busy}/> }
     {trackingTab === 'operations' && canManage && <QuadOperationsPanel shipments={data.shipments.map(({ id, reference }) => ({ id, reference }))} parcels={data.parcels.map(({ id, shipmentId, code }) => ({ id, shipmentId, code }))} routes={data.routes.map(({ id, name, state }) => ({ id, name, state }))} onRefresh={onRefresh} onConfigure={()=>setTrackingTab('quad-settings')} />}
     {trackingTab === 'quad-settings' && canManage && <div className="tracking-workspace"><div><button className="tracking-back" onClick={()=>setTrackingTab('operations')}>← Volver a QuadMinds</button></div><QuadMindsPanel configurationOnly vehicles={data.vehicles} routes={data.routes} timezone={data.organization.timezone} canManage={true} action={action} busy={busy}/></div>}
-    {trackingTab === 'routes' && <Panel title="Estado de las rutas">
-      {data.routes.length === 0 ? <EmptyState>Aún no hay rutas registradas.</EmptyState> : <div className="table-wrap"><table className="table"><thead><tr><th>Ruta</th><th>Chofer</th><th>Estado</th><th>Inicio previsto</th><th>Fin previsto</th></tr></thead><tbody>{data.routes.map((route) => <tr key={route.id}><td><strong>{route.name}</strong></td><td>{data.drivers.find((driver) => driver.id === route.driverId)?.name ?? route.driverId}</td><td><StateBadge value={route.state} /></td><td>{formatDate(route.startAt, data.organization.timezone)}</td><td>{formatDate(route.endAt, data.organization.timezone)}</td></tr>)}</tbody></table></div>}
-    </Panel>}
+
   </>;
 }
 
