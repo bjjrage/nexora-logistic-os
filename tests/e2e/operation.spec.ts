@@ -337,6 +337,14 @@ test('browser: one route form registers driver and vehicle then edits the same r
  await editor.getByRole('combobox',{name:'Vehículo',exact:true}).selectOption(vehicle);
  await editor.getByLabel('Inicio previsto',{exact:true}).fill('2026-11-02T09:00');await editor.getByLabel('Fin previsto',{exact:true}).fill('2026-11-02T12:00');
  await page.screenshot({path:'.local/route-editor-desktop.png',fullPage:true});
+ await editor.getByText('Agregar un chofer nuevo',{exact:true}).click();
+ await expect(editor.getByLabel('Nombre del nuevo chofer')).toBeVisible();
+ await page.screenshot({path:'.local/route-setup-expanded.png',fullPage:true});
+ await editor.getByText('Agregar un chofer nuevo',{exact:true}).click();
+ await page.setViewportSize({width:390,height:844});
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.screenshot({path:'.local/route-setup-mobile.png',fullPage:true});
+ await page.setViewportSize({width:1280,height:720});
  await editor.getByRole('button',{name:'Guardar cambios de ruta'}).click();
  await expect(page.getByText('Ruta actualizada.',{exact:true})).toBeVisible();
  const updated=(await(await page.request.get('/api/bootstrap')).json()).routes.find((r:any)=>r.id===route.id);
