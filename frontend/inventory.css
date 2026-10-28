@@ -155,14 +155,16 @@
 .order-meta { display:flex; flex-wrap:wrap; gap:7px 14px; margin-top:11px; color:var(--muted); font-size:13px; }
 .order-lines-preview { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
 .order-lines-preview span { padding:5px 8px; border-radius:6px; background:#f3f6f9; color:#344259; font-size:13px; }
-.order-stock-summary { display:grid; gap:12px; margin-top:14px; }
-.order-stock-product { min-width:0; padding-top:12px; border-top:1px solid var(--line); }
-.order-stock-product h4 { margin:0 0 10px; font-size:14px; line-height:1.4; overflow-wrap:anywhere; }
-.order-stock-quantities { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin:0; }
-.order-stock-metric { min-width:0; padding:10px 12px; border-radius:8px; background:#f3f6f9; color:var(--navy); }
-.order-stock-metric dt { min-height:34px; font-size:12px; line-height:1.4; color:#435674; }
-.order-stock-metric dd { margin:6px 0 0; font-size:25px; font-weight:700; line-height:1.2; font-variant-numeric:tabular-nums; }
-.order-stock-metric dd small { display:block; margin-top:3px; font-size:11px; font-weight:400; color:#435674; }
+.order-stock-summary { display:grid; gap:9px; margin-top:10px; }
+.order-stock-product { min-width:0; padding-top:9px; border-top:1px solid var(--line); }
+.order-stock-product-heading { display:flex; flex-wrap:wrap; align-items:baseline; gap:3px 10px; margin-bottom:6px; }
+.order-stock-product-heading h4 { margin:0; font-size:13px; line-height:1.4; overflow-wrap:anywhere; }
+.order-stock-product-heading > small { color:#435674; font-size:11px; overflow-wrap:anywhere; }
+.order-stock-quantities { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; max-width:680px; margin:0; }
+.order-stock-metric { min-width:0; padding:6px 9px; border-radius:6px; background:#f3f6f9; color:var(--navy); }
+.order-stock-metric dt { font-size:11px; line-height:1.3; color:#435674; }
+.order-stock-metric dd { margin:3px 0 0; font-size:18px; font-weight:700; line-height:1.2; font-variant-numeric:tabular-nums; }
+.order-stock-metric dd small { display:inline; margin-left:5px; font-size:10px; font-weight:400; color:#435674; }
 .order-stock-metric--available { background:#edf7f0; }
 .order-stock-metric--vehicle { background:#edf3fc; }
 .order-stock-metric--delivered { background:#edf7f0; }

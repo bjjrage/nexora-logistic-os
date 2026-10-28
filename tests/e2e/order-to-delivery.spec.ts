@@ -21,6 +21,7 @@ test('reserve → assign → route load → inspection → delivery stays in the
   await stockPage.goto('/');await stockPage.getByRole('button',{name:'Pedidos',exact:true}).click();
   await stockPage.getByRole('textbox',{name:'Buscar pedidos',exact:true}).fill('FLOW-'+suffix);
   const product=stockPage.getByRole('article').filter({hasText:'FLOW-'+suffix}).getByRole('region',{name:'Cocina demo',exact:true});
+  await expect(product.getByText('SKU: FLOW-'+suffix,{exact:true})).toBeVisible();
   for(const [label,value] of Object.entries(expected))await expect(product.getByText(label,{exact:true}).locator('..').locator('dd')).toHaveText(new RegExp('^'+value+'\\s*unidad(?:es)?$'));
  };
  await quantities({'Pedido':2,'Disponible para reservar':3,'Reservado en depósito':0,'Cargado en vehículo':0});

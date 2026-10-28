@@ -17,7 +17,7 @@ export default function OrderStockSummary({lines,parcels,productName}:Props){
     if(delivered)metrics.push(['Entregado',delivered,'delivered']);
     if(returned)metrics.push(['Retornado',returned,'returned']);
     return <section className="order-stock-product" key={line.productId} aria-label={line.productName||line.name||productName(line.productId)||line.sku||'Producto'}>
-      <h4>{line.productName||line.name||productName(line.productId)||line.sku||'Producto'}</h4>
+      <header className="order-stock-product-heading"><h4>{line.productName||line.name||productName(line.productId)||line.sku||'Producto'}</h4><small>SKU: {line.sku||'No informado'}</small></header>
       <dl className="order-stock-quantities">{metrics.map(([label,value,kind])=><div key={kind} className={'order-stock-metric order-stock-metric--'+kind}><dt>{label}</dt><dd>{value??'—'}<small>{value===1?'unidad':'unidades'}</small></dd></div>)}</dl>
     </section>;
   })}</div>;
