@@ -1000,10 +1000,10 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
               <button className="button button-secondary" disabled={busy || assignmentIds.length === 0}>Asignar selección</button>
             </form>
           </div>}
-          {canLoad && selectedRoute.state === "READY" && routeTab === "loading" && <div className="route-operations"><RouteLoadPanel route={selectedRoute} parcels={depotLoadParcels} shipments={data.shipments} busy={busy} action={action}/><details><summary>Usar lector o ingresar código</summary><form className="stack form-divider" onSubmit={submitScan}>
+          {canLoad && selectedRoute.state === "READY" && routeTab === "loading" && <div className="route-operations"><RouteLoadPanel route={selectedRoute} parcels={depotLoadParcels} shipments={data.shipments} busy={busy} action={action} onContinue={canOperateRoad?()=>setRouteTab('checks'):undefined}/>{pendingLoadCount>0&&<details><summary>Usar lector o ingresar código</summary><form className="stack form-divider" onSubmit={submitScan}>
             <Field label="Código del bulto"><input required value={scanCode} onChange={(event) => setScanCode(event.target.value)} placeholder="Escaneá o escribí el código" /></Field>
             <button className="button button-secondary" disabled={busy || !scanCode.trim()}>Registrar escaneo</button>
-          </form></details></div>}
+          </form></details>}</div>}
           {canOperateRoad && routeTab === "checks" && <Panel title="Checklist de salida" description={"Inspección del vehículo " + (data.vehicles.find((vehicle) => vehicle.id === selectedRoute.vehicleId)?.plate ?? selectedRoute.vehicleId) + ". Guardá solo controles observados."}>
             {selectedRoute.state !== "READY" && selectedRoute.state !== "IN_PROGRESS" ? <p className="muted">La inspección estará disponible cuando la ruta esté lista para salir.</p> : <form className="stack" onSubmit={submitDriverInspection}>
               <fieldset disabled={busy}>

@@ -7,10 +7,11 @@ type Props = {
   parcels:Parcel[];
   shipments:Shipment[];
   busy:boolean;
+  onContinue?:()=>void;
   action:(path:string,payload:Record<string,unknown>,message:string)=>Promise<boolean>;
 };
 
-export default function RouteLoadPanel({route,parcels,shipments,busy,action}:Props){
+export default function RouteLoadPanel({route,parcels,shipments,busy,action,onContinue}:Props){
   const [selected,setSelected]=useState<string[]>([]);
   const pending=parcels.filter(p=>['RECEIVED','RETURNED_TO_DEPOT'].includes(p.state)&&p.custodyType==='DEPOT');
   const loaded=parcels.filter(p=>p.state==='LOADED'&&p.custodyType==='VEHICLE'&&p.custodyId===route.vehicleId);
@@ -36,6 +37,7 @@ export default function RouteLoadPanel({route,parcels,shipments,busy,action}:Pro
     {pending.length>200&&<p className="muted">Podés confirmar hasta 200 bultos por operación.</p>}
     {pending.length>0&&<button type="button" className="button button-primary" disabled={busy||!selectedPending.length} onClick={()=>void confirm()}>Confirmar carga</button>}
     {parcels.length>0&&loaded.length===parcels.length&&<p className="notice success">Carga completa. No tenés que confirmar nada en Pedidos.</p>}
+    {parcels.length>0&&loaded.length===parcels.length&&onContinue&&<button type="button" className="button button-primary" disabled={busy} onClick={onContinue}>Continuar al control de salida</button>}
     {!parcels.length&&<p className="muted">Esta ruta no tiene bultos que deban cargarse en depósito.</p>}
   </section>;
 }
