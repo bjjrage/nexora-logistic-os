@@ -293,6 +293,11 @@ tbody tr:hover { background:#f0f1f4; }
 .route-operations { display:grid; gap:10px; }
 .route-stop-list { display:grid; gap:0; margin-top:12px; }
 .stop-card { padding:12px 0; border-bottom:1px solid var(--line); }
+.route-bulk-actions { display:grid; gap:9px; padding:12px; margin:12px 0; border:1px solid var(--line); border-radius:8px; background:#f7f9fc; }
+.route-bulk-actions .button-row { margin:0; }
+.route-bulk-actions [role=status] { color:var(--muted); font-size:13px; }
+.route-correction-row { flex-wrap:wrap; gap:8px 12px; }
+.route-correction-row .checkbox-field { margin:0; min-width:0; }
 .stop-card > .row { justify-content:space-between; }
 .stop-card .muted { font-size:11px; margin-top:4px; }
 .stop-card > .button { margin-top:7px; }

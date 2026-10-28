@@ -195,6 +195,8 @@ function auditLabel(action:string):string {
   if (controls[operation]) return controls[operation];
   if(operation==='routes.unload')return 'Bulto bajado al depósito';
   if(operation==='routes.unassign')return 'Bulto quitado de la ruta';
+  if(operation==='routes.unload-selected')return 'Bultos bajados al depósito';
+  if(operation==='routes.unassign-selected')return 'Bultos quitados de la ruta';
   if(operation==='routes.update')return 'Ruta actualizada';
   const labels:Record<string,string>={'clients.create':'Cliente registrado','drivers.create':'Chofer registrado','users.create':'Usuario habilitado','vehicles.create':'Vehículo registrado','shipments.create':'Envío registrado','receipts.create':'Recepción registrada','routes.create':'Ruta creada','routes.assign':'Bultos asignados','routes.order':'Paradas ordenadas','routes.ready':'Plan confirmado','routes.load':'Carga verificada','routes.dispatch':'Ruta despachada','routes.close':'Ruta cerrada','stops.pickup':'Retiro registrado','stops.attempt':'Intento registrado','incidents.return':'Devolución autorizada','returns.receive':'Retorno recibido en depósito','returns.sender':'Entrega al remitente confirmada','vehicles.inspect':'Inspección registrada','vehicles.document':'Documento registrado','defects.resolve':'Defecto resuelto','vehicles.maintenance':'Mantenimiento programado','maintenance.complete':'Mantenimiento completado','evidence.store':'Evidencia guardada'};
   return labels[operation]??'Movimiento registrado';
@@ -854,6 +856,7 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
   const filteredRoutes = visibleRoutes.filter(route => (routeFilter === 'ALL' || route.state === routeFilter) && (route.name + ' ' + (data.drivers.find(d=>d.id===route.driverId)?.name??'') + ' ' + (data.vehicles.find(v=>v.id===route.vehicleId)?.plate??'')).toLocaleLowerCase().includes(routeSearch.toLocaleLowerCase()));
   const displayedRoutes = filteredRoutes.slice(routePage*8,routePage*8+8);
   const [assignmentIds, setAssignmentIds] = useState<string[]>([]);
+  const [correctionIds,setCorrectionIds]=useState<string[]>([]);
   const [pickupMode, setPickupMode] = useState(false);
   const [scanCode, setScanCode] = useState("");
   const [stopId, setStopId] = useState("");
@@ -870,7 +873,7 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
   const [driverInspectionItems, setDriverInspectionItems] = useState<InspectionItem[]>([{ label: "", severity: "OK", note: "" }]);
   const selectedRoute = visibleRoutes.find((route) => route.id === selectedRouteId);
   const resetRouteTask = () => {
-    setEditRouteId(''); setAssignmentIds([]); setPickupMode(false); setScanCode(''); setStopId('');
+    setEditRouteId(''); setAssignmentIds([]); setCorrectionIds([]); setPickupMode(false); setScanCode(''); setStopId('');
     setDeliveredIds([]); setFailedIds([]); setReceiverName(''); setReasonCode(''); setNextAction('');
     setEvidenceIds([]); setEvidenceParcelId(''); setLastEvidenceId('');
     setDriverInspectionOdometer(''); setDriverFuelPercent('');
@@ -880,6 +883,23 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
   const stops = selectedRoute ? data.stops.filter((stop) => stop.routeId === selectedRoute.id).sort((a, b) => a.sequence - b.sequence) : [];
   const routeAssignmentIds = new Set(data.assignments.filter((assignment) => assignment.routeId === selectedRoute?.id && assignment.active).map((assignment) => assignment.parcelId));
   const routeParcels = data.parcels.filter((parcel) => routeAssignmentIds.has(parcel.id));
+  const isLoadedHere=(parcel:Parcel)=>parcel.state==='LOADED'&&parcel.custodyType==='VEHICLE'&&parcel.custodyId===selectedRoute?.vehicleId;
+  const canCorrectParcel=(parcel:Parcel)=>isLoadedHere(parcel)?canLoad:canPlan&&['EXPECTED','RECEIVED','RETURNED_TO_DEPOT'].includes(parcel.state)&&['SENDER','DEPOT'].includes(parcel.custodyType);
+  const correctableParcels=routeParcels.filter(canCorrectParcel);
+  const selectedCorrections=correctableParcels.filter(parcel=>correctionIds.includes(parcel.id));
+  const selectedLoaded=selectedCorrections.filter(isLoadedHere),selectedUnloaded=selectedCorrections.filter(parcel=>!isLoadedHere(parcel));
+  const toggleCorrections=(ids:string[])=>{
+    const allSelected=ids.every(id=>correctionIds.includes(id));
+    setCorrectionIds(allSelected?selectedCorrections.filter(parcel=>!ids.includes(parcel.id)).map(parcel=>parcel.id):[...new Set([...selectedCorrections.map(parcel=>parcel.id),...ids])].slice(0,200));
+  };
+  const correctSelected=async(mode:'unload'|'unassign')=>{
+    if(!selectedRoute)return;
+    const ids=(mode==='unload'?selectedLoaded:selectedUnloaded).map(parcel=>parcel.id);
+    if(!ids.length)return;
+    const question=mode==='unload'?`¿Confirmás que bajaste estos ${ids.length} bultos del vehículo al depósito? La reserva del pedido se mantiene.`:`¿Quitar estos ${ids.length} bultos de la ruta? La reserva del pedido se mantiene y podrás asignarlos a otra ruta.`;
+    if(!window.confirm(question))return;
+    if(await action('/api/routes/'+encodeURIComponent(selectedRoute.id)+'/'+mode+'-selected',{commandId:commandId(),expectedVersion:selectedRoute.version,parcelIds:ids},mode==='unload'?`${ids.length} bulto(s) bajados al depósito. La reserva se mantiene.`:`${ids.length} bulto(s) quitados de la ruta. La reserva se mantiene.`))setCorrectionIds(current=>current.filter(id=>!ids.includes(id)));
+  };
   const depotLoadParcels = routeParcels.filter(parcel=>data.assignments.some(a=>a.routeId===selectedRoute?.id&&a.parcelId===parcel.id&&a.active&&!a.pickup));
   const pendingLoadCount=depotLoadParcels.filter(p=>!(p.state==='LOADED'&&p.custodyType==='VEHICLE'&&p.custodyId===selectedRoute?.vehicleId)).length;
   const capacityIncomplete = routeParcels.some((parcel) => parcel.weightGrams == null || parcel.volumeCm3 == null);
@@ -1021,6 +1041,11 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
           {canPlan && selectedRoute.state === "DRAFT" && routeTab === "planning" && stops.length > 1 && <TaskDisclosure label="Cambiar orden de paradas"><StopOrderEditor key={selectedRoute.id} stops={stops} route={selectedRoute} action={action} busy={busy} shipmentLabel={id=>data.shipments.find(shipment=>shipment.id===id)?.reference??"Envío"} /></TaskDisclosure>}
           {routeTab === "stops" && <div className="route-stop-list">
             <h3>Paradas</h3>
+            {['DRAFT','READY'].includes(selectedRoute.state)&&correctableParcels.length>0&&<section className="route-bulk-actions" aria-label="Gestionar varios bultos">
+              <div className="button-row"><button type="button" className="button button-secondary" disabled={busy} onClick={()=>toggleCorrections(correctableParcels.slice(0,200).map(parcel=>parcel.id))}>{correctableParcels.slice(0,200).every(parcel=>correctionIds.includes(parcel.id))?'Quitar selección':'Seleccionar todos'}</button><span role="status">{selectedCorrections.length} seleccionados{selectedCorrections.length>0?` · ${selectedLoaded.length} en vehículo · ${selectedUnloaded.length} sin cargar`:''}</span></div>
+              {selectedCorrections.length>0&&<div className="button-row">{selectedLoaded.length>0&&<button type="button" className="button button-primary" disabled={busy} onClick={()=>void correctSelected('unload')}>Bajar al depósito ({selectedLoaded.length})</button>}{selectedUnloaded.length>0&&<button type="button" className="button button-secondary" disabled={busy} onClick={()=>void correctSelected('unassign')}>Quitar de la ruta ({selectedUnloaded.length})</button>}</div>}
+              {correctableParcels.length>200&&<small>Podés procesar hasta 200 bultos por operación.</small>}
+            </section>}
             {stops.length === 0 ? <EmptyState>Aún no hay paradas asignadas.</EmptyState> : stops.map((stop) => {
               const shipment = data.shipments.find((item) => item.id === stop.shipmentId);
               const stopParcels = routeParcels.filter(parcel => parcel.shipmentId === stop.shipmentId);
@@ -1034,11 +1059,11 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
                 <div className="row"><strong>{String(stop.sequence).padStart(2, "0")} · {shipment?.reference ?? stop.shipmentId}</strong><StateBadge value={stop.state} /></div>
                 <p>{stop.kind==='PICKUP' ? 'Retiro en origen' : shipment?.recipientName ?? 'Destinatario no informado'} · {stop.kind==='PICKUP' ? shipment?.originText ?? 'Origen no informado' : shipment?.destinationText ?? 'Destino no informado'}</p>
                 {products.size > 0 && <p>{[...products.values()].map(item => `${item.name} × ${item.count}`).join(' · ')}</p>}
-                {['DRAFT','READY'].includes(selectedRoute.state) && <div className="stack">{stopParcels.map((parcel,index) => {
-                  const loaded=parcel.state==='LOADED' && parcel.custodyType==='VEHICLE';
+                {['DRAFT','READY'].includes(selectedRoute.state) && <div className="stack">{stopParcels.filter(canCorrectParcel).length>1&&<button type="button" className="text-button" disabled={busy} onClick={()=>toggleCorrections(stopParcels.filter(canCorrectParcel).map(parcel=>parcel.id))}>{stopParcels.filter(canCorrectParcel).every(parcel=>correctionIds.includes(parcel.id))?'Quitar selección del pedido':'Seleccionar este pedido'}</button>}{stopParcels.map((parcel,index) => {
+                  const loaded=isLoadedHere(parcel);
                   const removable=['EXPECTED','RECEIVED','RETURNED_TO_DEPOT'].includes(parcel.state) && ['SENDER','DEPOT'].includes(parcel.custodyType);
                   if (!(loaded && canLoad) && !(removable && canPlan)) return null;
-                  return <div className="row" key={parcel.id}><span>{parcel.product?.name || 'Bulto'} · unidad {index+1} · {loaded?'En el vehículo':'Sin cargar'}</span><button type="button" className="button button-secondary" disabled={busy} onClick={() => {
+                  return <div className="row route-correction-row" key={parcel.id}><label className="checkbox-field"><input type="checkbox" checked={correctionIds.includes(parcel.id)} disabled={busy||!correctionIds.includes(parcel.id)&&selectedCorrections.length>=200} onChange={()=>toggleCorrections([parcel.id])}/><span>{parcel.product?.name || 'Bulto'} · unidad {index+1} · {loaded?'En el vehículo':'Sin cargar'}</span></label><button type="button" className="button button-secondary" disabled={busy} onClick={() => {
                     const question=loaded?'¿Confirmás que bajaste este bulto del vehículo al depósito? Seguirá reservado para el pedido.':'¿Quitar este bulto de la ruta? Seguirá reservado para el pedido y podrás asignarlo a otra ruta.';
                     if(window.confirm(question))void action('/api/routes/'+encodeURIComponent(selectedRoute.id)+(loaded?'/unload':'/unassign'),{commandId:commandId(),expectedVersion:selectedRoute.version,parcelId:parcel.id},loaded?'Bulto bajado al depósito. Sigue reservado para el pedido.':'Bulto quitado de la ruta. Sigue reservado para el pedido.');
                   }}>{loaded?'Bajar al depósito':'Quitar de la ruta'}</button></div>;

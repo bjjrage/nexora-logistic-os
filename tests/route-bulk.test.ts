@@ -1,0 +1,76 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {Store} from '../server/db.ts';
+import {setup,type Actor} from '../server/auth.ts';
+import {Logistics} from '../server/domain.ts';
+import {Inventory} from '../server/inventory.ts';
+import {reconcileInventory} from '../server/reconciliation.ts';
+const cmd=()=>({commandId:randomUUID()});
+async function fixture(t:any){
+ const db=new Store(':memory:');t.after(()=>db.close());
+ const identity=await setup(db,{organizationName:'QA bulk',timezone:'UTC',username:'qa-bulk',password:'QA-Bulk-2026!'});
+ const actor:Actor={id:identity.userId,orgId:identity.orgId,name:'QA',role:'ADMIN',driverId:null},d=new Logistics(db),inv=new Inventory(db);
+ const client=(await d.createClient(actor,{...cmd(),name:'Cliente QA'})).id;
+ await db.run('INSERT INTO client_delivery_policies VALUES(?,?,?,?)',actor.orgId,client,'NEXORA',new Date().toISOString());
+ const location=(await inv.createLocation(actor,{...cmd(),code:'DEP',name:'Depot'})).id;
+ const quantity=(await inv.createProduct(actor,{...cmd(),clientId:client,sku:'QTY',name:'Cocina',tracking:'QUANTITY',weightGrams:100,volumeCm3:100})).id;
+ const serial=(await inv.createProduct(actor,{...cmd(),clientId:client,sku:'SER',name:'Heladera',tracking:'SERIAL',weightGrams:100,volumeCm3:100})).id;
+ await inv.receive(actor,{...cmd(),clientId:client,productId:quantity,locationId:location,quantity:6});
+ await inv.receive(actor,{...cmd(),clientId:client,productId:serial,locationId:location,quantity:4,serials:Array.from({length:4},(_,i)=>({serial:'SER-'+i}))});
+ const orders:string[]=[],ids:string[]=[];
+ for(let i=0;i<2;i++){
+  const order=(await inv.createOrder(actor,{...cmd(),clientId:client,externalId:'BULK-'+i,orderDate:'2026-10-28',destination:'Demo',recipientName:'Receptor '+i,lines:[{productId:quantity,quantity:3},{productId:serial,quantity:2}]})).id;
+  orders.push(order);ids.push(...(await inv.reserveOrder(actor,order,cmd())).parcels.map((p:any)=>p.id));
+ }
+ const driver=(await d.createDriver(actor,{...cmd(),name:'Chofer',username:'qa-driver',password:'QA-Driver-2026!'})).id;
+ const vehicle=(await d.createVehicle(actor,{...cmd(),plate:'QA-BULK',capacityWeightGrams:100000,capacityVolumeCm3:100000,odometer:0})).id;
+ const route=(await d.createRoute(actor,{...cmd(),name:'QA bulk',driverId:driver,vehicleId:vehicle,trackingProvider:'TRACCAR',startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()})).id;
+ const version=async()=>(await d.route(route,actor)).version;
+ await d.assign(actor,route,{...cmd(),expectedVersion:await version(),parcelIds:ids,pickup:false});
+ await d.ready(actor,route,{...cmd(),expectedVersion:await version()});
+ return {db,actor,d,inv,orders,ids,route,version};
+}
+test('bulk unload and unassign reconcile ten quantity/serial units, reservations and stops, and retries apply once',async t=>{
+ const f=await fixture(t);
+ await f.d.loadSelected(f.actor,f.route,{...cmd(),expectedVersion:await f.version(),parcelIds:f.ids});
+ const version=await f.version(),request={...cmd(),expectedVersion:version,parcelIds:[f.ids[0],f.ids[5]]};
+ const result=await f.d.unloadSelected(f.actor,f.route,request);
+ assert.deepEqual(await f.d.unloadSelected(f.actor,f.route,request),result);assert.equal(result.unloaded,2);assert.equal(await f.version(),version+1);
+ for(const order of f.orders)assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',order))!.status,'PARTIALLY_LOADED');
+ await f.d.unloadSelected(f.actor,f.route,{...cmd(),expectedVersion:await f.version(),parcelIds:f.ids.filter(id=>!request.parcelIds.includes(id))});
+ for(const order of f.orders)assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',order))!.status,'RESERVED');
+ assert.equal((await f.db.one("SELECT COUNT(*) AS n FROM inventory_units WHERE status='RESERVED'"))!.n,4);
+ assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
+ const first={...cmd(),expectedVersion:await f.version(),parcelIds:f.ids.slice(0,5)};
+ const removed=await f.d.unassignSelected(f.actor,f.route,first);assert.deepEqual(await f.d.unassignSelected(f.actor,f.route,first),removed);
+ assert.equal((await f.db.one('SELECT COUNT(*) AS n FROM stops WHERE route_id=?',f.route))!.n,1);
+ assert.equal((await f.d.route(f.route,f.actor)).state,'READY');
+ await f.d.unassignSelected(f.actor,f.route,{...cmd(),expectedVersion:await f.version(),parcelIds:f.ids.slice(5)});
+ assert.equal((await f.d.route(f.route,f.actor)).state,'DRAFT');assert.equal((await f.db.one('SELECT COUNT(*) AS n FROM stops WHERE route_id=?',f.route))!.n,0);
+ for(const order of f.orders)await f.inv.unreserveOrder(f.actor,order,cmd());
+ assert.equal((await f.db.one("SELECT SUM(quantity) AS n FROM inventory_balances WHERE status='AVAILABLE'"))!.n,6);
+ assert.equal((await f.db.one("SELECT COUNT(*) AS n FROM inventory_units WHERE status='AVAILABLE'"))!.n,4);
+ assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
+});
+test('bulk corrections roll back all writes for invalid items and reject stale versions, roles, tenants and duplicate selections',async t=>{
+ const f=await fixture(t),version=await f.version();
+ await assert.rejects(f.d.unassignSelected(f.actor,f.route,{...cmd(),expectedVersion:version,parcelIds:[f.ids[0],randomUUID()]}),{code:'NOT_FOUND'});
+ assert.equal((await f.db.one('SELECT COUNT(*) AS n FROM route_assignments WHERE active=1'))!.n,10);assert.equal(await f.version(),version);
+ await f.d.loadSelected(f.actor,f.route,{...cmd(),expectedVersion:version,parcelIds:f.ids});
+ const loadedVersion=await f.version(),events=(await f.db.one('SELECT COUNT(*) AS n FROM custody_events'))!.n;
+ await assert.rejects(f.d.unloadSelected(f.actor,f.route,{...cmd(),expectedVersion:loadedVersion,parcelIds:[f.ids[0],randomUUID()]}),{code:'NOT_FOUND'});
+ assert.equal((await f.db.one("SELECT COUNT(*) AS n FROM parcels WHERE state='LOADED'"))!.n,10);
+ assert.equal((await f.db.one('SELECT COUNT(*) AS n FROM custody_events'))!.n,events);assert.equal(await f.version(),loadedVersion);
+ await assert.rejects(f.d.unloadSelected(f.actor,f.route,{...cmd(),expectedVersion:version,parcelIds:f.ids}),{code:'VERSION_CONFLICT'});
+ await assert.rejects(f.d.unloadSelected({...f.actor,role:'DRIVER'},f.route,{...cmd(),expectedVersion:loadedVersion,parcelIds:f.ids}),{code:'FORBIDDEN'});
+ await assert.rejects(f.d.unassignSelected({...f.actor,role:'DEPOT'},f.route,{...cmd(),expectedVersion:loadedVersion,parcelIds:f.ids}),{code:'FORBIDDEN'});
+ await assert.rejects(f.d.unloadSelected({...f.actor,orgId:randomUUID()},f.route,{...cmd(),expectedVersion:loadedVersion,parcelIds:f.ids}),{code:'NOT_FOUND'});
+ await assert.rejects(f.d.unloadSelected(f.actor,f.route,{...cmd(),expectedVersion:loadedVersion,parcelIds:[f.ids[0],f.ids[0]]}));
+ await assert.rejects(f.d.unloadSelected(f.actor,f.route,{...cmd(),expectedVersion:loadedVersion,parcelIds:Array.from({length:201},()=>randomUUID())}));
+ await assert.rejects(f.d.unassignSelected(f.actor,f.route,{...cmd(),expectedVersion:loadedVersion,parcelIds:f.ids}),{code:'INVALID_TRANSITION'});
+ await f.db.run("UPDATE routes SET state='IN_PROGRESS' WHERE id=?",f.route);
+ await assert.rejects(f.d.unloadSelected(f.actor,f.route,{...cmd(),expectedVersion:loadedVersion,parcelIds:f.ids}),{code:'INVALID_TRANSITION'});
+ await assert.rejects(f.d.unassignSelected(f.actor,f.route,{...cmd(),expectedVersion:loadedVersion,parcelIds:f.ids}),{code:'INVALID_TRANSITION'});
+ assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
+});

@@ -58,7 +58,13 @@ test('PostgreSQL: desreserva de ruta confirmada revierte stock y permite reserva
   await domain.ready(actor,route.id,{...cmd(),expectedVersion:(await db.one('SELECT version FROM routes WHERE id=?',route.id))!.version});
   await domain.loadSelected(actor,route.id,{...cmd(),expectedVersion:(await db.one('SELECT version FROM routes WHERE id=?',route.id))!.version,parcelIds:reserved.parcels.map((p:any)=>p.id)});
   assert.equal((await db.one('SELECT status FROM inventory_orders WHERE id=?',order))!.status,'LOADED');
-  for(const parcel of reserved.parcels)await domain.unload(actor,route.id,{...cmd(),expectedVersion:(await db.one('SELECT version FROM routes WHERE id=?',route.id))!.version,parcelId:parcel.id});
+  const currentVersion=(await db.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
+  await assert.rejects(domain.unloadSelected(actor,route.id,{...cmd(),expectedVersion:currentVersion,parcelIds:[reserved.parcels[0].id,randomUUID()]}));
+  assert.equal((await db.one('SELECT loaded_quantity FROM inventory_order_lines WHERE order_id=?',order))!.loaded_quantity,2);
+  const unload={...cmd(),expectedVersion:currentVersion,parcelIds:reserved.parcels.map((p:any)=>p.id)};
+  const unloaded=await domain.unloadSelected(actor,route.id,unload);assert.deepEqual(await domain.unloadSelected(actor,route.id,unload),unloaded);
+  await domain.unassignSelected(actor,route.id,{...cmd(),expectedVersion:(await db.one('SELECT version FROM routes WHERE id=?',route.id))!.version,parcelIds:reserved.parcels.map((p:any)=>p.id)});
+  assert.equal((await db.one('SELECT COUNT(*) AS n FROM stops WHERE route_id=?',route.id))!.n,0);
   assert.equal((await reconcileInventory(db,actor)).ok,true);
   await inv.unreserveOrder(actor,order,cmd());
   assert.equal((await db.one('SELECT state FROM routes WHERE id=?',route.id))!.state,'DRAFT');
