@@ -12,6 +12,7 @@ export function packageVercelSite(root:string,release:string){
   cpSync(resolve(root,'dist'),target,{recursive:true,filter:path=>!path.endsWith('.map')});
   cpSync(resolve(root,'manual'),resolve(target,'manual'),{recursive:true});
   cpSync(resolve(root,'MANUAL_MAESTRO_NEXORA_OS.html'),resolve(target,'manual.html'));
+  if(existsSync(resolve(root,'MANUAL_WORKFLOWS_NEXORA_PORTATIL.html')))cpSync(resolve(root,'MANUAL_WORKFLOWS_NEXORA_PORTATIL.html'),resolve(target,'manual-portatil.html'));
   writeFileSync(resolve(target,'release.json'),JSON.stringify({release,backend:'railway'},null,2)+'\n');
   return target;
 }

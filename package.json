@@ -10,7 +10,7 @@
     "dev": "concurrently -k -n api,web \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "node --watch server/index.ts",
     "dev:web": "vite --configLoader native --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build --configLoader native",
+    "build": "tsc --noEmit && vite build --configLoader native && node scripts/package-manual.ts",
     "start": "node server/index.ts",
     "test": "node --test tests/*.test.ts",
     "test:isolated": "node scripts/prepare-test-postgres.ts && node scripts/run-isolated-tests.ts",

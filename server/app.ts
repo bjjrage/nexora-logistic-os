@@ -186,6 +186,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     app.use('/manual',express.static(resolve('manual'),{index:false,redirect:false}));
     app.get(['/manual','/manual/'],(_req,res)=>res.redirect('/manual.html'));
     app.get(['/manual.html','/MANUAL_MAESTRO_NEXORA_OS.html'],(_req,res)=>res.sendFile(resolve('MANUAL_MAESTRO_NEXORA_OS.html')));
+    app.get('/manual-portatil.html',(_req,res)=>res.download(resolve('MANUAL_WORKFLOWS_NEXORA_PORTATIL.html'),'MANUAL_WORKFLOWS_NEXORA_PORTATIL.html'));
     const dist = resolve('dist');
     if (existsSync(resolve(dist, 'index.html'))) {
         app.use(express.static(dist));

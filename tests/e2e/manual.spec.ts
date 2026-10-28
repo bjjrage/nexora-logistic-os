@@ -9,7 +9,7 @@ test('interactive manual: every function completes, saves only progress, and nev
   page.on('pageerror',e=>errors.push(e.message));
   page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/'))calls.push(r.url());});
   await page.goto('/manual.html');
-  await expect(page.getByRole('heading',{name:'¿Qué necesitás hacer hoy?'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Aprendé el OS haciendo una operación.'})).toBeVisible();
   const lessons=await page.evaluate(()=> (window as any).NEXORA_MANUAL.guides.map((g:any)=>({id:g.id,steps:g.steps.length})));
   expect(lessons.length).toBeGreaterThanOrEqual(45);
   for(const guide of lessons){
@@ -37,6 +37,7 @@ test('interactive manual: every function completes, saves only progress, and nev
 
 test('manual: input validation, search, journey continuity, mobile layout and standalone HTML',async({page})=>{
   await page.goto('/manual.html');
+  await page.goto('/manual.html#biblioteca');
   await page.getByRole('searchbox',{name:'Buscar una función'}).fill('catalogo');
   await expect(page.locator('#cards')).toContainText('Importar el catálogo');
   await page.locator('#role').selectOption('Cliente');
@@ -81,7 +82,7 @@ test('manual: input validation, search, journey continuity, mobile layout and st
   await expect(page.locator('#next')).toBeEnabled();
   await page.screenshot({path:'.local/manual-mobile.png',fullPage:true});
   await page.goto(pathToFileURL(resolve('MANUAL_MAESTRO_NEXORA_OS.html')).toString());
-  await expect(page.getByRole('heading',{name:'¿Qué necesitás hacer hoy?'})).toBeVisible();
-  await page.getByRole('button',{name:'Empezar recorrido'}).click();
-  await expect(page.locator('#practice-action')).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Aprendé el OS haciendo una operación.'})).toBeVisible();
+  await page.getByRole('button',{name:'Practicar pedido → entrega',exact:true}).click();
+  await expect(page.locator('#wf-form')).toBeVisible();
 });

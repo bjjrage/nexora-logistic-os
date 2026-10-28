@@ -17,12 +17,13 @@
       ]
     },
     {"source": "/api/:path*", "headers": [{"key": "Cache-Control", "value": "no-store"}]},
-    {"source": "/release.json", "headers": [{"key": "Cache-Control", "value": "no-store"}]}
+    {"source": "/release.json", "headers": [{"key": "Cache-Control", "value": "no-store"}]},
+    {"source": "/manual-portatil.html", "headers": [{"key": "Content-Disposition", "value": "attachment; filename=MANUAL_WORKFLOWS_NEXORA_PORTATIL.html"}]}
   ],
   "redirects": [{"source": "/manual", "destination": "/manual.html", "permanent": false}],
   "rewrites": [
     {"source": "/api/:path*", "destination": "https://nexora-logistic-production.up.railway.app/api/:path*"},
     {"source": "/MANUAL_MAESTRO_NEXORA_OS.html", "destination": "/manual.html"},
-    {"source": "/((?!api(?:/|$)|assets/|manual(?:/|\\.html$)|release\\.json$).*)", "destination": "/index.html"}
+    {"source": "/((?!api(?:/|$)|assets/|manual(?:/|\\.html$|-portatil\\.html$)|release\\.json$).*)", "destination": "/index.html"}
   ]
 }

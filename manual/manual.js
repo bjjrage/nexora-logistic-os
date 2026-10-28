@@ -67,11 +67,14 @@
   }
   function route(){
     const [kind,id,n,j]=location.hash.slice(1).split('/');
-    if(kind==='guia'&&byId(id)){
+    if(kind==='flujo'){
+      current=null;journey=null;nav();window.NEXORA_WORKFLOWS.render(id);
+    }else if(kind==='guia'&&byId(id)){
       current=byId(id);index=Math.min(Math.max(Math.trunc(Number(n)||1)-1,0),current.steps.length-1);journey=journeys.find(x=>x.id===j&&x.ids.includes(id))||null;lesson();
     }else if(kind==='final'&&byId(id)&&complete(id)){
       current=byId(id);journey=journeys.find(x=>x.id===n&&x.ids.includes(id))||null;completed();
-    }else{moduleId=kind==='modulo'&&modules.some(m=>m.id===id)?id:'';library();}
+    }else if(kind==='biblioteca'||kind==='modulo'){moduleId=kind==='modulo'&&modules.some(m=>m.id===id)?id:'';library();}
+    else{current=null;journey=null;moduleId='';nav();window.NEXORA_WORKFLOWS.resetView();window.NEXORA_WORKFLOWS.home();}
     window.scrollTo({top:0,behavior:'instant'});$('main').focus({preventScroll:true});
   }
   document.addEventListener('click',e=>{
