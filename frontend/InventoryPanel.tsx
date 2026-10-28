@@ -859,6 +859,12 @@ export default function InventoryPanel({ section, role, clients, initialClientId
     if (ok) { setSelectedOrderId(""); setSelectedRouteId(""); setManualLoadIds([]); }
   };
 
+  const unreserveOrder = async () => {
+    if (!selectedOrder || !window.confirm('¿Desreservar este pedido? Sus unidades volverán al stock disponible y sus bultos se quitarán de la ruta. Si la ruta queda sin bultos, volverá a borrador. No se puede si ya fueron cargados.')) return;
+    const ok = await runMutation(`/api/orders/${encodeURIComponent(selectedOrder.id)}/unreserve`, {}, 'Reserva liberada. Las unidades volvieron al stock disponible.', 'both');
+    if (ok) { setSelectedOrderId(''); setSelectedOrderMode(null); setManualLoadIds([]); }
+  };
+
   const receiveOrderReturn = async (order: Order) => {
     if (!returnLocationId) { setError("Seleccioná la ubicación donde se recibe el retorno."); return; }
     const orderReturnIds = stagedReturnIds.filter((id) => {
@@ -956,6 +962,7 @@ export default function InventoryPanel({ section, role, clients, initialClientId
           {error && <div className="notice error" role="alert"><strong>No se pudo completar la operación.</strong><p>{error}</p>{error.includes("Faltan unidades") && <p>Ingresá la mercadería del cliente en Inventario → Recibir mercadería y después volvé a reservar.</p>}</div>}
           {success && <div className="notice success" role="status">{success}</div>}
           <p className="muted">Estado del pedido: {orderProgress(selectedOrder)}</p>
+          {selectedOrder.state.toUpperCase() === 'RESERVED' && <button type="button" className="button button-secondary" disabled={busy || !canWarehouse} onClick={() => void unreserveOrder()}>Desreservar pedido</button>}
           {selectedOrder.state.toUpperCase() === "DRAFT" ? <>
             <p>Primero reservá las unidades de este pedido.</p>
             <button className="button button-primary" type="button" onClick={() => void runMutation("/api/orders/" + encodeURIComponent(selectedOrder.id) + "/reserve", {}, "Pedido reservado.", "both")} disabled={busy || !canWarehouse}><Boxes aria-hidden="true" />{busy ? "Guardando…" : "Reservar stock"}</button>

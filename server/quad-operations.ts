@@ -55,7 +55,7 @@ export class QuadOperations {
       await this.domain.record('shipments',shipmentId,actor);
       const inventoryOrder=await this.store.one('SELECT * FROM inventory_orders WHERE org_id=? AND shipment_id=?',actor.orgId,shipmentId);
       if(inventoryOrder)ensure(inventoryOrder.order_date===b.date,'VALIDATION_ERROR','La fecha de QuadMinds debe coincidir con la fecha del pedido.',400);
-      const parcels=await this.store.all('SELECT * FROM parcels WHERE shipment_id=? AND org_id=? ORDER BY code',shipmentId,actor.orgId);
+      const parcels=await this.store.all("SELECT p.* FROM parcels p WHERE p.shipment_id=? AND p.org_id=? AND NOT EXISTS(SELECT 1 FROM inventory_movements m WHERE m.org_id=p.org_id AND m.parcel_id=p.id AND m.action='RELEASE' AND m.from_status='RESERVED') ORDER BY p.code",shipmentId,actor.orgId);
       ensure(parcels.length,'VALIDATION_ERROR','El pedido todavía no tiene unidades preparadas.',400);
       for(const p of parcels){
         ensure(['RECEIVED','RETURNED_TO_DEPOT'].includes(p.state),'INVALID_TRANSITION','Reservá y prepará las unidades antes de enviar el pedido.');
@@ -159,7 +159,7 @@ export class QuadOperations {
   async proofs(actor:Actor,shipmentId:string){
     authorize(actor,['ADMIN','OPERATIONS','DEPOT','CUSTOMER']);const s=await this.domain.record('shipments',shipmentId,actor);
     if(actor.role==='CUSTOMER')ensure(actor.clientId===s.client_id,'NOT_FOUND','Pedido no encontrado.',404);
-    return {items:(await this.store.all('SELECT p.id AS parcel_id,q.provider_result,q.evidence_state,q.reported_at,q.receiver_name,e.kind,e.evidence_id FROM parcels p LEFT JOIN quad_parcel_links q ON q.parcel_id=p.id AND q.org_id=p.org_id LEFT JOIN quad_proofs e ON e.parcel_id=p.id AND e.org_id=p.org_id WHERE p.org_id=? AND p.shipment_id=? ORDER BY p.code',actor.orgId,shipmentId)).map(camel)};
+    return {items:(await this.store.all("SELECT p.id AS parcel_id,q.provider_result,q.evidence_state,q.reported_at,q.receiver_name,e.kind,e.evidence_id FROM parcels p LEFT JOIN quad_parcel_links q ON q.parcel_id=p.id AND q.org_id=p.org_id LEFT JOIN quad_proofs e ON e.parcel_id=p.id AND e.org_id=p.org_id WHERE p.org_id=? AND p.shipment_id=? AND NOT EXISTS(SELECT 1 FROM inventory_movements m WHERE m.org_id=p.org_id AND m.parcel_id=p.id AND m.action='RELEASE' AND m.from_status='RESERVED') ORDER BY p.code",actor.orgId,shipmentId)).map(camel)};
   }
   async syncRoute(actor:Actor,routeId:string,applySequence=false){
     authorize(actor,['ADMIN','OPERATIONS']);const config=this.configured(actor),binding=await this.store.one('SELECT * FROM quad_route_links WHERE org_id=? AND route_id=?',actor.orgId,routeId);

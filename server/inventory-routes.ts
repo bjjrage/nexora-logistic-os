@@ -50,6 +50,7 @@ export function installInventoryRoutes(app: Express, store: Database, auth: Inve
     return res.status(201).json(await inventory.importOrders(actor, req.body ?? {}));
   });
   app.post('/api/orders/:id/reserve', async (req, res) => res.json(await inventory.reserveOrder(await actorForInventory(auth, req), String(req.params.id), inventorySchemas.reserve.parse(req.body))));
+  app.post('/api/orders/:id/unreserve', async (req, res) => res.json(await inventory.unreserveOrder(await actorForInventory(auth, req), String(req.params.id), inventorySchemas.unreserve.parse(req.body))));
   app.post('/api/orders/:id/load', async (req, res) => res.json(await inventory.loadOrder(await actorForInventory(auth, req), String(req.params.id), inventorySchemas.load.parse(req.body))));
   app.post('/api/orders/:id/return', async (req, res) => res.json(await inventory.returnOrder(await actorForInventory(auth, req), String(req.params.id), inventorySchemas.return.parse(req.body))));
   app.post('/api/orders/:id/release', async (req, res) => res.json(await inventory.release(await actorForInventory(auth, req), String(req.params.id), inventorySchemas.release.parse(req.body))));

@@ -72,6 +72,7 @@ export const inventorySchemas = {
   }),
   importCsv: z.object({ commandId: uuid, csv: z.string().min(1).max(2_000_000) }),
   reserve: z.object({ commandId: uuid, locationId: uuid.optional() }),
+  unreserve: z.object({ commandId: uuid }),
   load: z.object({ commandId: uuid, routeId: uuid, expectedVersion: z.number().int().positive(), codes: z.array(nonEmpty.max(200)).min(1).max(200) }),
   return: z.object({ commandId: uuid, locationId: uuid, returns: z.array(z.object({ returnId: uuid, evidenceId: uuid })).min(1).max(200) }),
   release: z.object({ commandId: uuid, reason: nonEmpty.max(500), locationId: uuid, parcelIds: z.array(uuid).max(200).optional(), serials: z.array(nonEmpty.max(160)).max(200).optional() }).refine(value => Boolean(value.parcelIds?.length || value.serials?.length), 'Indicá los bultos o series que inspeccionaste.')
@@ -179,7 +180,7 @@ export class Inventory {
       SUM(CASE WHEN state='DELIVERED' THEN 1 ELSE 0 END) AS delivered,
       SUM(CASE WHEN state='QUARANTINE' THEN 1 ELSE 0 END) AS quarantine,
       SUM(CASE WHEN state='RELEASED' THEN 1 ELSE 0 END) AS released
-      FROM inventory_order_parcels WHERE org_id=? AND order_id=?`, actor.orgId, orderId);
+      FROM inventory_order_parcels op WHERE org_id=? AND order_id=? AND NOT EXISTS (SELECT 1 FROM inventory_movements m WHERE m.org_id=op.org_id AND m.parcel_id=op.parcel_id AND m.action='RELEASE' AND m.from_status='RESERVED')`, actor.orgId, orderId);
     if (!counts || !counts.total) return;
     let status = 'RESERVED';
     if (counts.delivered === counts.total) status = 'DELIVERED';
@@ -379,8 +380,8 @@ export class Inventory {
     return this.command(actor, `orders.${orderId}.update`, b, async () => {
       const order = await this.record('inventory_orders', orderId, actor);
       ensure(order.status === 'DRAFT', 'INVALID_TRANSITION', 'Only draft orders may be edited.');
-      ensure(!await this.store.one('SELECT id FROM inventory_order_parcels WHERE org_id=? AND order_id=? LIMIT 1', actor.orgId, order.id), 'INVALID_TRANSITION', 'The order already has reserved units and cannot be edited.');
-      const currentLines = await this.store.all('SELECT product_id,quantity FROM inventory_order_lines WHERE org_id=? AND order_id=? ORDER BY id', actor.orgId, order.id);
+      ensure(!await this.store.one("SELECT op.id FROM inventory_order_parcels op WHERE op.org_id=? AND op.order_id=? AND NOT EXISTS(SELECT 1 FROM inventory_movements m WHERE m.org_id=op.org_id AND m.parcel_id=op.parcel_id AND m.action='RELEASE' AND m.from_status='RESERVED') LIMIT 1", actor.orgId, order.id), 'INVALID_TRANSITION', 'El pedido tiene unidades reservadas o procesadas.');
+      const currentLines = await this.store.all('SELECT id,product_id,quantity FROM inventory_order_lines WHERE org_id=? AND order_id=? ORDER BY id', actor.orgId, order.id);
       const merged = orderInput.parse({
         clientId: order.client_id, externalId: order.external_id, orderDate: b.orderDate ?? b.date ?? order.order_date,
         destination: b.destination ?? order.destination, recipientName: b.recipientName ?? order.recipient_name,
@@ -397,8 +398,15 @@ export class Inventory {
       await this.store.run(`UPDATE inventory_orders SET order_date=?,destination=?,recipient_name=?,recipient_phone=?,origin_text=?,window_start=?,window_end=?,service_minutes=?,restrictions=?,updated_at=? WHERE id=? AND org_id=? AND status='DRAFT'`, merged.orderDate, merged.destination, merged.recipientName, merged.recipientPhone, merged.originText, merged.windowStart, merged.windowEnd, merged.serviceMinutes, merged.restrictions, time, order.id, actor.orgId);
       await this.store.run('UPDATE shipments SET origin_text=?,destination_text=?,recipient_name=?,recipient_phone=? WHERE id=? AND org_id=?', merged.originText || 'Depósito Nexora', merged.destination, merged.recipientName, merged.recipientPhone, order.shipment_id, actor.orgId);
       if (b.lines) {
-        await this.store.run('DELETE FROM inventory_order_lines WHERE org_id=? AND order_id=?', actor.orgId, order.id);
-        for (const line of merged.lines) await this.store.run('INSERT INTO inventory_order_lines VALUES(?,?,?,?,?,?,0,0,0,0)', randomUUID(), actor.orgId, order.client_id, order.id, line.productId, line.quantity);
+        for (const oldLine of currentLines.filter(old=>!merged.lines.some(line=>line.productId===old.product_id))) {
+          ensure(!await this.store.one('SELECT id FROM inventory_order_parcels WHERE org_id=? AND line_id=? LIMIT 1',actor.orgId,oldLine.id),'INVALID_TRANSITION','No se puede eliminar un producto con historial de reserva.');
+          await this.store.run('DELETE FROM inventory_order_lines WHERE id=? AND org_id=?',oldLine.id,actor.orgId);
+        }
+        for (const line of merged.lines) {
+          const old=currentLines.find(item=>item.product_id===line.productId);
+          if(old) await this.store.run('UPDATE inventory_order_lines SET quantity=? WHERE id=? AND org_id=?',line.quantity,old.id,actor.orgId);
+          else await this.store.run('INSERT INTO inventory_order_lines VALUES(?,?,?,?,?,?,0,0,0,0)',randomUUID(),actor.orgId,order.client_id,order.id,line.productId,line.quantity);
+        }
       }
       return await this.orderView(actor, await this.record('inventory_orders', order.id, actor));
     }, ['ADMIN', 'OPERATIONS']);
@@ -409,7 +417,7 @@ export class Inventory {
     return this.command(actor, `orders.${orderId}.cancel`, b, async () => {
       const order = await this.record('inventory_orders', orderId, actor);
       ensure(order.status === 'DRAFT', 'INVALID_TRANSITION', 'Only draft orders may be cancelled.');
-      ensure(!await this.store.one('SELECT id FROM inventory_order_parcels WHERE org_id=? AND order_id=? LIMIT 1', actor.orgId, order.id), 'INVALID_TRANSITION', 'The order already has reserved units and cannot be cancelled.');
+      ensure(!await this.store.one("SELECT op.id FROM inventory_order_parcels op WHERE op.org_id=? AND op.order_id=? AND NOT EXISTS(SELECT 1 FROM inventory_movements m WHERE m.org_id=op.org_id AND m.parcel_id=op.parcel_id AND m.action='RELEASE' AND m.from_status='RESERVED') LIMIT 1", actor.orgId, order.id), 'INVALID_TRANSITION', 'El pedido tiene unidades reservadas o procesadas.');
       const updated = await this.store.run("UPDATE inventory_orders SET status='CANCELLED',updated_at=? WHERE id=? AND org_id=? AND status='DRAFT'", now(), order.id, actor.orgId);
       ensure(Number(updated.changes) === 1, 'INVALID_TRANSITION', 'The order is no longer a draft.');
       return { id: order.id, status: 'CANCELLED', reason: b.reason };
@@ -682,6 +690,44 @@ export class Inventory {
     });
   }
 
+  async unreserveOrder(actor: InventoryActor, orderId: string, input: Row) {
+    const b = inventorySchemas.unreserve.parse(input);
+    return this.command(actor, `orders.${orderId}.unreserve`, b, async () => {
+      const order = await this.record('inventory_orders', orderId, actor);
+      await this.client(actor, order.client_id);
+      ensure(order.status === 'RESERVED', 'INVALID_TRANSITION', 'Solo se puede desreservar un pedido que no tenga unidades cargadas o despachadas.');
+      const items = await this.store.all(`SELECT op.*,p.state AS parcel_state,p.custody_type,p.custody_id AS parcel_custody FROM inventory_order_parcels op JOIN parcels p ON p.id=op.parcel_id AND p.org_id=op.org_id WHERE op.org_id=? AND op.order_id=? AND op.state='RESERVED'`, actor.orgId, order.id);
+      const lines = await this.store.all('SELECT * FROM inventory_order_lines WHERE org_id=? AND order_id=?', actor.orgId, order.id);
+      ensure(items.length > 0 && items.length === lines.reduce((sum,line)=>sum+Number(line.quantity),0) && lines.every(line=>Number(line.loaded_quantity)===0 && Number(line.reserved_quantity)===Number(line.quantity)), 'INVENTORY_CONFLICT', 'La reserva cambió o está incompleta. Actualizá antes de continuar.');
+      ensure(items.every(item=>item.parcel_state==='RECEIVED' && item.custody_type==='DEPOT' && item.parcel_custody===item.location_id), 'INVALID_TRANSITION', 'Hay unidades fuera del depósito. No se puede liberar esta reserva.');
+      const assigned = await this.store.all(`SELECT a.id,a.route_id,r.state FROM route_assignments a JOIN routes r ON r.id=a.route_id AND r.org_id=a.org_id WHERE a.org_id=? AND a.active=1 AND a.parcel_id IN (${items.map(()=>'?').join(',')})`, actor.orgId, ...items.map(item=>item.parcel_id));
+      ensure(assigned.every(item=>['DRAFT','READY'].includes(item.state)), 'INVALID_TRANSITION', 'Un bulto está en una ruta despachada.');
+      ensure(!await this.store.one(`SELECT q.parcel_id FROM quad_parcel_links q WHERE q.org_id=? AND q.parcel_id IN (${items.map(()=>'?').join(',')}) LIMIT 1`,actor.orgId,...items.map(item=>item.parcel_id)), 'INVALID_TRANSITION', 'Un bulto tiene una vinculación QuadMinds. Revisá la operación externa antes de desreservar.');
+      for (const item of items) {
+        if (item.serial_id) {
+          const updated = await this.store.run("UPDATE inventory_units SET status='AVAILABLE',order_id='',custody_id='',parcel_id=NULL,updated_at=? WHERE id=? AND org_id=? AND client_id=? AND status='RESERVED' AND order_id=? AND parcel_id=?", now(),item.serial_id,actor.orgId,order.client_id,order.id,item.parcel_id);
+          ensure(Number(updated.changes)===1,'INVENTORY_CONFLICT','Cambió la serie reservada.');
+        } else {
+          await this.changeBalance(actor,{clientId:order.client_id,productId:item.product_id,locationId:item.location_id,status:'RESERVED',orderId:order.id,delta:-1});
+          await this.changeBalance(actor,{clientId:order.client_id,productId:item.product_id,locationId:item.location_id,status:'AVAILABLE',delta:1});
+        }
+        const updated = await this.store.run("UPDATE inventory_order_parcels SET state='RELEASED',updated_at=? WHERE id=? AND org_id=? AND state='RESERVED'",now(),item.id,actor.orgId);
+        ensure(Number(updated.changes)===1,'INVENTORY_CONFLICT','Cambió la reserva.');
+        await this.appendMovement(actor,{clientId:order.client_id,productId:item.product_id,quantity:1,serialId:item.serial_id,fromLocationId:item.location_id,toLocationId:item.location_id,fromStatus:'RESERVED',toStatus:'AVAILABLE',orderId:order.id,parcelId:item.parcel_id,action:'RELEASE',reference:order.external_id,reason:'Reserva del pedido liberada',commandId:b.commandId});
+      }
+      for (const routeId of new Set(assigned.map(item=>item.route_id as string))) {
+        await this.store.run(`UPDATE route_assignments SET active=0 WHERE org_id=? AND route_id=? AND active=1 AND parcel_id IN (${items.map(()=>'?').join(',')})`,actor.orgId,routeId,...items.map(item=>item.parcel_id));
+        await this.store.run('DELETE FROM stops WHERE org_id=? AND route_id=? AND shipment_id=? AND NOT EXISTS(SELECT 1 FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id WHERE a.org_id=stops.org_id AND a.route_id=stops.route_id AND a.active=1 AND p.shipment_id=stops.shipment_id)',actor.orgId,routeId,order.shipment_id);
+        const remaining=await this.store.one('SELECT id FROM route_assignments WHERE org_id=? AND route_id=? AND active=1 LIMIT 1',actor.orgId,routeId);
+        await this.store.run("UPDATE routes SET state=CASE WHEN state='READY' AND ?=0 THEN 'DRAFT' ELSE state END,version=version+1 WHERE id=? AND org_id=?",remaining?1:0,routeId,actor.orgId);
+      }
+      await this.store.run('UPDATE inventory_order_lines SET reserved_quantity=0 WHERE org_id=? AND order_id=?',actor.orgId,order.id);
+      const updated=await this.store.run("UPDATE inventory_orders SET status='DRAFT',updated_at=? WHERE id=? AND org_id=? AND status='RESERVED'",now(),order.id,actor.orgId);
+      ensure(Number(updated.changes)===1,'INVENTORY_CONFLICT','Cambió el estado del pedido.');
+      return {id:order.id,status:'DRAFT',released:items.length,affectedRoutes:assigned.map(item=>item.route_id)};
+    });
+  }
+
   async loadOrder(actor: InventoryActor, orderId: string, input: Row) {
     const b = inventorySchemas.load.parse(input);
     return this.command(actor, `orders.${orderId}.load`, b, async () => {
@@ -942,7 +988,7 @@ export class Inventory {
         LEFT JOIN quad_parcel_links q ON q.parcel_id=op.parcel_id AND q.org_id=op.org_id
         LEFT JOIN quad_proofs qp ON qp.parcel_id=op.parcel_id AND qp.org_id=op.org_id
         LEFT JOIN evidence e ON e.id=qp.evidence_id AND e.org_id=qp.org_id
-        WHERE op.order_id=? AND op.org_id=? ORDER BY p.code`, order.id, actor.orgId)
+        WHERE op.order_id=? AND op.org_id=? AND NOT EXISTS(SELECT 1 FROM inventory_movements m WHERE m.org_id=op.org_id AND m.parcel_id=op.parcel_id AND m.action='RELEASE' AND m.from_status='RESERVED') ORDER BY p.code`, order.id, actor.orgId)
     ]);
     const parcelsById = new Map<string, Row>();
     for (const row of parcels) {

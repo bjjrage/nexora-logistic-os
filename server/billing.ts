@@ -48,8 +48,8 @@ export class Billing {
  async candidates(actor:Actor,clientId:string){
   authorize(actor,['ADMIN']);z.uuid().parse(clientId);
   return this.store.all(`SELECT s.id,s.reference,s.destination_text FROM shipments s WHERE s.org_id=? AND s.client_id=?
-   AND EXISTS(SELECT 1 FROM parcels p WHERE p.shipment_id=s.id AND p.org_id=s.org_id)
-   AND NOT EXISTS(SELECT 1 FROM parcels p WHERE p.shipment_id=s.id AND p.org_id=s.org_id AND p.state<>'DELIVERED')
+   AND EXISTS(SELECT 1 FROM parcels p WHERE p.shipment_id=s.id AND p.org_id=s.org_id AND NOT EXISTS(SELECT 1 FROM inventory_movements m WHERE m.org_id=p.org_id AND m.parcel_id=p.id AND m.action='RELEASE' AND m.from_status='RESERVED'))
+   AND NOT EXISTS(SELECT 1 FROM parcels p WHERE p.shipment_id=s.id AND p.org_id=s.org_id AND p.state<>'DELIVERED' AND NOT EXISTS(SELECT 1 FROM inventory_movements m WHERE m.org_id=p.org_id AND m.parcel_id=p.id AND m.action='RELEASE' AND m.from_status='RESERVED'))
    AND NOT EXISTS(SELECT 1 FROM billing_shipment_links b WHERE b.org_id=s.org_id AND b.shipment_id=s.id AND b.active=1)
    ORDER BY s.created_at DESC,s.id LIMIT 200`,actor.orgId,clientId);
  }
@@ -70,7 +70,7 @@ export class Billing {
   for(const shipmentId of ids){
    const shipment=await this.store.one('SELECT id FROM shipments WHERE id=? AND org_id=? AND client_id=?',shipmentId,actor.orgId,b.clientId);
    ensure(shipment,'VALIDATION_ERROR','El envío no pertenece al cliente elegido.',400);
-   ensure(await this.store.one('SELECT id FROM parcels WHERE org_id=? AND shipment_id=?',actor.orgId,shipmentId)&&!await this.store.one("SELECT id FROM parcels WHERE org_id=? AND shipment_id=? AND state<>'DELIVERED'",actor.orgId,shipmentId),'INVALID_TRANSITION','Solo podés incluir envíos entregados por completo.');
+   ensure(await this.store.one("SELECT p.id FROM parcels p WHERE p.org_id=? AND p.shipment_id=? AND NOT EXISTS(SELECT 1 FROM inventory_movements m WHERE m.org_id=p.org_id AND m.parcel_id=p.id AND m.action='RELEASE' AND m.from_status='RESERVED')",actor.orgId,shipmentId)&&!await this.store.one("SELECT p.id FROM parcels p WHERE p.org_id=? AND p.shipment_id=? AND p.state<>'DELIVERED' AND NOT EXISTS(SELECT 1 FROM inventory_movements m WHERE m.org_id=p.org_id AND m.parcel_id=p.id AND m.action='RELEASE' AND m.from_status='RESERVED')",actor.orgId,shipmentId),'INVALID_TRANSITION','Solo podés incluir envíos entregados por completo.');
    ensure(!await this.store.one('SELECT document_id FROM billing_shipment_links WHERE org_id=? AND shipment_id=? AND active=1',actor.orgId,shipmentId),'INVALID_TRANSITION','Ese envío ya está incluido en otra proforma vigente.');
    await this.store.run('INSERT INTO billing_shipment_links(org_id,document_id,shipment_id,active) VALUES(?,?,?,1)',actor.orgId,id,shipmentId);
   }

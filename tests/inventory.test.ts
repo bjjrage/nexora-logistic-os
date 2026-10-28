@@ -8,6 +8,7 @@ import { setup, type Actor } from '../server/auth.ts';
 import { Logistics } from '../server/domain.ts';
 import { Inventory, type InventoryActor } from '../server/inventory.ts';
 import { installInventoryRoutes } from '../server/inventory-routes.ts';
+import { reconcileInventory } from '../server/reconciliation.ts';
 
 async function fixture(t: any) {
   const store = new Store(':memory:');
@@ -61,6 +62,78 @@ test('disponibilidad del pedido refleja stock real y excluye lo reservado', asyn
   assert.equal(current.lines[0].available, 1);
   assert.equal(current.lines[0].reserved, 2);
   assert.equal(current.lines[0].loaded, 0);
+});
+
+test('desreservar libera stock, retira solo el pedido de la ruta y admite una nueva reserva', async (t) => {
+  const f=await fixture(t);
+  await f.inventory.receive(f.actor,{...f.command(),clientId:f.clientId,productId:f.product.id,locationId:f.locationId,quantity:3});
+  const first=await f.inventory.createOrder(f.actor,orderBody(randomUUID(),f.clientId,f.product.id,'UNRES-A',2));
+  const second=await f.inventory.createOrder(f.actor,orderBody(randomUUID(),f.clientId,f.product.id,'UNRES-B',1));
+  const reserved=await f.inventory.reserveOrder(f.actor,first.id,f.command());
+  const other=await f.inventory.reserveOrder(f.actor,second.id,f.command());
+  const driverId=(await f.domain.createDriver(f.actor,{...f.command(),name:'Chofer',username:'unreserve-driver',password:'Password-QA-Driver-2026!'})).id;
+  const vehicleId=(await f.domain.createVehicle(f.actor,{...f.command(),plate:'UNRES-1',capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0})).id;
+  const route=await f.domain.createRoute(f.actor,{...f.command(),name:'Ruta',driverId,vehicleId,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()});
+  await f.domain.assign(f.actor,route.id,{...f.command(),expectedVersion:route.version,parcelIds:[...reserved.parcels,...other.parcels].map((p:any)=>p.id),pickup:false});
+  let version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
+  await f.domain.ready(f.actor,route.id,{...f.command(),expectedVersion:version});
+  const command=f.command(); const result=await f.inventory.unreserveOrder(f.actor,first.id,command);
+  assert.equal(result.released,2);assert.deepEqual(await f.inventory.unreserveOrder(f.actor,first.id,command),result);
+  assert.equal((await f.inventory.order(f.actor,first.id)).parcels.length,0);
+  assert.equal((await f.store.one("SELECT quantity FROM inventory_balances WHERE product_id=? AND status='AVAILABLE'",f.product.id))!.quantity,2);
+  assert.equal((await f.store.one('SELECT state FROM routes WHERE id=?',route.id))!.state,'READY');
+  assert.equal((await f.store.one('SELECT count(*) AS n FROM route_assignments WHERE route_id=? AND active=1',route.id))!.n,1);
+  assert.equal((await f.store.one('SELECT count(*) AS n FROM stops WHERE route_id=?',route.id))!.n,1);
+  assert.equal((await reconcileInventory(f.store,f.actor)).ok,true);
+  assert.equal((await f.domain.bootstrap(f.actor)).parcels.some((p:any)=>p.id===reserved.parcels[0].id),false);
+  version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
+  await assert.rejects(()=>f.domain.assign(f.actor,route.id,{...f.command(),expectedVersion:version,parcelIds:[reserved.parcels[0].id],pickup:false}),code('INVALID_TRANSITION'));
+  const newReservation=await f.inventory.reserveOrder(f.actor,first.id,f.command());assert.equal(newReservation.parcels.length,2);
+  assert.equal((await f.inventory.order(f.actor,first.id)).parcels.length,2);
+});
+
+test('desreservar rechaza unidades ya cargadas sin modificar stock ni ruta', async t=>{
+  const f=await fixture(t);
+  await f.inventory.receive(f.actor,{...f.command(),clientId:f.clientId,productId:f.product.id,locationId:f.locationId,quantity:1});
+  const order=await f.inventory.createOrder(f.actor,orderBody(randomUUID(),f.clientId,f.product.id,'UNRES-LOADED',1));
+  const reserved=await f.inventory.reserveOrder(f.actor,order.id,f.command());
+  const driverId=(await f.domain.createDriver(f.actor,{...f.command(),name:'Chofer',username:'unreserve-loaded',password:'Password-QA-Driver-2026!'})).id;
+  const vehicleId=(await f.domain.createVehicle(f.actor,{...f.command(),plate:'UNRES-2',capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0})).id;
+  const route=await f.domain.createRoute(f.actor,{...f.command(),name:'Ruta',driverId,vehicleId,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()});
+  await f.domain.assign(f.actor,route.id,{...f.command(),expectedVersion:route.version,parcelIds:[reserved.parcels[0].id],pickup:false});
+  let version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
+  await f.domain.ready(f.actor,route.id,{...f.command(),expectedVersion:version});version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
+  await f.domain.load(f.actor,route.id,{...f.command(),expectedVersion:version,code:reserved.parcels[0].code});
+  await assert.rejects(()=>f.inventory.unreserveOrder(f.actor,order.id,f.command()),code('INVALID_TRANSITION'));
+  assert.equal((await f.store.one('SELECT state FROM parcels WHERE id=?',reserved.parcels[0].id))!.state,'LOADED');
+  assert.equal((await f.store.one('SELECT count(*) AS n FROM route_assignments WHERE route_id=? AND active=1',route.id))!.n,1);
+  assert.equal((await reconcileInventory(f.store,f.actor)).ok,true);
+});
+
+test('desreservar conserva la serie y permite editar o reservar de nuevo', async t=>{
+  const f=await fixture(t),product=await f.makeProduct(f.clientId,'SERIAL-UNRES','SERIAL');
+  await f.inventory.receive(f.actor,{...f.command(),clientId:f.clientId,productId:product.id,locationId:f.locationId,quantity:1,serials:[{serial:'SERIE-001'}]});
+  const order=await f.inventory.createOrder(f.actor,orderBody(randomUUID(),f.clientId,product.id,'UNRES-SERIAL',1));
+  await f.inventory.reserveOrder(f.actor,order.id,f.command());
+  await f.inventory.unreserveOrder(f.actor,order.id,f.command());
+  const unit=await f.store.one('SELECT status,serial,order_id,parcel_id FROM inventory_units WHERE product_id=?',product.id);
+  assert.equal(unit!.status,'AVAILABLE');assert.equal(unit!.serial,'SERIE-001');assert.equal(unit!.order_id,'');assert.equal(unit!.parcel_id,null);
+  await f.inventory.updateOrder(f.actor,order.id,{...f.command(),recipientName:'Editado',lines:[{productId:product.id,quantity:1}]});
+  await f.inventory.reserveOrder(f.actor,order.id,f.command());
+  assert.equal((await reconcileInventory(f.store,f.actor)).ok,true);
+});
+
+test('desreserva respeta permisos y no afecta pedidos de otra empresa', async t=>{
+  const f=await fixture(t);
+  await f.inventory.receive(f.actor,{...f.command(),clientId:f.clientId,productId:f.product.id,locationId:f.locationId,quantity:1});
+  const order=await f.inventory.createOrder(f.actor,orderBody(randomUUID(),f.clientId,f.product.id,'UNRES-AUTH',1));
+  await f.inventory.reserveOrder(f.actor,order.id,f.command());
+  await assert.rejects(()=>f.inventory.unreserveOrder({...f.actor,role:'CUSTOMER',clientId:f.clientId},order.id,f.command()),code('FORBIDDEN'));
+  const foreignOrg=randomUUID(),foreignUser=randomUUID();
+  await f.store.run('INSERT INTO organizations VALUES(?,?,?)',foreignOrg,'Empresa ajena','UTC');
+  await f.store.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)',foreignUser,foreignOrg,'foreign-'+randomUUID(),'Ajeno','unused','ADMIN');
+  await assert.rejects(()=>f.inventory.unreserveOrder({...f.actor,id:foreignUser,orgId:foreignOrg},order.id,f.command()),code('NOT_FOUND'));
+  assert.equal((await f.inventory.order(f.actor,order.id)).parcels[0].state,'RESERVED');
 });
 
 test('órdenes de dos clientes no mezclan productos y una importación inválida revierte todo', async (t) => {

@@ -11,6 +11,33 @@ import { createApp } from '../server/app.ts';
 import { warehouseStory } from './warehouse-story.ts';
 import { Inventory } from '../server/inventory.ts';
 import { CatalogImport } from '../server/catalog-import.ts';
+import { reconcileInventory } from '../server/reconciliation.ts';
+
+test('PostgreSQL: desreserva de ruta confirmada revierte stock y permite reservar de nuevo; rollback',async()=>{
+ const db=new PostgresStore(process.env.DATABASE_URL??''),rollback=new Error('ROLLBACK_UNRESERVE'),orgId=randomUUID(),userId=randomUUID(),cmd=()=>({commandId:randomUUID()});
+ try{await assert.rejects(db.transaction(async()=>{
+  await db.run('INSERT INTO organizations VALUES(?,?,?)',orgId,'QA desreserva','UTC');
+  await db.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)',userId,orgId,'qa-'+randomUUID(),'QA',passwordHash('QA-Inventory-Postgres-2026!'),'ADMIN');
+  const actor:Actor={id:userId,orgId,name:'QA',role:'ADMIN',driverId:null},domain=new Logistics(db),inv=new Inventory(db);
+  const client=(await domain.createClient(actor,{...cmd(),name:'Cliente'})).id;await configureDelivery(db,actor,client);
+  const loc=(await inv.createLocation(actor,{...cmd(),code:'DEP',name:'Deposito'})).id;
+  const product=(await inv.createProduct(actor,{...cmd(),clientId:client,sku:'SKU',name:'Producto',tracking:'QUANTITY'})).id;
+  await inv.receive(actor,{...cmd(),clientId:client,productId:product,locationId:loc,quantity:2});
+  const order=(await inv.createOrder(actor,{...cmd(),clientId:client,externalId:'UNRES-PG',orderDate:'2026-10-27',destination:'Destino',recipientName:'Receptor',lines:[{productId:product,quantity:2}]})).id;
+  const reserved=await inv.reserveOrder(actor,order,cmd());
+  const driver=(await domain.createDriver(actor,{...cmd(),name:'Chofer',username:'d-'+randomUUID(),password:'QA-Driver-Postgres-2026!'})).id;
+  const vehicle=(await domain.createVehicle(actor,{...cmd(),plate:'QA-'+randomUUID().slice(0,8),capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0})).id;
+  const route=await domain.createRoute(actor,{...cmd(),name:'Ruta',driverId:driver,vehicleId:vehicle,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()});
+  await domain.assign(actor,route.id,{...cmd(),expectedVersion:route.version,parcelIds:reserved.parcels.map((p:any)=>p.id),pickup:false});
+  await domain.ready(actor,route.id,{...cmd(),expectedVersion:(await db.one('SELECT version FROM routes WHERE id=?',route.id))!.version});
+  await inv.unreserveOrder(actor,order,cmd());
+  assert.equal((await db.one('SELECT state FROM routes WHERE id=?',route.id))!.state,'DRAFT');
+  assert.equal((await db.one("SELECT quantity FROM inventory_balances WHERE product_id=? AND status='AVAILABLE'",product))!.quantity,2);
+  assert.equal((await reconcileInventory(db,actor)).ok,true);
+  await inv.reserveOrder(actor,order,cmd());assert.equal((await inv.order(actor,order)).parcels.length,2);
+  throw rollback;
+ }),error=>error===rollback);}finally{await db.close();}
+});
 
 test('Supabase: catálogo masivo preserva ceros, idempotencia, stock y totales; rollback', async()=>{
   const store=new PostgresStore(process.env.DATABASE_URL??''),rollback=new Error('ROLLBACK_CATALOG_QA'),orgId=randomUUID(),userId=randomUUID();

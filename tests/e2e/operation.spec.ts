@@ -99,6 +99,8 @@ test('browser: isolated API fixtures → dispatch → photo evidence → Nexora 
  await post('/api/inventory/receipts',{clientId:client,productId:product,locationId:location,quantity:1});
  const order=(await post('/api/orders',{clientId:client,externalId:'ORDER-'+suffix,orderDate:'2026-10-17',destination:'Destino ficticio',recipientName:'Receptor QA',lines:[{productId:product,quantity:1}]})).id;
  await post(`/api/orders/${order}/reserve`,{});
+ await post(`/api/orders/${order}/unreserve`,{});
+ await post(`/api/orders/${order}/reserve`,{});
  const detail=await(await page.request.get('/api/orders/'+order)).json(),parcel=detail.parcels[0];
  const route=(await post('/api/routes',{name,driverId:driver,vehicleId:vehicle,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()})).id;
  const version=async()=>{const b=await(await page.request.get('/api/bootstrap')).json();return b.routes.find((r:any)=>r.id===route).version;};
@@ -140,6 +142,8 @@ test('browser: isolated API fixtures → dispatch → photo evidence → Nexora 
  await expect(page.getByRole('link',{name:'Ver foto 1',exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Guardar resultado',exact:true}).click();
  await expect.poll(async()=>{const b=await(await page.request.get('/api/bootstrap')).json();return b.parcels.find((p:any)=>p.id===parcel.id)?.state;}).toBe('DELIVERED');
+ expect((await(await page.request.get('/api/orders/'+order)).json()).status).toBe('DELIVERED');
+ expect((await(await page.request.get('/api/billing/candidates?clientId='+client)).json()).some((s:any)=>s.id===detail.shipmentId)).toBe(true);
  expect((await(await page.request.get('/api/inventory/reconciliation')).json()).ok).toBe(true);
  await page.getByRole('button',{name:'Cerrar ruta',exact:true}).click();
  await expect.poll(async()=>{const b=await(await page.request.get('/api/bootstrap')).json();return b.routes.find((r:any)=>r.id===route)?.state;}).toBe('OPERATIONALLY_CLOSED');
@@ -234,6 +238,16 @@ test('browser: reservation feedback is visible in the modal for missing stock an
  await page.getByRole('article').filter({hasText:'RES-'+suffix}).getByRole('button',{name:'Preparar / cargar'}).click();
  await expect(dialog.getByText('Falta confirmar la ruta')).toBeVisible();
  await expect(dialog.getByRole('button',{name:'Confirmar carga'})).toHaveCount(0);
+ await send('/api/routes/'+route+'/ready',{expectedVersion:await routeVersion()});
+ await page.reload();await page.getByRole('button',{name:'Pedidos',exact:true}).click();
+ await page.getByRole('article').filter({hasText:'RES-'+suffix}).getByRole('button',{name:'Preparar / cargar'}).click();
+ page.once('dialog',dialog=>dialog.accept());
+ await dialog.getByRole('button',{name:'Desreservar pedido'}).click();
+ await expect(page.getByText('Reserva liberada. Las unidades volvieron al stock disponible.')).toBeVisible();
+ await expect.poll(async()=> (await(await page.request.get('/api/orders/'+order)).json()).status).toBe('DRAFT');
+ expect((await(await page.request.get('/api/bootstrap')).json()).routes.find((r:any)=>r.id===route).state).toBe('DRAFT');
+ const again=await send('/api/orders/'+order+'/reserve',{});
+ await send('/api/routes/'+route+'/assignments',{expectedVersion:await routeVersion(),parcelIds:again.parcels.map((p:any)=>p.id),pickup:false});
  await send('/api/routes/'+route+'/ready',{expectedVersion:await routeVersion()});
  await page.reload();await page.getByRole('button',{name:'Pedidos',exact:true}).click();
  await page.getByRole('article').filter({hasText:'RES-'+suffix}).getByRole('button',{name:'Preparar / cargar'}).click();
