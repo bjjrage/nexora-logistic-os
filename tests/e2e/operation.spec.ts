@@ -46,6 +46,13 @@ test('browser: setup, customer profile, catalog import, warehouse receipt, persi
  await page.getByRole('dialog').getByLabel('Nombre del depósito o sector',{exact:true}).fill('Depósito QA');
  await page.getByRole('dialog').getByRole('button',{name:'Crear depósito o sector',exact:true}).click();
  await expect(page.getByRole('heading',{name:'Mercadería del cliente'})).toBeVisible();
+ await page.getByLabel('Buscar producto').fill('Producto QA');
+ await page.getByRole('button',{name:'Producto QA · QA-BROWSER'}).click();
+ await page.getByLabel('Sumar cantidad').fill('2');
+ await page.getByRole('button',{name:'Agregar cantidad'}).click();
+ await expect(page.getByRole('heading',{name:'Recepción pendiente'})).toBeVisible();
+ await page.getByRole('button',{name:'Confirmar recepción',exact:true}).click();
+ await expect(page.getByText(/Recepción registrada|Mercadería recibida/).first()).toBeVisible();
  const scan=page.getByPlaceholder('Escaneá con USB o escribí el código');
  await scan.fill('1234567890123');await scan.press('Enter');
  await expect(page.getByRole('heading',{name:'Recepción pendiente'})).toBeVisible();

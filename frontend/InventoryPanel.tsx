@@ -293,6 +293,11 @@ export default function InventoryPanel({ section, role, clients, initialClientId
   const [catalogDefaultTracking, setCatalogDefaultTracking] = useState<"" | "QUANTITY" | "SERIAL">("");
   const [selectedClient, setSelectedClient] = useState(initialClientId);
   const [selectedProduct, setSelectedProduct] = useState("");
+  const [receiptSearch, setReceiptSearch] = useState("");
+  const [receiptPage, setReceiptPage] = useState(0);
+  const [receiptCatalog, setReceiptCatalog] = useState<Product[]>([]);
+  const [receiptTotal, setReceiptTotal] = useState(0);
+  const [receiptLoading, setReceiptLoading] = useState(false);
   const [receiptBasket, setReceiptBasket] = useState<Record<string, ReceiptBasketItem>>({});
   const [selectedLocation, setSelectedLocation] = useState("");
   const [returnLocationId, setReturnLocationId] = useState("");
@@ -441,6 +446,30 @@ export default function InventoryPanel({ section, role, clients, initialClientId
   const releaseOrders = orders.map((order) => ({ order, quarantinedParcels: (order.parcels ?? []).filter((parcel) => parcel.state === "QUARANTINE") })).filter((entry) => entry.quarantinedParcels.length > 0);
   const assignedRoutes = selectedOrder?.parcelIds?.length ? routes.filter((route) => route.state === "READY" && selectedOrder.parcelIds?.some((parcelId) => assignments.some((assignment) => assignment.active && assignment.routeId === route.id && assignment.parcelId === parcelId))) : [];
   const eligibleProducts = inventory.products.filter((product) => product.active !== false && (!product.clientId || product.clientId === selectedClient));
+  useEffect(() => { setReceiptSearch(""); setReceiptPage(0); }, [selectedClient]);
+  useEffect(() => {
+    if (section !== "inventory" || inventoryView !== "receive" || !selectedClient) {
+      setReceiptCatalog([]); setReceiptTotal(0); return;
+    }
+    const controller = new AbortController();
+    setReceiptCatalog([]); setReceiptTotal(0); setReceiptLoading(true);
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams({ clientId: selectedClient, q: receiptSearch, limit: String(INVENTORY_PAGE_SIZE), offset: String(receiptPage * INVENTORY_PAGE_SIZE) });
+      void apiRequest<{items: Product[]; total: number}>("/api/inventory/products?" + params, { signal: controller.signal })
+        .then(result => { if (!controller.signal.aborted) { setReceiptCatalog(result.items); setReceiptTotal(result.total); } })
+        .catch(caught => { if (!controller.signal.aborted) setError(inventoryError(caught)); })
+        .finally(() => { if (!controller.signal.aborted) setReceiptLoading(false); });
+    }, 200);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [section, inventoryView, selectedClient, receiptSearch, receiptPage]);
+  const chooseReceiptProduct = (product: Product) => {
+    if (product.active === false || product.clientId !== selectedClient) return;
+    if (Object.keys(receiptBasket).some(id => id !== product.id)) {
+      setError("Confirmá la recepción pendiente antes de elegir otro producto."); return;
+    }
+    setInventory(current => ({ ...current, products: current.products.some(item => item.id === product.id) ? current.products : [product, ...current.products] }));
+    setSelectedProduct(product.id); setCatalogMissingCode(""); setError(""); setSuccess(""); setQuantity("1");
+  };
   const runMutation = async (path: string, payload: Record<string, unknown>, message: string, refresh: "inventory" | "orders" | "access" | "both" = "inventory", method = "POST") => {
     setBusy(true); setError(""); setSuccess("");
     try {
@@ -872,6 +901,16 @@ export default function InventoryPanel({ section, role, clients, initialClientId
         </>}
         {inventoryView === "receive" && (!clients.length||!hasReceiptLocations)&&<section className="card task-card setup-needed" aria-labelledby="receipt-setup-title"><h2 id="receipt-setup-title">{!clients.length?'Primero agregá un cliente':'Primero creá un depósito o sector'}</h2><p>{!clients.length?'El cliente es la empresa dueña de los productos, por ejemplo Universo.':'Es el lugar físico donde vas a guardar la mercadería, por ejemplo Depósito central · Sector A.'}</p>{canManage?<button className="button button-primary" onClick={()=>{if(!clients.length){onManageClients?.();return;}setEditingLocation(null);setLocationForm({code:'',name:'',kind:'DEPOT'});setShowLocationForm(true);}}>{!clients.length?'Agregar cliente':'Crear depósito o sector'}</button>:<div className="setup-owner"><strong>Lo configura Administración de {companyName}.</strong><p>Entrá con la cuenta administradora y abrí Inventario → Depósitos y sectores.{setupContact?' Cuenta administradora: '+setupContact+'.':''}</p></div>}</section>}
         {inventoryView === "receive" && !!clients.length && hasReceiptLocations && <section className="card task-card"><div className="card-header"><div><h2>Mercadería del cliente</h2><p>Elegí de quién son los productos y dónde los vas a guardar.</p></div></div><form className="stack" onSubmit={(event) => void handleReceipt(event)}><div className="inventory-form-grid"><label className="field"><span>Cliente dueño de la mercadería</span><select required value={selectedClient} onChange={(event) => { if (Object.keys(receiptBasket).length) { setError("Confirmá esta recepción antes de cambiar de cliente."); return; } setSelectedClient(event.target.value); setSelectedProduct(""); }}><option value="">Seleccionar cliente</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label className="field"><span>Dónde se guarda</span><select required value={selectedLocation} onChange={(event) => setSelectedLocation(event.target.value)}><option value="">Elegir depósito o sector</option>{inventory.locations.filter((location) => location.active !== false && location.kind !== "QUARANTINE").map((location) => <option key={location.id} value={location.id}>{location.code} · {location.name}</option>)}</select></label><label className="field"><span>Referencia</span><input maxLength={120} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Remito u orden" /></label><label className="field"><span>Observación</span><input maxLength={500} value={reason} onChange={(event) => setReason(event.target.value)} /></label></div>{!inventory.locations.some((location) => location.active !== false && location.kind !== "QUARANTINE") && <p className="notice error">{role === "DEPOT" ? "Tu administrador debe crear un depósito o sector." : "Creá un depósito o sector en Inventario → Depósitos y sectores."}</p>}<BarcodeScanner focusSignal={receiptFocusSignal} onScan={acceptInventoryScan} disabled={busy || !selectedClient || !selectedLocation} label="Escanear SKU o código de barras" />
+          <section className="receipt-product" aria-label="Productos del cliente">
+            <div style={{width: "100%"}}>
+              <strong>Elegir producto del catálogo</strong>
+              <p className="muted">Buscá por nombre o código y seleccioná el producto que recibiste.</p>
+              <label className="field"><span>Buscar producto</span><input type="search" value={receiptSearch} maxLength={200} placeholder="Nombre, SKU o código de barras" onChange={event => { setReceiptSearch(event.target.value); setReceiptPage(0); }} disabled={!selectedClient} /></label>
+              {receiptLoading ? <p role="status">Buscando productos…</p> : !selectedClient ? <p className="muted">Elegí primero un cliente.</p> : receiptCatalog.length === 0 ? <p className="muted">No encontramos productos. Revisá la búsqueda o el catálogo del cliente.</p> : <div className="parcel-picker compact">{receiptCatalog.map(product => <button key={product.id} type="button" className="button button-secondary" disabled={busy || product.active === false} onClick={() => chooseReceiptProduct(product)} aria-pressed={selectedProduct === product.id}>{product.name} · {product.sku}{product.active === false ? " · Archivado" : ""}</button>)}</div>}
+              {selectedProduct && productById.get(selectedProduct)?.tracking === "SERIAL" && <p className="muted">Ahora ingresá o escaneá la serie individual de cada unidad.</p>}
+              {receiptTotal > INVENTORY_PAGE_SIZE && <div className="pagination"><button type="button" className="text-button" disabled={receiptPage === 0 || receiptLoading} onClick={() => setReceiptPage(page => page - 1)}>Anterior</button><span>Página {receiptPage + 1} de {Math.ceil(receiptTotal / INVENTORY_PAGE_SIZE)}</span><button type="button" className="text-button" disabled={(receiptPage + 1) * INVENTORY_PAGE_SIZE >= receiptTotal || receiptLoading} onClick={() => setReceiptPage(page => page + 1)}>Siguiente</button></div>}
+            </div>
+          </section>
           {catalogMissingCode && <div className="catalog-missing"><strong>No está en el catálogo</strong><span>El código “{catalogMissingCode}” no se agregó al stock.</span>{canManage ? <button type="button" className="button button-secondary" onClick={() => { setCatalogClientId(selectedClient); setInventoryView("catalog"); setCatalogMissingCode(""); }}>Importar catálogo</button> : <small>Administración o Coordinación logística debe importar el catálogo de este cliente.</small>}</div>}
           {selectedProduct && <div className="receipt-product"><span><small>Producto reconocido</small><strong>{productById.get(selectedProduct)?.name || "Producto"}</strong><small>SKU {productById.get(selectedProduct)?.sku || "—"} · {productById.get(selectedProduct)?.tracking === "SERIAL" ? "por serie" : "por cantidad"}</small></span>{productById.get(selectedProduct)?.tracking === "QUANTITY" && <div className="receipt-manual-quantity"><label className="field"><span>Sumar cantidad</span><input type="number" min="1" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><button className="button button-secondary" type="button" onClick={addManualReceiptQuantity} disabled={busy}>Agregar cantidad</button></div>}</div>}
           {!!Object.keys(receiptBasket).length && <section className="receipt-basket"><div className="card-header"><div><h3>Recepción pendiente</h3><p>Confirmá antes de escanear otro SKU.</p></div><button className="text-button" type="button" onClick={() => { setReceiptBasket({}); setSelectedProduct(""); setError(""); }}>Vaciar</button></div>{Object.values(receiptBasket).map((item) => { const product = productById.get(item.productId); return <div className="receipt-basket-row" key={item.productId}><span><strong>{product?.name || "Producto"}</strong><small>{product?.sku || "SKU"} · {item.quantity} {product?.unit || "unidades"}</small>{item.serials.length > 0 && <small>Series: {item.serials.join(", ")}</small>}</span><button className="text-button" type="button" onClick={() => { setReceiptBasket({}); setSelectedProduct(""); }} disabled={busy}>Quitar</button></div>; })}<button className="button button-primary" type="submit" disabled={busy || !selectedLocation}><PackagePlus aria-hidden="true" />Confirmar recepción</button></section>}</form></section>}
