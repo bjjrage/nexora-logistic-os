@@ -52,7 +52,8 @@ export class Store implements Database {
     catch (error) {
       this.db.exec('ROLLBACK');
       if (error instanceof Error && /UNIQUE constraint failed: client_profiles.org_id, client_profiles.tax_id/.test(error.message)) throw new DomainError('VALIDATION_ERROR','Ya existe un cliente con ese RUC en tu empresa.',409);
-      if (error instanceof Error && /ROUTE_RESOURCE_CONFLICT|UNIQUE constraint failed: route_assignments.parcel_id/.test(error.message)) throw new DomainError('VERSION_CONFLICT','El recurso ya está comprometido en otra ruta.');
+      if (error instanceof Error && /ROUTE_RESOURCE_CONFLICT/.test(error.message)) throw new DomainError('VERSION_CONFLICT','El chofer o el vehículo ya está asignado a otra ruta en ese horario.');
+      if (error instanceof Error && /UNIQUE constraint failed: route_assignments.parcel_id/.test(error.message)) throw new DomainError('VERSION_CONFLICT','El bulto ya está asignado a otra ruta.');
       if (error instanceof Error && /UNIQUE constraint failed/.test(error.message)) throw new DomainError('VALIDATION_ERROR','Ya existe un registro con esa referencia.',409);
       throw error;
     }

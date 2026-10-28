@@ -57,8 +57,8 @@ export class PostgresStore implements Database {
   private domainError(error: unknown): unknown {
     const failure = error as { code?: string; constraint?: string };
     if (failure.code === '23505' && failure.constraint === 'client_profiles_tax_id_unique') return new DomainError('VALIDATION_ERROR','Ya existe un cliente con ese RUC en tu empresa.',409);
-    if (failure.code === '23P01' || failure.code === '23505' && failure.constraint === 'one_active_assignment')
-      return new DomainError('VERSION_CONFLICT', 'El recurso ya está comprometido en otra ruta.');
+    if (failure.code === '23P01') return new DomainError('VERSION_CONFLICT', 'El chofer o el vehículo ya está asignado a otra ruta en ese horario.');
+    if (failure.code === '23505' && failure.constraint === 'one_active_assignment') return new DomainError('VERSION_CONFLICT', 'El bulto ya está asignado a otra ruta.');
     if (failure.code === '23505') return new DomainError('VALIDATION_ERROR', 'Ya existe un registro con esa referencia.', 409);
     if (failure.code === '23503' || failure.code === '23514') return new DomainError('VALIDATION_ERROR', 'La operación no cumple las reglas de integridad.', 400);
     return error;

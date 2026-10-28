@@ -79,7 +79,7 @@ test('QA-05: base rechaza rutas confirmadas incompatibles para chofer o vehícul
     await f.assign(r1, s1.parcels.map(p => p.id));
     await f.assign(r2, s2.parcels.map(p => p.id));
     await f.ready(r1);
-    await f.rejects(async () => await f.ready(r2), 'VERSION_CONFLICT');
+    await assert.rejects(async () => await f.ready(r2), (error: any) => error.code === 'VERSION_CONFLICT' && error.message.includes('El chofer ') && error.message.includes(' y el vehículo ') && error.message.includes('ruta «'));
     assert.equal((await f.store.one('SELECT state FROM routes WHERE id=?', r2))!.state, 'DRAFT');
     await assert.rejects(async () => await f.store.run("UPDATE routes SET state='READY' WHERE id=?", r2), /ROUTE_RESOURCE_CONFLICT/);
 });
