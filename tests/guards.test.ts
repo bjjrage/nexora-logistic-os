@@ -83,6 +83,22 @@ test('QA-05: base rechaza rutas confirmadas incompatibles para chofer o vehícul
     assert.equal((await f.store.one('SELECT state FROM routes WHERE id=?', r2))!.state, 'DRAFT');
     await assert.rejects(async () => await f.store.run("UPDATE routes SET state='READY' WHERE id=?", r2), /ROUTE_RESOURCE_CONFLICT/);
 });
+test('nonoverlapping confirmed routes do not deadlock dispatch; active road occupancy still blocks', async (t) => {
+    const f = await fixture(t), { r: today } = await f.loaded();
+    const future = (await f.d.createRoute(f.actor, { ...f.cmd(), name: 'Future route', driverId: f.driver, vehicleId: f.vehicle, startAt: new Date(Date.now()+86400000).toISOString(), endAt: new Date(Date.now()+90000000).toISOString() })).id;
+    const shipment = await f.shipment();
+    await f.receive(shipment);
+    await f.assign(future, shipment.parcels.map(p => p.id));
+    await f.ready(future);
+    await f.d.dispatch(f.actor, today, { ...f.cmd(), expectedVersion: await f.version(today) });
+    assert.equal((await f.store.one('SELECT state FROM routes WHERE id=?', today))!.state, 'IN_PROGRESS');
+    assert.equal((await f.store.one('SELECT state FROM routes WHERE id=?', future))!.state, 'READY');
+    await assert.rejects(f.d.routeAvailability((await f.store.one('SELECT * FROM routes WHERE id=?', future))!, f.actor, true), (error: any) => error.code === 'VERSION_CONFLICT' && error.message.includes('debe finalizar'));
+    await assert.rejects(f.store.run("UPDATE routes SET state='IN_PROGRESS' WHERE id=?", future), /ROUTE_RESOURCE_CONFLICT/);
+    // Planning a later day remains possible while today's driver is still out.
+    await f.d.routeAvailability((await f.store.one('SELECT * FROM routes WHERE id=?', future))!, f.actor, false);
+});
+
 test('QA-06: capacidad intermedia se verifica después de sumar retiros', async (t) => {
     const f = await fixture(t), a = await f.shipment(1, 4000, 4000), b = await f.shipment(1, 7000, 7000), r = await f.route();
     await f.receive(a);

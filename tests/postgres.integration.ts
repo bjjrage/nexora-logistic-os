@@ -13,6 +13,32 @@ import { Inventory } from '../server/inventory.ts';
 import { CatalogImport } from '../server/catalog-import.ts';
 import { reconcileInventory } from '../server/reconciliation.ts';
 
+test('PostgreSQL: future confirmed routes allow departure, overlapping plans and double departure remain blocked', async () => {
+ const db=new PostgresStore(process.env.DATABASE_URL??''),rollback=new Error('ROLLBACK_DISPATCH_WINDOWS'),orgId=randomUUID(),userId=randomUUID(),cmd=()=>({commandId:randomUUID()});
+ try { await assert.rejects(db.transaction(async()=>{
+  await db.run('INSERT INTO organizations VALUES(?,?,?)',orgId,'QA dispatch windows','UTC');
+  await db.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)',userId,orgId,'qa-'+randomUUID(),'QA',passwordHash('QA-Dispatch-2026!'),'ADMIN');
+  const actor:Actor={id:userId,orgId,name:'QA',role:'ADMIN',driverId:null},domain=new Logistics(db);
+  const driverId=(await domain.createDriver(actor,{...cmd(),name:'QA driver',username:'qa-'+randomUUID(),password:'QA-Driver-2026!'})).id;
+  const vehicleId=(await domain.createVehicle(actor,{...cmd(),plate:'QA-'+randomUUID(),capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0})).id;
+  const make=async(offset:number)=>(await domain.createRoute(actor,{...cmd(),name:'QA route',driverId,vehicleId,startAt:new Date(Date.now()+offset).toISOString(),endAt:new Date(Date.now()+offset+3600000).toISOString()})).id;
+  const today=await make(-60000),future=await make(86400000),overlap=await make(0);
+  await db.run("UPDATE routes SET state='READY' WHERE id=?",today);
+  await db.run("UPDATE routes SET state='READY' WHERE id=?",future);
+  // A savepoint allows testing constraint failures without aborting the fixture transaction.
+  await db.run('SAVEPOINT conflicting_plan');
+  await assert.rejects(db.run("UPDATE routes SET state='READY' WHERE id=?",overlap),(error:any)=>error.code==='VERSION_CONFLICT');
+  await db.run('ROLLBACK TO SAVEPOINT conflicting_plan');
+  await domain.routeAvailability((await db.one('SELECT * FROM routes WHERE id=?',today))!,actor,true);
+  await db.run("UPDATE routes SET state='IN_PROGRESS' WHERE id=?",today);
+  await db.run('SAVEPOINT double_departure');
+  await assert.rejects(db.run("UPDATE routes SET state='IN_PROGRESS' WHERE id=?",future),(error:any)=>error.code==='VERSION_CONFLICT');
+  await db.run('ROLLBACK TO SAVEPOINT double_departure');
+  assert.equal((await db.one('SELECT state FROM routes WHERE id=?',future))!.state,'READY');
+  throw rollback;
+ }),error=>error===rollback); } finally {await db.close();}
+});
+
 test('PostgreSQL: desreserva de ruta confirmada revierte stock y permite reservar de nuevo; rollback',async()=>{
  const db=new PostgresStore(process.env.DATABASE_URL??''),rollback=new Error('ROLLBACK_UNRESERVE'),orgId=randomUUID(),userId=randomUUID(),cmd=()=>({commandId:randomUUID()});
  try{await assert.rejects(db.transaction(async()=>{

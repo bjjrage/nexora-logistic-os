@@ -38,11 +38,13 @@ CREATE TABLE IF NOT EXISTS routes (
  version INTEGER NOT NULL DEFAULT 1 CHECK(version>0),UNIQUE(id,org_id),
  FOREIGN KEY(driver_id,org_id) REFERENCES drivers(id,org_id),FOREIGN KEY(vehicle_id,org_id) REFERENCES vehicles(id,org_id)
 );
-CREATE TRIGGER IF NOT EXISTS route_overlap_insert BEFORE INSERT ON routes
- WHEN NEW.state IN ('READY','IN_PROGRESS') AND EXISTS(SELECT 1 FROM routes r WHERE r.org_id=NEW.org_id AND r.state IN('READY','IN_PROGRESS') AND (r.driver_id=NEW.driver_id OR r.vehicle_id=NEW.vehicle_id) AND (r.state='IN_PROGRESS' OR NEW.state='IN_PROGRESS' OR (r.start_at<NEW.end_at AND r.end_at>NEW.start_at)))
+DROP TRIGGER IF EXISTS route_overlap_insert;
+CREATE TRIGGER route_overlap_insert BEFORE INSERT ON routes
+ WHEN NEW.state IN ('READY','IN_PROGRESS') AND EXISTS(SELECT 1 FROM routes r WHERE r.org_id=NEW.org_id AND r.state IN('READY','IN_PROGRESS') AND (r.driver_id=NEW.driver_id OR r.vehicle_id=NEW.vehicle_id) AND ((r.state='IN_PROGRESS' AND NEW.state='IN_PROGRESS') OR (r.start_at<NEW.end_at AND r.end_at>NEW.start_at)))
  BEGIN SELECT RAISE(ABORT,'ROUTE_RESOURCE_CONFLICT'); END;
-CREATE TRIGGER IF NOT EXISTS route_overlap_update BEFORE UPDATE ON routes
- WHEN NEW.state IN ('READY','IN_PROGRESS') AND EXISTS(SELECT 1 FROM routes r WHERE r.id<>NEW.id AND r.org_id=NEW.org_id AND r.state IN('READY','IN_PROGRESS') AND (r.driver_id=NEW.driver_id OR r.vehicle_id=NEW.vehicle_id) AND (r.state='IN_PROGRESS' OR NEW.state='IN_PROGRESS' OR (r.start_at<NEW.end_at AND r.end_at>NEW.start_at)))
+DROP TRIGGER IF EXISTS route_overlap_update;
+CREATE TRIGGER route_overlap_update BEFORE UPDATE ON routes
+ WHEN NEW.state IN ('READY','IN_PROGRESS') AND EXISTS(SELECT 1 FROM routes r WHERE r.id<>NEW.id AND r.org_id=NEW.org_id AND r.state IN('READY','IN_PROGRESS') AND (r.driver_id=NEW.driver_id OR r.vehicle_id=NEW.vehicle_id) AND ((r.state='IN_PROGRESS' AND NEW.state='IN_PROGRESS') OR (r.start_at<NEW.end_at AND r.end_at>NEW.start_at)))
  BEGIN SELECT RAISE(ABORT,'ROUTE_RESOURCE_CONFLICT'); END;
 CREATE TABLE IF NOT EXISTS stops (
  id TEXT PRIMARY KEY,org_id TEXT NOT NULL,route_id TEXT NOT NULL,shipment_id TEXT NOT NULL,sequence INTEGER NOT NULL,

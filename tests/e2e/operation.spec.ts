@@ -135,6 +135,15 @@ test('browser: isolated API fixtures → dispatch → photo evidence → Nexora 
  await post(`/api/routes/${route}/assignments`,{expectedVersion:await version(),parcelIds:[parcel.id],pickup:false});
  await post(`/api/routes/${route}/ready`,{expectedVersion:await version()});
  await post(`/api/orders/${order}/load`,{routeId:route,expectedVersion:await version(),codes:[parcel.code]});
+ // Same driver and vehicle have another confirmed plan two days later.
+ const later=(await post('/api/routes',{name:'Future '+suffix,driverId:driver,vehicleId:vehicle,trackingProvider:'TRACCAR',startAt:new Date(Date.now()+172800000).toISOString(),endAt:new Date(Date.now()+176400000).toISOString()})).id;
+ await post('/api/inventory/receipts',{clientId:client,productId:product,locationId:location,quantity:1});
+ const laterOrder=(await post('/api/orders',{clientId:client,externalId:'FUTURE-'+suffix,orderDate:'2026-10-30',destination:'Future destination',recipientName:'Future recipient',lines:[{productId:product,quantity:1}]})).id;
+ await post(`/api/orders/${laterOrder}/reserve`,{});
+ const laterParcel=(await(await page.request.get('/api/orders/'+laterOrder)).json()).parcels[0];
+ await post(`/api/routes/${later}/assignments`,{expectedVersion:1,parcelIds:[laterParcel.id],pickup:false});
+ const laterBootstrap=await(await page.request.get('/api/bootstrap')).json();
+ await post(`/api/routes/${later}/ready`,{expectedVersion:laterBootstrap.routes.find((r:any)=>r.id===later).version});
  await page.reload();await page.getByRole('button',{name:'Rutas',exact:true}).click();
  await page.getByRole('button',{name:new RegExp(name)}).click();
  await page.getByRole('button',{name:'Despachar',exact:true}).click();

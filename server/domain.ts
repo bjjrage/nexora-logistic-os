@@ -252,12 +252,12 @@ export class Logistics {
         });
     }
     async routeAvailability(route: Row, actor: Actor, dispatching: boolean) {
-        const conflicts = await this.store.all(`SELECT r.name,r.driver_id,r.vehicle_id,d.name AS driver_name,v.plate FROM routes r JOIN drivers d ON d.id=r.driver_id AND d.org_id=r.org_id JOIN vehicles v ON v.id=r.vehicle_id AND v.org_id=r.org_id WHERE r.org_id=? AND r.id<>? AND r.state IN('READY','IN_PROGRESS') AND (r.driver_id=? OR r.vehicle_id=?) AND (r.state='IN_PROGRESS' OR ?=1 OR (r.start_at<? AND r.end_at>?)) ORDER BY r.name,r.id`,actor.orgId,route.id,route.driver_id,route.vehicle_id,dispatching?1:0,route.end_at,route.start_at);
+        const conflicts = await this.store.all(`SELECT r.name,r.state,r.driver_id,r.vehicle_id,d.name AS driver_name,v.plate FROM routes r JOIN drivers d ON d.id=r.driver_id AND d.org_id=r.org_id JOIN vehicles v ON v.id=r.vehicle_id AND v.org_id=r.org_id WHERE r.org_id=? AND r.id<>? AND r.state IN('READY','IN_PROGRESS') AND (r.driver_id=? OR r.vehicle_id=?) AND ((?=1 AND r.state='IN_PROGRESS') OR (r.start_at<? AND r.end_at>?)) ORDER BY r.name,r.id`,actor.orgId,route.id,route.driver_id,route.vehicle_id,dispatching?1:0,route.end_at,route.start_at);
         const message = conflicts.map(conflict => {
             const driver = conflict.driver_id === route.driver_id;
             const vehicle = conflict.vehicle_id === route.vehicle_id;
             const subject = driver && vehicle ? `El chofer ${conflict.driver_name} y el vehículo ${conflict.plate}` : driver ? `El chofer ${conflict.driver_name}` : `El vehículo ${conflict.plate}`;
-            return `${subject} ya ${driver && vehicle ? 'están asignados' : 'está asignado'} a la ruta «${conflict.name}»${conflict.state === 'IN_PROGRESS' || dispatching ? ', que debe finalizar antes de esta salida' : ' en ese horario'}.`;
+            return `${subject} ya ${driver && vehicle ? 'están asignados' : 'está asignado'} a la ruta «${conflict.name}»${conflict.state === 'IN_PROGRESS' && dispatching ? ', que debe finalizar antes de esta salida' : ' en ese horario'}.`;
         }).join(' ');
         ensure(!conflicts.length, 'VERSION_CONFLICT', message);
     }
