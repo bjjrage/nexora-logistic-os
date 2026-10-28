@@ -103,7 +103,16 @@ test('browser: isolated API fixtures → dispatch → photo evidence → Nexora 
  const route=(await post('/api/routes',{name,driverId:driver,vehicleId:vehicle,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()})).id;
  const version=async()=>{const b=await(await page.request.get('/api/bootstrap')).json();return b.routes.find((r:any)=>r.id===route).version;};
  await post(`/api/routes/${route}/tracking-provider`,{provider:'TRACCAR'});
- await post(`/api/routes/${route}/assignments`,{expectedVersion:await version(),parcelIds:[parcel.id],pickup:false});
+ await page.goto('/');await page.getByRole('button',{name:'Rutas',exact:true}).click();
+ await page.getByRole('button',{name:new RegExp(name)}).click();
+ await page.getByRole('button',{name:'Preparar ruta',exact:true}).click();
+ const parcelChoice=page.locator('label.parcel-row').filter({hasText:'ORDER-'+suffix});
+ await expect(parcelChoice).toContainText('Producto QA');
+ await expect(parcelChoice).toContainText('Receptor QA');
+ await expect(parcelChoice).toContainText('Cliente E2E '+suffix);
+ await parcelChoice.getByRole('checkbox').check();
+ await page.getByRole('button',{name:'Asignar selección'}).click();
+ await expect(page.getByText('Bultos asignados a la ruta.',{exact:true})).toBeVisible();
  await post(`/api/routes/${route}/ready`,{expectedVersion:await version()});
  await post(`/api/orders/${order}/load`,{routeId:route,expectedVersion:await version(),codes:[parcel.code]});
  await post(`/api/vehicles/${vehicle}/inspections`,{odometer:0,fuelPercent:100,items:[{label:'Control QA',severity:'OK',note:''}]});

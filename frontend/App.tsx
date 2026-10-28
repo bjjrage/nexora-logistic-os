@@ -46,6 +46,7 @@ type Shipment = Entity & {
 type Parcel = Entity & {
   shipmentId: string;
   code: string;
+  product?: { name: string; sku: string } | null;
   state: string;
   custodyType: string;
   custodyId: string | null;
@@ -998,7 +999,11 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
             <form className="stack form-divider" onSubmit={submitAssign}>
               <h3>{pickupMode ? "Agregar retiro al remitente" : "Asignar bultos recibidos"}</h3>
               <label className="checkbox-field"><input type="checkbox" disabled={busy} checked={pickupMode} onChange={(event) => { setPickupMode(event.target.checked); setAssignmentIds([]); }} /> Incluir retiro directo desde el remitente</label>
-              {assignableParcels.length === 0 ? <p className="muted">{pickupMode ? "No hay bultos esperados pendientes de retiro." : "No hay bultos recibidos y en depósito sin asignación activa."}</p> : <div className="parcel-picker compact">{assignableParcels.map((parcel) => <label className="parcel-row" key={parcel.id}><input type="checkbox" disabled={busy} checked={assignmentIds.includes(parcel.id)} onChange={() => setAssignmentIds((current) => current.includes(parcel.id) ? current.filter((id) => id !== parcel.id) : [...current, parcel.id])} /><span><strong>{data.shipments.find(shipment=>shipment.id===parcel.shipmentId)?.reference??"Envío"} · bulto {data.parcels.filter(item=>item.shipmentId===parcel.shipmentId).findIndex(item=>item.id===parcel.id)+1}</strong><small>{parcel.code} · {formatMeasure(parcel.weightGrams == null ? null : parcel.weightGrams/1000, "kg")}</small></span></label>)}</div>}
+              {assignableParcels.length === 0 ? <p className="muted">{pickupMode ? "No hay bultos esperados pendientes de retiro." : "No hay bultos recibidos y en depósito sin asignación activa."}</p> : <div className="parcel-picker compact">{assignableParcels.map((parcel) => {
+                const shipment = data.shipments.find(item => item.id === parcel.shipmentId);
+                const client = data.clients.find(item => item.id === shipment?.clientId);
+                return <label className="parcel-row" key={parcel.id}><input type="checkbox" disabled={busy} checked={assignmentIds.includes(parcel.id)} onChange={() => setAssignmentIds((current) => current.includes(parcel.id) ? current.filter((id) => id !== parcel.id) : [...current, parcel.id])} /><span><strong>{parcel.product?.name || "Artículo no especificado"}</strong><small>Destinatario: {shipment?.recipientName || "No disponible"}{client?.name ? " · Cliente: " + client.name : ""}</small><small>{shipment?.reference || "Envío"} · bulto {data.parcels.filter(item=>item.shipmentId===parcel.shipmentId).findIndex(item=>item.id===parcel.id)+1} · Código: {parcel.code}</small></span></label>;
+              })}</div>}
               <button className="button button-secondary" disabled={busy || assignmentIds.length === 0}>Asignar selección</button>
             </form>
           </div>}

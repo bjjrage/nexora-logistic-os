@@ -532,12 +532,14 @@ export class Logistics {
         }
         const profileMap=OPS.includes(actor.role)?await clientProfileSummaries(s,actor.orgId):new Map<string,Row>();
         const routeIds=new Set(routes.map(r=>r.id)),parcelIds=new Set(parcels.map(p=>p.id)),vehicleIds=new Set(vehicles.map(v=>v.id));
+        const productLabels = OPS.includes(actor.role) && parcelIds.size ? await s.all(`SELECT op.parcel_id,pr.name,pr.sku FROM inventory_order_parcels op JOIN inventory_products pr ON pr.id=op.product_id AND pr.org_id=op.org_id AND pr.client_id=op.client_id WHERE op.org_id=? AND op.parcel_id IN (${[...parcelIds].map(()=>'?').join(',')})`,actor.orgId,...parcelIds) : [];
+        const parcelProducts = new Map(productLabels.map(row=>[row.parcel_id,{name:row.name,sku:row.sku}]));
         const stops=all('stops').filter(x=>routeIds.has(x.route_id)),stopIds=new Set(stops.map(s=>s.id));
         return {
             clientProfilesEnabled:true,
             organization:{...camel((await s.one('SELECT * FROM organizations WHERE id=?',actor.orgId))!),supportContacts:await s.all("SELECT name,role FROM users WHERE org_id=? AND enabled=1 AND role IN('ADMIN','OPERATIONS') ORDER BY name",actor.orgId)},user:actor,
             clients:clients.map((client):Row=>({...camel(client),...profileMap.get(client.id)})),drivers:drivers.map(x=>({...camel(x),available:!!x.available})),vehicles:vehicles.map(x=>({...camel(x),available:!!x.available})),
-            shipments:shipments.map((x):Row=>({...camel(x),counts:countMap.get(x.id)??{expected:0,received:0,delivered:0,pending:0,returned:0,missing:0}})),parcels:parcels.map(camel),routes:routes.map(camel),stops:stops.map(camel),
+            shipments:shipments.map((x):Row=>({...camel(x),counts:countMap.get(x.id)??{expected:0,received:0,delivered:0,pending:0,returned:0,missing:0}})),parcels:parcels.map(x=>({...camel(x),product:parcelProducts.get(x.id)??null})),routes:routes.map(camel),stops:stops.map(camel),
             assignments:all('route_assignments').filter(x=>routeIds.has(x.route_id)).map(x=>({...camel(x),active:!!x.active,pickup:!!x.pickup})),
             incidents:all('incidents').filter(x=>routeIds.has(x.route_id)).map(camel),returns:all('returns').filter(x=>routeIds.has(x.route_id)).map(x=>({...camel(x),depotEvidenceId:proofMap.get(x.id)??null})),
             driverDocuments:all('driver_documents').filter(x=>drivers.some(d=>d.id===x.driver_id)).map(x=>({...camel(x),blocksDispatch:!!x.blocks_dispatch})),

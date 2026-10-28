@@ -177,6 +177,9 @@ test('parcels por unidad enlazan ruta, bloquean cierre manual, entregan parcial 
   const order = await f.inventory.createOrder(f.actor, orderBody(randomUUID(), f.clientId, f.product.id, 'ORDER-PARTIAL', 3));
   const reservation = await f.inventory.reserveOrder(f.actor, order.id, { ...f.command(), locationId: f.locationId });
   assert.equal(reservation.parcels.length, 3);
+  const adminBootstrap = await f.domain.bootstrap(f.actor);
+  const labeledParcel = adminBootstrap.parcels.find((parcel: any) => parcel.id === reservation.parcels[0].id);
+  assert.deepEqual(labeledParcel?.product, { name: f.product.name, sku: f.product.sku });
   const driverId = (await f.domain.createDriver(f.actor, { ...f.command(), name: 'Chofer QA', username: `driver-${randomUUID().slice(0, 8)}`, password: 'Password-QA-Driver-2026!' })).id;
   const vehicleId = (await f.domain.createVehicle(f.actor, { ...f.command(), plate: `QA-${randomUUID().slice(0, 6)}`, capacityWeightGrams: 5000, capacityVolumeCm3: 5000, odometer: 0 })).id;
   const route = await f.domain.createRoute(f.actor, { ...f.command(), name: 'Ruta de inventario QA', driverId, vehicleId, startAt: new Date(Date.now() - 60_000).toISOString(), endAt: new Date(Date.now() + 3_600_000).toISOString() });
