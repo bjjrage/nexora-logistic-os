@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {test,expect} from '@playwright/test';
 test.describe.configure({mode:'serial'});
+
 test('browser: setup, customer profile, catalog import, warehouse receipt, persistence and logout',async({page,browser})=>{
  const crashes:string[]=[];page.on('pageerror',e=>crashes.push(e.message));
  await page.goto('/');
@@ -169,4 +170,28 @@ test('recovery UI accepts the same six-character minimum and the account can log
  await page.getByRole('button',{name:'Guardar nueva contraseña'}).click();await expect(page.getByRole('heading',{name:'Contraseña actualizada'})).toBeVisible();
  await post('/api/logout',{});
  const login=await page.request.post('/api/login',{headers:{'X-Requested-With':'logistics-os'},data:{username:username.toLowerCase(),password:'abcdef'}});expect(login.status()).toBe(200);
+});
+
+test('browser: reservation feedback is visible in the modal for missing stock and successful reserve',async({page})=>{
+ const send=async(path:string,data:Record<string,unknown>)=>{const response=await page.request.post(path,{headers:{'X-Requested-With':'logistics-os'},data:{commandId:randomUUID(),...data}});expect(response.ok(),`${path}: ${response.status()}`).toBeTruthy();return response.json();};
+ const session=await(await page.request.get('/api/session')).json();
+ if(session.setupRequired)await send('/api/setup',{organizationName:'Nexora QA aislada',timezone:'America/Asuncion',username:'qa-browser',password:'QA-Browser-Isolated-2026!'});
+ else await send('/api/login',{username:'qa-browser',password:'QA-Browser-Isolated-2026!'});
+ const suffix=randomUUID().slice(0,8),client=(await send('/api/clients',{name:'Cliente reserva '+suffix})).id;
+ const location=(await send('/api/inventory/locations',{code:'RE-'+suffix,name:'Depósito QA'})).id;
+ const product=(await send('/api/inventory/products',{clientId:client,sku:'SKU-'+suffix,name:'Producto sin stock',tracking:'QUANTITY',weightGrams:100,volumeCm3:100})).id;
+ const order=(await send('/api/orders',{clientId:client,externalId:'RES-'+suffix,orderDate:'2026-10-27',destination:'Destino QA',recipientName:'Receptor QA',lines:[{productId:product,quantity:1}]})).id;
+ await send('/api/orders',{clientId:client,externalId:'OTRO-'+suffix,orderDate:'2026-10-27',destination:'Destino QA',recipientName:'Otra persona QA',lines:[{productId:product,quantity:1}]});
+ await page.goto('/');await page.getByRole('button',{name:'Pedidos',exact:true}).click();
+ await page.getByRole('article').filter({hasText:'RES-'+suffix}).getByRole('button',{name:'Preparar / cargar'}).click();
+ const dialog=page.getByRole('dialog',{name:'Preparar y cargar'});await dialog.getByRole('button',{name:'Reservar stock'}).click();
+ await expect(dialog.getByRole('alert')).toContainText('Faltan unidades');await expect(dialog.getByRole('alert')).toContainText('Recibir mercadería');
+ {const current=await(await page.request.get('/api/orders/'+order)).json();expect(current.status).toBe('DRAFT');}
+ await send('/api/inventory/receipts',{clientId:client,productId:product,locationId:location,quantity:1});
+ await dialog.getByRole('button',{name:'Reservar stock'}).click();await expect(dialog.getByRole('status')).toContainText('Pedido reservado.');
+ await expect(dialog.getByRole('button',{name:'Reserva registrada'})).toBeDisabled();
+ const current=await(await page.request.get('/api/orders/'+order)).json();expect(current.status).toBe('RESERVED');
+ await dialog.getByRole('button',{name:'Cerrar'}).click();
+ await page.getByRole('article').filter({hasText:'OTRO-'+suffix}).getByRole('button',{name:'Preparar / cargar'}).click();
+ await expect(page.getByRole('dialog',{name:'Preparar y cargar'}).getByText('Pedido reservado.')).toHaveCount(0);
 });
