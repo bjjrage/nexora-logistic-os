@@ -49,6 +49,20 @@ test('recepción contabiliza códigos de modelo como cantidad y reintentar el co
   assert.equal((await f.store.one("SELECT quantity FROM inventory_balances WHERE client_id=? AND product_id=? AND status='AVAILABLE'", f.clientId, f.product.id))?.quantity, 7);
 });
 
+test('disponibilidad del pedido refleja stock real y excluye lo reservado', async (t) => {
+  const f = await fixture(t);
+  const order = await f.inventory.createOrder(f.actor, orderBody(randomUUID(), f.clientId, f.product.id, 'AVAIL-QA', 2));
+  assert.equal((await f.inventory.order(f.actor, order.id)).lines[0].available, 0);
+  await f.inventory.receive(f.actor, { ...f.command(), clientId: f.clientId, productId: f.product.id, locationId: f.locationId, quantity: 3 });
+  assert.equal((await f.inventory.order(f.actor, order.id)).lines[0].available, 3);
+  await f.inventory.reserveOrder(f.actor, order.id, f.command());
+  const current = await f.inventory.order(f.actor, order.id);
+  assert.equal((await f.store.one('SELECT status FROM inventory_orders WHERE id=?', order.id))?.status, 'RESERVED');
+  assert.equal(current.lines[0].available, 1);
+  assert.equal(current.lines[0].reserved, 2);
+  assert.equal(current.lines[0].loaded, 0);
+});
+
 test('órdenes de dos clientes no mezclan productos y una importación inválida revierte todo', async (t) => {
   const f = await fixture(t), foreign = await f.makeProduct(f.secondClientId, 'SKU-OTHER');
   await assert.rejects(() => f.inventory.createOrder(f.actor, orderBody(randomUUID(), f.clientId, foreign.id, 'ORDER-X', 1)), code('FORBIDDEN'));
@@ -173,6 +187,7 @@ test('parcels por unidad enlazan ruta, bloquean cierre manual, entregan parcial 
   const loaded = await f.inventory.loadOrder(f.actor, order.id, { ...f.command(), routeId: route.id, expectedVersion: readyVersion, codes: [f.product.barcode, f.product.barcode, reservation.parcels[2].code] });
   assert.equal(loaded.loaded, 3);
   assert.equal(loaded.status, 'LOADED');
+  assert.equal((await f.inventory.order(f.actor, order.id)).lines[0].loaded, 3);
   assert.equal((await f.store.one("SELECT SUM(quantity) AS n FROM inventory_balances WHERE product_id=? AND status='VEHICLE' AND custody_id=?", f.product.id, vehicleId))?.n, 3);
   const packages = await f.store.all('SELECT parcel_id FROM inventory_order_parcels WHERE order_id=? ORDER BY parcel_id', order.id);
   await assert.rejects(() => f.inventory.syncParcelTransition(f.actor, packages[0].parcel_id, 'IN_TRANSIT', 'DELIVERED', 'RECIPIENT', 'Receptor QA', randomUUID()), code('EVIDENCE_REQUIRED'));

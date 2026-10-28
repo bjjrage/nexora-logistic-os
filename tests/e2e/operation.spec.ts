@@ -190,7 +190,8 @@ test('browser: reservation feedback is visible in the modal for missing stock an
  const order=(await send('/api/orders',{clientId:client,externalId:'RES-'+suffix,orderDate:'2026-10-27',destination:'Destino QA',recipientName:'Receptor QA',lines:[{productId:product,quantity:1}]})).id;
  await send('/api/orders',{clientId:client,externalId:'OTRO-'+suffix,orderDate:'2026-10-27',destination:'Destino QA',recipientName:'Otra persona QA',lines:[{productId:product,quantity:1}]});
  await page.goto('/');await page.getByRole('button',{name:'Pedidos',exact:true}).click();
- await page.getByRole('article').filter({hasText:'RES-'+suffix}).getByRole('button',{name:'Preparar / cargar'}).click();
+ await expect(page.getByRole('article').filter({hasText:'RES-'+suffix})).toContainText('Falta stock');
+ await page.getByRole('article').filter({hasText:'RES-'+suffix}).getByRole('button',{name:'Reservar pedido'}).click();
  const dialog=page.getByRole('dialog',{name:'Preparar y cargar'});await dialog.getByRole('button',{name:'Reservar stock'}).click();
  await expect(dialog.getByRole('alert')).toContainText('Faltan unidades');await expect(dialog.getByRole('alert')).toContainText('Recibir mercadería');
  {const current=await(await page.request.get('/api/orders/'+order)).json();expect(current.status).toBe('DRAFT');}
@@ -199,6 +200,8 @@ test('browser: reservation feedback is visible in the modal for missing stock an
  await expect(dialog.getByRole('button',{name:'Reserva registrada'})).toBeDisabled();
  const current=await(await page.request.get('/api/orders/'+order)).json();expect(current.status).toBe('RESERVED');
  await dialog.getByRole('button',{name:'Cerrar'}).click();
- await page.getByRole('article').filter({hasText:'OTRO-'+suffix}).getByRole('button',{name:'Preparar / cargar'}).click();
+ await expect(page.getByRole('article').filter({hasText:'RES-'+suffix})).toContainText('Reservado · falta cargar');
+ await expect(page.getByRole('article').filter({hasText:'RES-'+suffix})).toContainText('Cargado: 0/1');
+ await page.getByRole('article').filter({hasText:'OTRO-'+suffix}).getByRole('button',{name:'Reservar pedido'}).click();
  await expect(page.getByRole('dialog',{name:'Preparar y cargar'}).getByText('Pedido reservado.')).toHaveCount(0);
 });

@@ -933,7 +933,10 @@ export class Inventory {
   }
   private async orderView(actor: InventoryActor, order: Row) {
     const [lines, parcels] = await Promise.all([
-      this.store.all(`SELECT l.*,p.sku,p.name,p.unit,p.tracking FROM inventory_order_lines l JOIN inventory_products p ON p.id=l.product_id AND p.org_id=l.org_id WHERE l.order_id=? AND l.org_id=? ORDER BY l.id`, order.id, actor.orgId),
+      this.store.all(`SELECT l.*,p.sku,p.name,p.unit,p.tracking,
+        CASE WHEN p.tracking='SERIAL' THEN (SELECT COUNT(*) FROM inventory_units u JOIN inventory_locations loc ON loc.id=u.location_id AND loc.org_id=u.org_id WHERE u.org_id=l.org_id AND u.client_id=p.client_id AND u.product_id=l.product_id AND u.status='AVAILABLE' AND loc.active=1 AND loc.kind<>'QUARANTINE')
+        ELSE (SELECT COALESCE(SUM(b.quantity),0) FROM inventory_balances b JOIN inventory_locations loc ON loc.id=b.location_id AND loc.org_id=b.org_id WHERE b.org_id=l.org_id AND b.client_id=p.client_id AND b.product_id=l.product_id AND b.status='AVAILABLE' AND b.order_id='' AND b.quantity>0 AND loc.active=1 AND loc.kind<>'QUARANTINE') END AS available_quantity
+        FROM inventory_order_lines l JOIN inventory_products p ON p.id=l.product_id AND p.org_id=l.org_id WHERE l.order_id=? AND l.org_id=? ORDER BY l.id`, order.id, actor.orgId),
       this.store.all(`SELECT p.id,p.code,op.product_id,op.serial_id,op.state,q.provider_result,q.evidence_state,qp.kind,e.sha256
         FROM inventory_order_parcels op JOIN parcels p ON p.id=op.parcel_id AND p.org_id=op.org_id
         LEFT JOIN quad_parcel_links q ON q.parcel_id=op.parcel_id AND q.org_id=op.org_id
@@ -959,7 +962,7 @@ export class Inventory {
         evidenceStatus: parcel.deliveryResult === 'DELIVERED' && parcel.evidenceState === 'COMPLETE' && distinctProofs ? 'COMPLETE' : 'PENDING' };
     });
     return { ...camel(order), parcelIds: orderParcels.map(parcel => parcel.id), parcels: orderParcels,
-      lines: lines.map(line => ({ id: line.id, productId: line.product_id, sku: line.sku, name: line.name, unit: line.unit, tracking: line.tracking, requested: line.quantity, reserved: line.reserved_quantity, loaded: line.loaded_quantity, delivered: line.delivered_quantity, returned: line.returned_quantity })) };
+      lines: lines.map(line => ({ id: line.id, productId: line.product_id, sku: line.sku, name: line.name, unit: line.unit, tracking: line.tracking, requested: line.quantity, reserved: line.reserved_quantity, loaded: line.loaded_quantity, delivered: line.delivered_quantity, returned: line.returned_quantity, available: Number(line.available_quantity) })) };
   }
   async exportCsv(actor: InventoryActor, clientFilter?: string) {
     this.readAccess(actor);
