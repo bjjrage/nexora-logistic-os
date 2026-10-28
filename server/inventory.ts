@@ -190,12 +190,13 @@ export class Inventory {
     else if (counts.reserved === 0) status = 'LOADED';
     await this.store.run('UPDATE inventory_orders SET status=?,updated_at=? WHERE id=? AND org_id=?', status, now(), orderId, actor.orgId);
   }
-  private async transferParcel(actor: InventoryActor, item: Row, to: 'VEHICLE' | 'DELIVERED' | 'QUARANTINE', custodyId: string, commandId: string) {
+  private async transferParcel(actor: InventoryActor, item: Row, to: 'VEHICLE' | 'DELIVERED' | 'QUARANTINE' | 'RESERVED', custodyId: string, commandId: string) {
     const product = await this.product(actor, item.product_id, item.client_id);
     const from = item.state;
     if (to === 'VEHICLE') ensure(from === 'RESERVED', 'INVALID_TRANSITION', 'La unidad no está reservada para la carga.');
     if (to === 'DELIVERED') ensure(from === 'VEHICLE', 'INVALID_TRANSITION', 'La unidad no está en custodia del vehículo.');
     if (to === 'QUARANTINE') ensure(from === 'VEHICLE', 'INVALID_TRANSITION', 'La unidad no está en custodia del vehículo.');
+    if (to === 'RESERVED') ensure(from === 'VEHICLE', 'INVALID_TRANSITION', 'La unidad no está cargada en el vehículo.');
     if (item.serial_id) {
       const unit = await this.store.one('SELECT * FROM inventory_units WHERE id=? AND org_id=? AND client_id=?', item.serial_id, actor.orgId, item.client_id);
       ensure(unit && unit.status === from && (from !== 'VEHICLE' || unit.custody_id === item.custody_id), 'INVENTORY_CONFLICT', 'Cambió el estado de la unidad serializada.');
@@ -208,6 +209,7 @@ export class Inventory {
       await this.changeBalance(actor, { clientId: item.client_id, productId: item.product_id, locationId: item.location_id, status: from, custodyId: from === 'VEHICLE' ? item.custody_id : '', orderId: item.order_id, delta: -1 });
       if (to === 'VEHICLE') await this.changeBalance(actor, { clientId: item.client_id, productId: item.product_id, locationId: item.location_id, status: 'VEHICLE', custodyId, orderId: item.order_id, delta: 1 });
       if (to === 'QUARANTINE') await this.changeBalance(actor, { clientId: item.client_id, productId: item.product_id, locationId: custodyId, status: 'QUARANTINE', orderId: item.order_id, delta: 1 });
+      if (to === 'RESERVED') await this.changeBalance(actor, { clientId: item.client_id, productId: item.product_id, locationId: item.location_id, status: 'RESERVED', orderId: item.order_id, delta: 1 });
     }
     const targetLocation = to === 'QUARANTINE' ? custodyId : item.location_id;
     const updated = await this.store.run('UPDATE inventory_order_parcels SET state=?,location_id=?,custody_id=?,updated_at=? WHERE id=? AND org_id=? AND state=?', to, targetLocation, to === 'VEHICLE' ? custodyId : '', now(), item.id, actor.orgId, from);
@@ -215,12 +217,16 @@ export class Inventory {
     if (to === 'DELIVERED') await this.store.run('UPDATE inventory_order_lines SET delivered_quantity=delivered_quantity+1 WHERE id=? AND org_id=?', item.line_id, actor.orgId);
     if (to === 'QUARANTINE') await this.store.run('UPDATE inventory_order_lines SET returned_quantity=returned_quantity+1 WHERE id=? AND org_id=?', item.line_id, actor.orgId);
     if (to === 'VEHICLE') await this.store.run('UPDATE inventory_order_lines SET loaded_quantity=loaded_quantity+1 WHERE id=? AND org_id=?', item.line_id, actor.orgId);
+    if (to === 'RESERVED') {
+      const changed = await this.store.run('UPDATE inventory_order_lines SET loaded_quantity=loaded_quantity-1 WHERE id=? AND org_id=? AND loaded_quantity>0',item.line_id,actor.orgId);
+      ensure(Number(changed.changes)===1,'INVENTORY_CONFLICT','La cantidad cargada cambió.');
+    }
     const fromStatus = from === 'RESERVED' ? 'RESERVED' : 'VEHICLE';
     const toStatus = to;
     await this.appendMovement(actor, { clientId: item.client_id, productId: product.id, quantity: 1, serialId: item.serial_id,
       fromLocationId: item.location_id, toLocationId: targetLocation, fromStatus, toStatus,
       fromCustodyId: from === 'VEHICLE' ? item.custody_id ?? null : null, toCustodyId: to === 'VEHICLE' ? custodyId : null,
-      orderId: item.order_id, parcelId: item.parcel_id, action: to === 'VEHICLE' ? 'LOAD' : to === 'DELIVERED' ? 'DELIVER' : 'RETURN',
+      orderId: item.order_id, parcelId: item.parcel_id, action: to === 'VEHICLE' ? 'LOAD' : to === 'DELIVERED' ? 'DELIVER' : to === 'RESERVED' ? 'MOVE' : 'RETURN',
       reference: item.order_id, commandId });
     await this.recomputeOrder(actor, item.order_id);
   }
@@ -781,7 +787,7 @@ export class Inventory {
 
   async syncParcelTransition(actor: InventoryActor, parcelId: string, fromState: string, toState: string, custodyType: string, custodyId: string, commandId: string) {
     ensure(actor.role !== 'CUSTOMER', 'FORBIDDEN', 'El cliente no puede modificar la custodia.', 403);
-    const transition = toState === 'LOADED' || toState === 'IN_TRANSIT' ? 'VEHICLE' : toState === 'DELIVERED' ? 'DELIVERED' : toState === 'RETURNED_TO_DEPOT' ? 'QUARANTINE' : null;
+    const transition = toState === 'LOADED' || toState === 'IN_TRANSIT' ? 'VEHICLE' : toState === 'DELIVERED' ? 'DELIVERED' : toState === 'RETURNED_TO_DEPOT' ? 'QUARANTINE' : fromState === 'LOADED' && toState === 'RECEIVED' ? 'RESERVED' : null;
     if (!transition || toState === 'IN_TRANSIT') {
       if (toState === 'IN_TRANSIT') {
         const found = await this.store.one('SELECT order_id FROM inventory_order_parcels WHERE org_id=? AND parcel_id=?', actor.orgId, parcelId);
@@ -813,6 +819,7 @@ export class Inventory {
       if (wanted === 'VEHICLE') ensure(custodyType === 'VEHICLE', 'INVALID_TRANSITION', 'La carga debe quedar bajo custodia del vehículo.');
       if (wanted === 'DELIVERED') ensure(custodyType === 'RECIPIENT', 'INVALID_TRANSITION', 'La entrega debe quedar bajo custodia del destinatario.');
       if (wanted === 'QUARANTINE') ensure(custodyType === 'DEPOT' && location.id, 'INVALID_TRANSITION', 'El retorno debe recibirse en depósito.');
+      if (wanted === 'RESERVED') ensure(custodyType === 'DEPOT' && custodyId === item.location_id, 'INVALID_TRANSITION', 'La descarga debe volver a la ubicación de la reserva.');
       await this.transferParcel(actor, item, wanted, wanted === 'VEHICLE' ? custodyId : location.id, commandId);
       return { synced: true, orderId: item.order_id, parcelId };
     });

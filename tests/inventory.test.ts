@@ -92,7 +92,7 @@ test('desreservar libera stock, retira solo el pedido de la ruta y admite una nu
   assert.equal((await f.inventory.order(f.actor,first.id)).parcels.length,2);
 });
 
-test('desreservar rechaza unidades ya cargadas sin modificar stock ni ruta', async t=>{
+test('descargar y quitar de ruta revierte la carga y permite reasignar, recargar y desreservar', async t=>{
   const f=await fixture(t);
   await f.inventory.receive(f.actor,{...f.command(),clientId:f.clientId,productId:f.product.id,locationId:f.locationId,quantity:1});
   const order=await f.inventory.createOrder(f.actor,orderBody(randomUUID(),f.clientId,f.product.id,'UNRES-LOADED',1));
@@ -108,13 +108,40 @@ test('desreservar rechaza unidades ya cargadas sin modificar stock ni ruta', asy
   assert.equal((await f.store.one('SELECT state FROM parcels WHERE id=?',reserved.parcels[0].id))!.state,'LOADED');
   assert.equal((await f.store.one('SELECT count(*) AS n FROM route_assignments WHERE route_id=? AND active=1',route.id))!.n,1);
   assert.equal((await reconcileInventory(f.store,f.actor)).ok,true);
+  const unloadCommand={...f.command(),expectedVersion:(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version,parcelId:reserved.parcels[0].id};
+  const unloaded=await f.domain.unload(f.actor,route.id,unloadCommand);
+  assert.deepEqual(await f.domain.unload(f.actor,route.id,unloadCommand),unloaded);
+  const afterUnload=await f.inventory.order(f.actor,order.id);
+  assert.equal(afterUnload.lines[0].loaded,0);assert.equal(afterUnload.parcels[0].state,'RESERVED');
+  assert.equal((await reconcileInventory(f.store,f.actor)).ok,true);
+  await f.domain.unassign(f.actor,route.id,{...f.command(),expectedVersion:unloaded.version,parcelId:reserved.parcels[0].id});
+  assert.equal((await f.store.one('SELECT state FROM routes WHERE id=?',route.id))!.state,'DRAFT');
+  assert.equal((await f.store.one('SELECT count(*) AS n FROM stops WHERE route_id=?',route.id))!.n,0);
+  version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
+  await f.domain.assign(f.actor,route.id,{...f.command(),expectedVersion:version,parcelIds:[reserved.parcels[0].id],pickup:false});
+  version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
+  await f.domain.ready(f.actor,route.id,{...f.command(),expectedVersion:version});
+  version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
+  await f.domain.load(f.actor,route.id,{...f.command(),expectedVersion:version,code:reserved.parcels[0].code});
+  version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
+  await f.domain.unload(f.actor,route.id,{...f.command(),expectedVersion:version,parcelId:reserved.parcels[0].id});
+  await f.inventory.unreserveOrder(f.actor,order.id,f.command());
+  assert.equal((await reconcileInventory(f.store,f.actor)).ok,true);
 });
 
 test('desreservar conserva la serie y permite editar o reservar de nuevo', async t=>{
   const f=await fixture(t),product=await f.makeProduct(f.clientId,'SERIAL-UNRES','SERIAL');
   await f.inventory.receive(f.actor,{...f.command(),clientId:f.clientId,productId:product.id,locationId:f.locationId,quantity:1,serials:[{serial:'SERIE-001'}]});
   const order=await f.inventory.createOrder(f.actor,orderBody(randomUUID(),f.clientId,product.id,'UNRES-SERIAL',1));
-  await f.inventory.reserveOrder(f.actor,order.id,f.command());
+  const reserved=await f.inventory.reserveOrder(f.actor,order.id,f.command());
+  const driverId=(await f.domain.createDriver(f.actor,{...f.command(),name:'Chofer',username:'serial-unload',password:'Password-QA-Driver-2026!'})).id;
+  const vehicleId=(await f.domain.createVehicle(f.actor,{...f.command(),plate:'SER-UNLOAD',capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0})).id;
+  const route=await f.domain.createRoute(f.actor,{...f.command(),name:'Ruta',driverId,vehicleId,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()});
+  await f.domain.assign(f.actor,route.id,{...f.command(),expectedVersion:route.version,parcelIds:[reserved.parcels[0].id],pickup:false});
+  let version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
+  await f.domain.ready(f.actor,route.id,{...f.command(),expectedVersion:version});version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
+  await f.domain.load(f.actor,route.id,{...f.command(),expectedVersion:version,code:reserved.parcels[0].code});version=(await f.store.one('SELECT version FROM routes WHERE id=?',route.id))!.version;
+  await f.domain.unload(f.actor,route.id,{...f.command(),expectedVersion:version,parcelId:reserved.parcels[0].id});
   await f.inventory.unreserveOrder(f.actor,order.id,f.command());
   const unit=await f.store.one('SELECT status,serial,order_id,parcel_id FROM inventory_units WHERE product_id=?',product.id);
   assert.equal(unit!.status,'AVAILABLE');assert.equal(unit!.serial,'SERIE-001');assert.equal(unit!.order_id,'');assert.equal(unit!.parcel_id,null);

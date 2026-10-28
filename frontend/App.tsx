@@ -191,6 +191,8 @@ function auditLabel(action:string):string {
   const operation=action.replace(/\.[a-f0-9-]{36}\./i,'.');
   const controls:Record<string,string>={'drivers.documents.create':'Documento de chofer registrado','driver-documents.renew':'Documento de chofer renovado','returns.depotEvidence':'Evidencia de recepción subsanada'};
   if (controls[operation]) return controls[operation];
+  if(operation==='routes.unload')return 'Bulto bajado al depósito';
+  if(operation==='routes.unassign')return 'Bulto quitado de la ruta';
   const labels:Record<string,string>={'clients.create':'Cliente registrado','drivers.create':'Chofer registrado','users.create':'Usuario habilitado','vehicles.create':'Vehículo registrado','shipments.create':'Envío registrado','receipts.create':'Recepción registrada','routes.create':'Ruta creada','routes.assign':'Bultos asignados','routes.order':'Paradas ordenadas','routes.ready':'Plan confirmado','routes.load':'Carga verificada','routes.dispatch':'Ruta despachada','routes.close':'Ruta cerrada','stops.pickup':'Retiro registrado','stops.attempt':'Intento registrado','incidents.return':'Devolución autorizada','returns.receive':'Retorno recibido en depósito','returns.sender':'Entrega al remitente confirmada','vehicles.inspect':'Inspección registrada','vehicles.document':'Documento registrado','defects.resolve':'Defecto resuelto','vehicles.maintenance':'Mantenimiento programado','maintenance.complete':'Mantenimiento completado','evidence.store':'Evidencia guardada'};
   return labels[operation]??'Movimiento registrado';
 }
@@ -1042,6 +1044,15 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
                 <div className="row"><strong>{String(stop.sequence).padStart(2, "0")} · {shipment?.reference ?? stop.shipmentId}</strong><StateBadge value={stop.state} /></div>
                 <p>{stop.kind==='PICKUP' ? 'Retiro en origen' : shipment?.recipientName ?? 'Destinatario no informado'} · {stop.kind==='PICKUP' ? shipment?.originText ?? 'Origen no informado' : shipment?.destinationText ?? 'Destino no informado'}</p>
                 {products.size > 0 && <p>{[...products.values()].map(item => `${item.name} × ${item.count}`).join(' · ')}</p>}
+                {['DRAFT','READY'].includes(selectedRoute.state) && <div className="stack">{stopParcels.map((parcel,index) => {
+                  const loaded=parcel.state==='LOADED' && parcel.custodyType==='VEHICLE';
+                  const removable=['EXPECTED','RECEIVED','RETURNED_TO_DEPOT'].includes(parcel.state) && ['SENDER','DEPOT'].includes(parcel.custodyType);
+                  if (!(loaded && canLoad) && !(removable && canPlan)) return null;
+                  return <div className="row" key={parcel.id}><span>{parcel.product?.name || 'Bulto'} · unidad {index+1} · {loaded?'En el vehículo':'Sin cargar'}</span><button type="button" className="button button-secondary" disabled={busy} onClick={() => {
+                    const question=loaded?'¿Confirmás que bajaste este bulto del vehículo al depósito? Seguirá reservado para el pedido.':'¿Quitar este bulto de la ruta? Seguirá reservado para el pedido y podrás asignarlo a otra ruta.';
+                    if(window.confirm(question))void action('/api/routes/'+encodeURIComponent(selectedRoute.id)+(loaded?'/unload':'/unassign'),{commandId:commandId(),expectedVersion:selectedRoute.version,parcelId:parcel.id},loaded?'Bulto bajado al depósito. Sigue reservado para el pedido.':'Bulto quitado de la ruta. Sigue reservado para el pedido.');
+                  }}>{loaded?'Bajar al depósito':'Quitar de la ruta'}</button></div>;
+                })}</div>}
                 <details className="parcel-code-details"><summary>{stopParcels.length} {stopParcels.length === 1 ? 'bulto' : 'bultos'} · ver códigos</summary><div className="parcel-tags">{stopParcels.map((parcel) => <span key={parcel.id}>{parcel.code} · {displayState(parcel.state)}</span>)}</div></details>
                 {!isClosed(stop.state) && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && stop.kind?.toUpperCase() === "PICKUP" && <PickupAction stop={stop} route={selectedRoute} parcels={routeParcels.filter((parcel) => parcel.shipmentId === stop.shipmentId)} action={action} busy={busy} />}
                 {!isClosed(stop.state) && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && stop.kind?.toUpperCase() !== "PICKUP" && <button type="button" className="text-button" onClick={() => { setStopId(stop.id); setDeliveredIds([]); setFailedIds([]); setEvidenceIds([]); setEvidenceParcelId(""); setReasonCode(""); setNextAction(""); }}>Registrar intento en esta parada</button>}

@@ -152,6 +152,7 @@ export class Logistics {
                 ensure(!await this.store.one("SELECT id FROM inventory_movements WHERE org_id=? AND parcel_id=? AND action='RELEASE' AND from_status='RESERVED'",actor.orgId,p.id), 'INVALID_TRANSITION', 'El bulto pertenece a una reserva liberada.');
                 ensure(!await this.store.one("SELECT id FROM returns WHERE parcel_id=? AND state<>'SENT_TO_SENDER'", p.id), 'INVALID_TRANSITION', 'El bulto tiene una devolución pendiente al remitente.');
                 ensure(b.pickup ? p.state === 'EXPECTED' && p.custody_type === 'SENDER' : ['RECEIVED', 'RETURNED_TO_DEPOT'].includes(p.state) && p.custody_type === 'DEPOT', 'INVALID_TRANSITION', 'El bulto no está disponible en la custodia requerida.');
+                await this.store.run('DELETE FROM route_assignments WHERE org_id=? AND route_id=? AND parcel_id=? AND active=0',actor.orgId,id,p.id);
                 await this.store.run('INSERT INTO route_assignments VALUES(?,?,?,?,?,1)', randomUUID(), actor.orgId, id, p.id, b.pickup ? 1 : 0);
                 for (const kind of (b.pickup ? ['PICKUP', 'DELIVERY'] : ['DELIVERY'])) {
                     if (!await this.store.one('SELECT id FROM stops WHERE route_id=? AND shipment_id=? AND kind=?', id, p.shipment_id, kind)) {
@@ -247,6 +248,37 @@ export class Logistics {
             await this.move(p, actor, 'LOADED', 'VEHICLE', r.vehicle_id, 'LOADED', b.commandId);
             await this.bump(id);
             return { id, version: r.version + 1 };
+        });
+    }
+    async unload(actor: Actor, id: string, b: Row) {
+        return this.command(actor,`routes.${id}.unload`,b,DEPOT,async()=>{
+            const route=await this.route(id,actor,b.expectedVersion);
+            ensure(['DRAFT','READY'].includes(route.state),'INVALID_TRANSITION','La ruta ya salió. Registrá el retorno del bulto al depósito.');
+            const parcel=await this.parcel(b.parcelId,actor);
+            ensure(await this.store.one('SELECT id FROM route_assignments WHERE org_id=? AND route_id=? AND parcel_id=? AND active=1',actor.orgId,id,parcel.id),'NOT_FOUND','El bulto no está asignado a esta ruta.',404);
+            ensure(parcel.state==='LOADED' && parcel.custody_type==='VEHICLE' && parcel.custody_id===route.vehicle_id,'INVALID_TRANSITION','El bulto no está cargado en el vehículo de esta ruta.');
+            const item=await this.store.one('SELECT location_id,state,custody_id FROM inventory_order_parcels WHERE org_id=? AND parcel_id=?',actor.orgId,parcel.id);
+            if(item)ensure(item.state==='VEHICLE' && item.custody_id===route.vehicle_id,'INVENTORY_CONFLICT','La custodia del inventario no coincide con el vehículo.');
+            const loadEvent=await this.store.one("SELECT from_id FROM custody_events WHERE org_id=? AND parcel_id=? AND from_type='DEPOT' AND to_type='VEHICLE' AND action='LOADED' ORDER BY rowid DESC LIMIT 1",actor.orgId,parcel.id);
+            const location=item?.location_id??loadEvent?.from_id;
+            ensure(location,'INVALID_TRANSITION','No se encontró el depósito de origen de este bulto.');
+            await this.move(parcel,actor,'RECEIVED','DEPOT',location,'UNLOADED',b.commandId);
+            await this.bump(id);
+            return {id,parcelId:parcel.id,state:'RECEIVED',version:route.version+1};
+        });
+    }
+    async unassign(actor: Actor, id: string, b: Row) {
+        return this.command(actor,`routes.${id}.unassign`,b,OPS,async()=>{
+            const route=await this.route(id,actor,b.expectedVersion),parcel=await this.parcel(b.parcelId,actor);
+            ensure(['DRAFT','READY'].includes(route.state),'INVALID_TRANSITION','No se quitan bultos de una ruta que ya salió.');
+            ensure(['EXPECTED','RECEIVED','RETURNED_TO_DEPOT'].includes(parcel.state) && ['SENDER','DEPOT'].includes(parcel.custody_type),'INVALID_TRANSITION','Primero bajá el bulto del vehículo al depósito.');
+            ensure(!await this.store.one('SELECT parcel_id FROM quad_parcel_links WHERE org_id=? AND parcel_id=?',actor.orgId,parcel.id),'INVALID_TRANSITION','El bulto tiene una vinculación QuadMinds. Revisá esa operación antes de quitarlo.');
+            const changed=await this.store.run('UPDATE route_assignments SET active=0 WHERE org_id=? AND route_id=? AND parcel_id=? AND active=1',actor.orgId,id,parcel.id);
+            ensure(Number(changed.changes)===1,'NOT_FOUND','El bulto no está asignado a esta ruta.',404);
+            await this.store.run('DELETE FROM stops WHERE org_id=? AND route_id=? AND shipment_id=? AND NOT EXISTS(SELECT 1 FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id WHERE a.org_id=stops.org_id AND a.route_id=stops.route_id AND a.active=1 AND p.shipment_id=stops.shipment_id)',actor.orgId,id,parcel.shipment_id);
+            const remaining=await this.store.one('SELECT id FROM route_assignments WHERE org_id=? AND route_id=? AND active=1 LIMIT 1',actor.orgId,id);
+            await this.store.run("UPDATE routes SET state=CASE WHEN state='READY' AND ?=0 THEN 'DRAFT' ELSE state END,version=version+1 WHERE id=? AND org_id=?",remaining?1:0,id,actor.orgId);
+            return {id,parcelId:parcel.id,shipmentId:parcel.shipment_id,version:route.version+1};
         });
     }
     async fleetGuard(r: Row, actor: Actor) {

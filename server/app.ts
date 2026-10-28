@@ -138,6 +138,8 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     post('/api/routes', schemas.route, async (a, b) => await domain.createRoute(a, b));
     const routeId = (req: Request) => String(req.params.id);
     post('/api/routes/:id/assignments', schemas.assign, async (a, b, r) => await domain.assign(a, routeId(r), b));
+    post('/api/routes/:id/unassign', schemas.routeParcel, async (a,b,r)=>await domain.unassign(a,routeId(r),b));
+    post('/api/routes/:id/unload', schemas.routeParcel, async (a,b,r)=>await domain.unload(a,routeId(r),b));
     post('/api/routes/:id/stops/order', schemas.order, async (a, b, r) => await domain.reorder(a, routeId(r), b));
     post('/api/routes/:id/ready', schemas.version, async (a, b, r) => await domain.ready(a, routeId(r), b));
     post('/api/routes/:id/load-scans', schemas.load, async (a, b, r) => await domain.load(a, routeId(r), b));

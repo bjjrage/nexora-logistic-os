@@ -21,6 +21,7 @@ export const schemas={
   order:z.object({...version,stopIds:z.array(id).min(1).max(400)}),
   version:z.object(version),
   load:z.object({...version,code:text}),
+  routeParcel:z.object({...version,parcelId:id}),
   pickup:z.object({...version,codes:z.array(text).min(1).max(200)}),
   attempt:z.object({...version,deliveredParcelIds:z.array(id).max(200),failedParcelIds:z.array(id).max(200),receiverName:z.string().trim().max(500).default(''),evidenceIds:z.array(id).max(200).default([]),reasonCode:z.enum(['','ABSENT','REFUSED','ADDRESS_ISSUE','DAMAGED','OTHER']).default(''),nextAction:z.string().trim().max(1000).default('')}),
   command:z.object(command),
