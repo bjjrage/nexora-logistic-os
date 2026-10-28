@@ -1031,10 +1031,18 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
             <h3>Paradas</h3>
             {stops.length === 0 ? <EmptyState>Aún no hay paradas asignadas.</EmptyState> : stops.map((stop) => {
               const shipment = data.shipments.find((item) => item.id === stop.shipmentId);
+              const stopParcels = routeParcels.filter(parcel => parcel.shipmentId === stop.shipmentId);
+              const products = new Map<string, { name: string; count: number }>();
+              for (const parcel of stopParcels) {
+                const key = parcel.product?.sku ?? '';
+                const item = products.get(key) ?? { name: parcel.product?.name || 'Artículo no especificado', count: 0 };
+                item.count++; products.set(key, item);
+              }
               return <div className="stop-card" key={stop.id}>
                 <div className="row"><strong>{String(stop.sequence).padStart(2, "0")} · {shipment?.reference ?? stop.shipmentId}</strong><StateBadge value={stop.state} /></div>
                 <p>{stop.kind==='PICKUP' ? 'Retiro en origen' : shipment?.recipientName ?? 'Destinatario no informado'} · {stop.kind==='PICKUP' ? shipment?.originText ?? 'Origen no informado' : shipment?.destinationText ?? 'Destino no informado'}</p>
-                <details className="parcel-code-details"><summary>{routeParcels.filter(parcel=>parcel.shipmentId===stop.shipmentId).length} bultos · ver códigos</summary><div className="parcel-tags">{routeParcels.filter((parcel) => parcel.shipmentId === stop.shipmentId).map((parcel) => <span key={parcel.id}>{parcel.code} · {displayState(parcel.state)}</span>)}</div></details>
+                {products.size > 0 && <p>{[...products.values()].map(item => `${item.name} × ${item.count}`).join(' · ')}</p>}
+                <details className="parcel-code-details"><summary>{stopParcels.length} {stopParcels.length === 1 ? 'bulto' : 'bultos'} · ver códigos</summary><div className="parcel-tags">{stopParcels.map((parcel) => <span key={parcel.id}>{parcel.code} · {displayState(parcel.state)}</span>)}</div></details>
                 {!isClosed(stop.state) && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && stop.kind?.toUpperCase() === "PICKUP" && <PickupAction stop={stop} route={selectedRoute} parcels={routeParcels.filter((parcel) => parcel.shipmentId === stop.shipmentId)} action={action} busy={busy} />}
                 {!isClosed(stop.state) && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && stop.kind?.toUpperCase() !== "PICKUP" && <button type="button" className="text-button" onClick={() => { setStopId(stop.id); setDeliveredIds([]); setFailedIds([]); setEvidenceIds([]); setEvidenceParcelId(""); setReasonCode(""); setNextAction(""); }}>Registrar intento en esta parada</button>}
                 {canOperateRoad && selectedRoute.state === 'IN_PROGRESS' && stop.kind === 'DELIVERY' && ['FAILED','PARTIAL'].includes(stop.state) && routeParcels.some(parcel=>parcel.shipmentId===stop.shipmentId&&parcel.state==='RETURN_PENDING'&&!data.returns.some(item=>item.parcelId===parcel.id&&item.state!=='SENT_TO_SENDER')) && <button type="button" className="button button-secondary" disabled={busy} onClick={()=>void action('/api/stops/'+encodeURIComponent(stop.id)+'/retry',{commandId:commandId(),expectedVersion:selectedRoute.version},'Nuevo intento habilitado. Registrá el resultado de la nueva visita.')}>Habilitar nuevo intento</button>}

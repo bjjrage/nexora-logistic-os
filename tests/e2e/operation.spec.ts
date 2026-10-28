@@ -113,6 +113,10 @@ test('browser: isolated API fixtures → dispatch → photo evidence → Nexora 
  await parcelChoice.getByRole('checkbox').check();
  await page.getByRole('button',{name:'Asignar selección'}).click();
  await expect(page.getByText('Bultos asignados a la ruta.',{exact:true})).toBeVisible();
+ await page.getByRole('button',{name:/Paradas \(1\)/}).click();
+ const stopCard=page.locator('.stop-card').filter({hasText:'ORDER-'+suffix});
+ await expect(stopCard).toContainText('Producto QA × 1');
+ await expect(stopCard).toContainText('Receptor QA');
  await post(`/api/routes/${route}/ready`,{expectedVersion:await version()});
  await post(`/api/orders/${order}/load`,{routeId:route,expectedVersion:await version(),codes:[parcel.code]});
  await post(`/api/vehicles/${vehicle}/inspections`,{odometer:0,fuelPercent:100,items:[{label:'Control QA',severity:'OK',note:''}]});

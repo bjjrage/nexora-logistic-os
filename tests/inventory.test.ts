@@ -184,6 +184,9 @@ test('parcels por unidad enlazan ruta, bloquean cierre manual, entregan parcial 
   const vehicleId = (await f.domain.createVehicle(f.actor, { ...f.command(), plate: `QA-${randomUUID().slice(0, 6)}`, capacityWeightGrams: 5000, capacityVolumeCm3: 5000, odometer: 0 })).id;
   const route = await f.domain.createRoute(f.actor, { ...f.command(), name: 'Ruta de inventario QA', driverId, vehicleId, startAt: new Date(Date.now() - 60_000).toISOString(), endAt: new Date(Date.now() + 3_600_000).toISOString() });
   await f.domain.assign(f.actor, route.id, { ...f.command(), expectedVersion: route.version, parcelIds: reservation.parcels.map((parcel: any) => parcel.id), pickup: false });
+  const driverUser = await f.store.one('SELECT id FROM users WHERE org_id=? AND driver_id=?', f.actor.orgId, driverId);
+  const driverBootstrap = await f.domain.bootstrap({ ...f.actor, id: driverUser!.id, role: 'DRIVER', driverId });
+  assert.deepEqual(driverBootstrap.parcels.find((parcel: any) => parcel.id === reservation.parcels[0].id)?.product, { name: f.product.name, sku: f.product.sku });
   const version = (await f.store.one('SELECT version FROM routes WHERE id=?', route.id))!.version;
   await f.domain.ready(f.actor, route.id, { ...f.command(), expectedVersion: version });
   const readyVersion = (await f.store.one('SELECT version FROM routes WHERE id=?', route.id))!.version;

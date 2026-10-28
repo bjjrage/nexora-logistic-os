@@ -532,7 +532,7 @@ export class Logistics {
         }
         const profileMap=OPS.includes(actor.role)?await clientProfileSummaries(s,actor.orgId):new Map<string,Row>();
         const routeIds=new Set(routes.map(r=>r.id)),parcelIds=new Set(parcels.map(p=>p.id)),vehicleIds=new Set(vehicles.map(v=>v.id));
-        const productLabels = OPS.includes(actor.role) && parcelIds.size ? await s.all(`SELECT op.parcel_id,pr.name,pr.sku FROM inventory_order_parcels op JOIN inventory_products pr ON pr.id=op.product_id AND pr.org_id=op.org_id AND pr.client_id=op.client_id WHERE op.org_id=? AND op.parcel_id IN (${[...parcelIds].map(()=>'?').join(',')})`,actor.orgId,...parcelIds) : [];
+        const productLabels = (OPS.includes(actor.role) || driver) && parcelIds.size ? await s.all(`SELECT op.parcel_id,pr.name,pr.sku FROM inventory_order_parcels op JOIN inventory_products pr ON pr.id=op.product_id AND pr.org_id=op.org_id AND pr.client_id=op.client_id WHERE op.org_id=? AND op.parcel_id IN (${[...parcelIds].map(()=>'?').join(',')})`,actor.orgId,...parcelIds) : [];
         const parcelProducts = new Map(productLabels.map(row=>[row.parcel_id,{name:row.name,sku:row.sku}]));
         const stops=all('stops').filter(x=>routeIds.has(x.route_id)),stopIds=new Set(stops.map(s=>s.id));
         return {
