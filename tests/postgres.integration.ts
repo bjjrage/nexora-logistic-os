@@ -56,8 +56,9 @@ test('PostgreSQL: desreserva de ruta confirmada revierte stock y permite reserva
   const route=await domain.createRoute(actor,{...cmd(),name:'Ruta',driverId:driver,vehicleId:vehicle,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()});
   await domain.assign(actor,route.id,{...cmd(),expectedVersion:route.version,parcelIds:reserved.parcels.map((p:any)=>p.id),pickup:false});
   await domain.ready(actor,route.id,{...cmd(),expectedVersion:(await db.one('SELECT version FROM routes WHERE id=?',route.id))!.version});
-  await domain.load(actor,route.id,{...cmd(),expectedVersion:(await db.one('SELECT version FROM routes WHERE id=?',route.id))!.version,code:reserved.parcels[0].code});
-  await domain.unload(actor,route.id,{...cmd(),expectedVersion:(await db.one('SELECT version FROM routes WHERE id=?',route.id))!.version,parcelId:reserved.parcels[0].id});
+  await domain.loadSelected(actor,route.id,{...cmd(),expectedVersion:(await db.one('SELECT version FROM routes WHERE id=?',route.id))!.version,parcelIds:reserved.parcels.map((p:any)=>p.id)});
+  assert.equal((await db.one('SELECT status FROM inventory_orders WHERE id=?',order))!.status,'LOADED');
+  for(const parcel of reserved.parcels)await domain.unload(actor,route.id,{...cmd(),expectedVersion:(await db.one('SELECT version FROM routes WHERE id=?',route.id))!.version,parcelId:parcel.id});
   assert.equal((await reconcileInventory(db,actor)).ok,true);
   await inv.unreserveOrder(actor,order,cmd());
   assert.equal((await db.one('SELECT state FROM routes WHERE id=?',route.id))!.state,'DRAFT');

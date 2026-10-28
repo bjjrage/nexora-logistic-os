@@ -279,6 +279,22 @@ export class Logistics {
             return { id, version: r.version + 1 };
         });
     }
+    async loadSelected(actor: Actor, id: string, input: Row) {
+        const b=schemas.loadSelected.parse(input);
+        return this.command(actor,`routes.${id}.load-selected`,b,DEPOT,async()=>{
+            const route=await this.route(id,actor,b.expectedVersion);
+            ensure(route.state==='READY','INVALID_TRANSITION','Confirmá el plan de la ruta antes de cargar.');
+            const selected=await this.store.all(`SELECT p.* FROM parcels p JOIN route_assignments a ON a.parcel_id=p.id AND a.org_id=p.org_id WHERE a.org_id=? AND a.route_id=? AND a.active=1 AND a.pickup=0 AND p.id IN (${b.parcelIds.map(()=>'?').join(',')})`,actor.orgId,id,...b.parcelIds);
+            ensure(selected.length===b.parcelIds.length,'NOT_FOUND','Algún bulto no pertenece a la carga de esta ruta.',404);
+            const pending=selected.filter(p=>!(p.state==='LOADED'&&p.custody_type==='VEHICLE'&&p.custody_id===route.vehicle_id));
+            ensure(pending.every(p=>['RECEIVED','RETURNED_TO_DEPOT'].includes(p.state)&&p.custody_type==='DEPOT'),'INVALID_TRANSITION','Algún bulto seleccionado no está en depósito.');
+            if(!pending.length)return {id,version:route.version,alreadyLoaded:true,loaded:0};
+            await this.vehicleCapacity(actor,route.vehicle_id,pending);
+            for(const parcel of pending)await this.move(parcel,actor,'LOADED','VEHICLE',route.vehicle_id,'LOADED',b.commandId);
+            await this.bump(id);
+            return {id,version:route.version+1,loaded:pending.length};
+        });
+    }
     async unload(actor: Actor, id: string, b: Row) {
         return this.command(actor,`routes.${id}.unload`,b,DEPOT,async()=>{
             const route=await this.route(id,actor,b.expectedVersion);
@@ -606,8 +622,8 @@ export class Logistics {
         }
         const profileMap=OPS.includes(actor.role)?await clientProfileSummaries(s,actor.orgId):new Map<string,Row>();
         const routeIds=new Set(routes.map(r=>r.id)),parcelIds=new Set(parcels.map(p=>p.id)),vehicleIds=new Set(vehicles.map(v=>v.id));
-        const productLabels = (OPS.includes(actor.role) || driver) && parcelIds.size ? await s.all(`SELECT op.parcel_id,pr.name,pr.sku FROM inventory_order_parcels op JOIN inventory_products pr ON pr.id=op.product_id AND pr.org_id=op.org_id AND pr.client_id=op.client_id WHERE op.org_id=? AND op.parcel_id IN (${[...parcelIds].map(()=>'?').join(',')})`,actor.orgId,...parcelIds) : [];
-        const parcelProducts = new Map(productLabels.map(row=>[row.parcel_id,{name:row.name,sku:row.sku}]));
+        const productLabels = (DEPOT.includes(actor.role) || driver) && parcelIds.size ? await s.all(`SELECT op.parcel_id,pr.name,pr.sku,u.serial FROM inventory_order_parcels op JOIN inventory_products pr ON pr.id=op.product_id AND pr.org_id=op.org_id AND pr.client_id=op.client_id LEFT JOIN inventory_units u ON u.id=op.serial_id AND u.org_id=op.org_id AND u.client_id=op.client_id WHERE op.org_id=? AND op.parcel_id IN (${[...parcelIds].map(()=>'?').join(',')})`,actor.orgId,...parcelIds) : [];
+        const parcelProducts = new Map(productLabels.map(row=>[row.parcel_id,{name:row.name,sku:row.sku,...(row.serial?{serial:row.serial}:{})}]));
         const stops=all('stops').filter(x=>routeIds.has(x.route_id)),stopIds=new Set(stops.map(s=>s.id));
         return {
             clientProfilesEnabled:true,
