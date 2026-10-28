@@ -238,7 +238,7 @@ test('browser: reservation feedback is visible in the modal for missing stock an
  await page.reload();await page.getByRole('button',{name:'Pedidos',exact:true}).click();
  await page.getByRole('article').filter({hasText:'RES-'+suffix}).getByRole('button',{name:'Preparar / cargar'}).click();
  await expect(dialog.getByRole('button',{name:'Confirmar carga'})).toBeDisabled();
- const scan=dialog.getByPlaceholder('Escaneá con USB o escribí el código');await scan.fill(current.parcels[0].code);await scan.press('Enter');
+ await dialog.getByRole('checkbox',{name:/Producto sin stock/}).check();
  await expect(dialog.getByRole('button',{name:'Confirmar carga'})).toBeEnabled();
  await dialog.getByRole('button',{name:'Confirmar carga'}).click();
  await expect.poll(async()=> (await(await page.request.get('/api/orders/'+order)).json()).status).toBe('LOADED');

@@ -318,6 +318,7 @@ export default function InventoryPanel({ section, role, clients, initialClientId
   const [scanCounts, setScanCounts] = useState<Record<string, number>>({});
   const [scanSerials, setScanSerials] = useState<string[]>([]);
   const [scanCodes, setScanCodes] = useState<string[]>([]);
+  const [manualLoadIds, setManualLoadIds] = useState<string[]>([]);
   const [stagedReturnIds, setStagedReturnIds] = useState<string[]>([]);
   const [returnEvidenceIds, setReturnEvidenceIds] = useState<Record<string, string>>({});
   const [uploadingReturnId, setUploadingReturnId] = useState<string | null>(null);
@@ -449,6 +450,8 @@ export default function InventoryPanel({ section, role, clients, initialClientId
     setSelectedOrderId(""); setSelectedOrderMode(null); setEditingOrderId(""); setEditingOrderForm(null);
   });
   const selectedOrderLines = selectedOrder?.lines ?? selectedOrder?.items ?? [];
+  const manualLoadParcels = (selectedOrder?.parcels ?? []).filter(parcel => parcel.state === 'RESERVED' && assignments.some(assignment => assignment.active && assignment.routeId === selectedRouteId && assignment.parcelId === parcel.id));
+  useEffect(() => { setManualLoadIds([]); }, [selectedOrderId, selectedRouteId]);
   const returnOrders = orders.map((order) => ({
     order,
     returns: returns.filter((item) => item.state === "AUTHORIZED" && (order.parcelIds?.includes(item.parcelId) || parcels.some((parcel) => parcel.id === item.parcelId && parcel.shipmentId === order.shipmentId))),
@@ -848,9 +851,12 @@ export default function InventoryPanel({ section, role, clients, initialClientId
   const loadOrder = async () => {
     const route = routes.find((item) => item.id === selectedRouteId);
     if (!selectedOrder || !route) { setError("Seleccioná una ruta lista para confirmar la carga."); return; }
-    if (!scanCodes.length) { setError("Escaneá al menos un código de producto o bulto para confirmar la carga."); return; }
-    const ok = await runMutation(`/api/orders/${encodeURIComponent(selectedOrder.id)}/load`, { routeId: route.id, expectedVersion: route.version, codes: scanCodes }, "Carga escaneada y registrada.", "both");
-    if (ok) { setSelectedOrderId(""); setSelectedRouteId(""); }
+    const selectedCodes = manualLoadParcels.filter(parcel => manualLoadIds.includes(parcel.id)).map(parcel => parcel.code);
+    const codes = [...scanCodes, ...selectedCodes];
+    if (!codes.length) { setError("Seleccioná o escaneá al menos un bulto para confirmar la carga."); return; }
+    if (new Set(codes.map(code => code.toLowerCase())).size !== codes.length) { setError("Un bulto está seleccionado y escaneado a la vez. Quitá una de las dos lecturas."); return; }
+    const ok = await runMutation(`/api/orders/${encodeURIComponent(selectedOrder.id)}/load`, { routeId: route.id, expectedVersion: route.version, codes }, "Carga registrada.", "both");
+    if (ok) { setSelectedOrderId(""); setSelectedRouteId(""); setManualLoadIds([]); }
   };
 
   const receiveOrderReturn = async (order: Order) => {
@@ -958,11 +964,19 @@ export default function InventoryPanel({ section, role, clients, initialClientId
             <p>{draftOrderRoute ? "El pedido está asignado a " + draftOrderRoute.name + ", que todavía está en borrador. Confirmá el plan en Rutas para poder cargar." : "El pedido está reservado. Asigná sus bultos a una ruta y confirmá el plan antes de cargar."}</p>
             {canManage && onOpenRoutes ? <button className="button button-secondary" type="button" onClick={() => onOpenRoutes(draftOrderRoute?.id)}>Ir a rutas</button> : <p>Pedile a Administración o Coordinación logística que prepare la ruta.</p>}
           </div> : <>
-            <p>Ruta confirmada. Escaneá los bultos que estás cargando en el vehículo.</p>
-            <BarcodeScanner onScan={scanOrderLine} disabled={busy} label="Escanear bulto, serie o SKU" />
+            <label className="field"><span>Ruta lista asignada</span><select value={selectedRouteId} onChange={(event) => { setSelectedRouteId(event.target.value); setScanCodes([]); setScanCounts({}); setScanSerials([]); }}><option value="">Seleccionar ruta</option>{assignedRoutes.map((route) => <option key={route.id} value={route.id}>{route.name}</option>)}</select></label>
+            <div className="stack"><strong>Seleccioná los artículos que subiste al vehículo</strong>
+              {!selectedRouteId ? <p className="muted">Elegí la ruta para ver sus bultos.</p> : manualLoadParcels.length === 0 ? <p className="muted">No hay bultos pendientes de carga para esta ruta.</p> : manualLoadParcels.map((parcel, index) => {
+                const line = selectedOrderLines.find(item => item.productId === parcel.productId);
+                const product = productById.get(parcel.productId);
+                const unit = parcel.serialId ? inventory.units.find(item => item.id === parcel.serialId) : undefined;
+                const needsSerial = !!parcel.serialId;
+                return <label className="parcel-row" key={parcel.id}><input type="checkbox" disabled={busy || (needsSerial && !unit?.serial)} checked={manualLoadIds.includes(parcel.id)} onChange={event => setManualLoadIds(items => event.target.checked ? [...items, parcel.id] : items.filter(id => id !== parcel.id))} /><span><strong>{line?.productName || line?.name || product?.name || 'Producto'} · unidad {index + 1}</strong>{needsSerial && <small>{unit?.serial ? 'Serie: ' + unit.serial : 'Serie no disponible; escaneá el bulto.'}</small>}</span></label>;
+              })}
+            </div>
+            <details><summary>Usar lector o ingresar código</summary><BarcodeScanner onScan={scanOrderLine} disabled={busy} label="Escanear bulto, serie o SKU" /></details>
             <div className="table-wrap"><table><thead><tr><th>Producto</th><th>Solicitado</th><th>Ya cargado</th><th>Escaneado ahora</th><th>Estado</th></tr></thead><tbody>{selectedOrderLines.map((line) => <tr key={line.productId}><td>{line.productName || productById.get(line.productId)?.name || line.sku || "Producto"}</td><td>{qtyLabel(productById.get(line.productId), line.quantity)}</td><td>{qtyLabel(productById.get(line.productId), line.loaded || 0)}</td><td>{qtyLabel(productById.get(line.productId), scanCounts[line.productId] || 0)}</td><td>{(line.loaded || 0) >= line.quantity ? "Cargado" : "Falta cargar " + Math.max(0, line.quantity - (line.loaded || 0))}</td></tr>)}</tbody></table></div>
-            <label className="field"><span>Ruta lista asignada</span><select value={selectedRouteId} onChange={(event) => setSelectedRouteId(event.target.value)}><option value="">Seleccionar ruta</option>{assignedRoutes.map((route) => <option key={route.id} value={route.id}>{route.name}</option>)}</select></label>
-            <button className="button button-primary" type="button" onClick={() => void loadOrder()} disabled={busy || !canWarehouse || !selectedRouteId || !scanCodes.length}><ArrowDownToLine aria-hidden="true" />Confirmar carga</button>
+            <button className="button button-primary" type="button" onClick={() => void loadOrder()} disabled={busy || !canWarehouse || !selectedRouteId || (!scanCodes.length && !manualLoadIds.length)}><ArrowDownToLine aria-hidden="true" />Confirmar carga</button>
           </>}
         </section></div>}
         {canManage && selectedOrder && editingOrderId === selectedOrder.id && editingOrderForm && <div className="modal-backdrop"><section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="edit-order-title"><div className="card-header"><div><h2 id="edit-order-title">Editar borrador · {selectedOrder.externalId}</h2><p>Los productos se mantienen; podés ajustar cantidades.</p></div><button className="text-button" type="button" onClick={() => { setEditingOrderId(""); setEditingOrderForm(null); }}>Cerrar</button></div><form className="stack" onSubmit={(event) => void saveEditedOrder(event, selectedOrder)}><div className="inventory-form-grid"><label className="field"><span>Fecha</span><input required type="date" value={editingOrderForm.orderDate} onChange={(event) => setEditingOrderForm((current) => current ? { ...current, orderDate: event.target.value } : current)} /></label><label className="field"><span>Destino</span><input required value={editingOrderForm.destination} onChange={(event) => setEditingOrderForm((current) => current ? { ...current, destination: event.target.value } : current)} /></label><label className="field"><span>Destinatario</span><input required value={editingOrderForm.recipientName} onChange={(event) => setEditingOrderForm((current) => current ? { ...current, recipientName: event.target.value } : current)} /></label><label className="field"><span>Teléfono</span><input value={editingOrderForm.recipientPhone} onChange={(event) => setEditingOrderForm((current) => current ? { ...current, recipientPhone: event.target.value } : current)} /></label><label className="field"><span>Ventana desde</span><input type="time" value={editingOrderForm.windowStart} onChange={(event) => setEditingOrderForm((current) => current ? { ...current, windowStart: event.target.value } : current)} /></label><label className="field"><span>Ventana hasta</span><input type="time" value={editingOrderForm.windowEnd} onChange={(event) => setEditingOrderForm((current) => current ? { ...current, windowEnd: event.target.value } : current)} /></label><label className="field"><span>Minutos de servicio</span><input type="number" min="1" max="480" value={editingOrderForm.serviceMinutes} onChange={(event) => setEditingOrderForm((current) => current ? { ...current, serviceMinutes: event.target.value } : current)} /></label><label className="field span-all"><span>Restricciones</span><textarea value={editingOrderForm.restrictions} onChange={(event) => setEditingOrderForm((current) => current ? { ...current, restrictions: event.target.value } : current)} /></label></div><div className="draft-order-lines"><h3>Productos y cantidades</h3>{editingOrderForm.lines.map((line, index) => { const product = productById.get(line.productId); return <label className="field draft-order-line" key={line.productId}><span>{product?.sku || "SKU"} · {product?.name || "Producto"}</span><input type="number" min="1" step="1" value={line.quantity} onChange={(event) => setEditingOrderForm((current) => current ? { ...current, lines: current.lines.map((entry, idx) => idx === index ? { ...entry, quantity: Number(event.target.value) } : entry) } : current)} /></label>; })}</div><button className="button button-primary" type="submit" disabled={busy}>Guardar cambios</button></form></section></div>}
