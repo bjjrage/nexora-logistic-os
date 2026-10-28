@@ -865,8 +865,9 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
   const [driverInspectionItems, setDriverInspectionItems] = useState<InspectionItem[]>([{ label: "", severity: "OK", note: "" }]);
   const selectedRoute = visibleRoutes.find((route) => route.id === selectedRouteId);
   const stops = selectedRoute ? data.stops.filter((stop) => stop.routeId === selectedRoute.id).sort((a, b) => a.sequence - b.sequence) : [];
-  const routeAssignmentIds = new Set(data.assignments.filter((assignment) => assignment.routeId === selectedRoute?.id).map((assignment) => assignment.parcelId));
+  const routeAssignmentIds = new Set(data.assignments.filter((assignment) => assignment.routeId === selectedRoute?.id && assignment.active).map((assignment) => assignment.parcelId));
   const routeParcels = data.parcels.filter((parcel) => routeAssignmentIds.has(parcel.id));
+  const capacityIncomplete = routeParcels.some((parcel) => parcel.weightGrams == null || parcel.volumeCm3 == null);
   const activeAssignmentIds = new Set(data.assignments.filter((assignment) => assignment.active).map((assignment) => assignment.parcelId));
   const pendingReturnParcelIds = new Set(data.returns.filter(item => item.state !== 'SENT_TO_SENDER').map(item => item.parcelId));
   const assignableParcels = data.parcels.filter((parcel) => !activeAssignmentIds.has(parcel.id) && !pendingReturnParcelIds.has(parcel.id) && (pickupMode
@@ -982,6 +983,7 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
           <div className="route-toolbar"><StateBadge value={selectedRoute.state} /><span className="muted">{formatDate(selectedRoute.startAt,data.organization.timezone)}</span></div>
           <div className="button-row">
             {canPlan && selectedRoute.state === "DRAFT" && <button className="button button-secondary" disabled={busy} onClick={() => simpleRouteAction("ready", "Ruta confirmada para operación.")}>Confirmar plan</button>}
+            {capacityIncomplete && <p className="muted">Hay bultos sin peso o volumen. Podés continuar; la capacidad total no está verificada.</p>}
             {canOperateRoad && selectedRoute.state === "READY" && <button className="button button-secondary" disabled={busy} onClick={() => simpleRouteAction("dispatch", "Salida de ruta registrada.")}>Despachar</button>}
             {canOperateRoad && selectedRoute.state === "IN_PROGRESS" && <button className="button button-secondary" disabled={busy} onClick={() => simpleRouteAction("close", "Cierre de ruta solicitado.")}>Cerrar ruta</button>}
           </div>

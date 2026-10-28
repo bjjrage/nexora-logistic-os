@@ -180,13 +180,12 @@ export class Logistics {
         const vehicle = await this.record('vehicles', route.vehicle_id, actor);
         const parcels = await this.store.all('SELECT p.*,a.pickup FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id WHERE a.route_id=? AND a.active=1', route.id);
         ensure(parcels.length, 'VALIDATION_ERROR', 'La ruta no tiene bultos.', 400);
-        ensure(parcels.every(p => p.weight_grams !== null && p.volume_cm3 !== null), 'VALIDATION_ERROR', 'Capacidad sin verificar: hay bultos con peso o volumen desconocidos.', 400);
         let weight = 0, volume = 0;
         const onboard = new Set<string>();
         const check = () => ensure(weight >= 0 && volume >= 0 && weight <= vehicle.capacity_weight_grams && volume <= vehicle.capacity_volume_cm3, 'CAPACITY_EXCEEDED', 'La capacidad de peso o volumen se excede en un tramo.');
         for (const p of parcels.filter(p => !p.pickup)) {
-            weight += p.weight_grams;
-            volume += p.volume_cm3;
+            weight += p.weight_grams ?? 0;
+            volume += p.volume_cm3 ?? 0;
             onboard.add(p.id);
         }
         check();
@@ -195,29 +194,29 @@ export class Logistics {
                 if (stop.kind === 'PICKUP') {
                     ensure(!onboard.has(p.id), 'INVALID_TRANSITION', 'El retiro tiene un orden incompatible.');
                     onboard.add(p.id);
-                    weight += p.weight_grams;
-                    volume += p.volume_cm3;
+                    weight += p.weight_grams ?? 0;
+                    volume += p.volume_cm3 ?? 0;
                 }
                 else {
                     ensure(onboard.has(p.id), 'INVALID_TRANSITION', 'El retiro debe preceder a la entrega.');
                     onboard.delete(p.id);
-                    weight -= p.weight_grams;
-                    volume -= p.volume_cm3;
+                    weight -= p.weight_grams ?? 0;
+                    volume -= p.volume_cm3 ?? 0;
                 }
                 check();
             }
         }
         ensure(onboard.size === 0, 'INVALID_TRANSITION', 'Hay bultos sin parada de entrega.');
-        return { verified: true };
+        return { verified: parcels.every(p => p.weight_grams != null && p.volume_cm3 != null) };
     }
     async ready(actor: Actor, id: string, b: Row) {
         return await this.command(actor, `routes.${id}.ready`, b, OPS, async () => {
             const r = await this.route(id, actor, b.expectedVersion);
             ensure(r.state === 'DRAFT', 'INVALID_TRANSITION', 'La ruta debe estar en borrador.');
             await validateRouteProvider(this.store,actor.orgId,id);
-            await this.capacity(r, actor);
+            const capacity = await this.capacity(r, actor);
             await this.store.run("UPDATE routes SET state='READY',version=version+1 WHERE id=?", id);
-            return { id, state: 'READY', version: r.version + 1 };
+            return { id, state: 'READY', version: r.version + 1, capacityVerified: capacity.verified };
         });
     }
     async vehicleCapacity(actor:Actor,vehicleId:string,additional:Row[]=[]){

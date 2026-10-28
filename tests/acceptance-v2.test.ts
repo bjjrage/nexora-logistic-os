@@ -121,20 +121,28 @@ test('recepción rechaza código inexistente o de otro cliente sin efectos', asy
     assert.deepEqual(await counts(f.store, watched), before);
     assert.equal((await f.store.one('SELECT state FROM parcels WHERE id=?', otherClientShipment.parcels[0].id))!.state, 'EXPECTED');
 });
-test('volumen desconocido conserva null y bloquea confirmar la ruta', async (t) => {
+test('medidas desconocidas permiten confirmar, cargar y despachar sin inventar valores', async (t) => {
     const f = await fileFixture(t);
     const shipment = await f.shipment({ volumeCm3: null });
     const routeId = await f.route();
     await f.receive(shipment);
     await f.assign(routeId, shipment.parcels.map(parcel => parcel.id));
-    const beforeVersion = await f.version(routeId);
-    const readyCommand = await f.command();
-    await assert.rejects(async () => await f.domain.ready(f.actor, routeId, { ...readyCommand, expectedVersion: beforeVersion }), (error: any) => error.code === 'VALIDATION_ERROR');
+    const ready = await f.domain.ready(f.actor, routeId, { ...await f.command(), expectedVersion: await f.version(routeId) });
+    assert.equal(ready.capacityVerified, false);
+    await f.domain.load(f.actor, routeId, { ...await f.command(), expectedVersion: await f.version(routeId), code: shipment.parcels[0].code });
+    await f.domain.inspect(f.actor, f.vehicleId, { ...await f.command(), odometer: 100, fuelPercent: 70, items: [{ label: 'Frenos', severity: 'OK', note: '' }] });
+    await f.domain.dispatch(f.actor, routeId, { ...await f.command(), expectedVersion: await f.version(routeId) });
     assert.equal((await f.store.one('SELECT volume_cm3 FROM parcels WHERE id=?', shipment.parcels[0].id))!.volume_cm3, null);
-    const routeAfter = (await f.store.one('SELECT state,version FROM routes WHERE id=?', routeId))!;
-    assert.equal(routeAfter.state, 'DRAFT');
-    assert.equal(routeAfter.version, beforeVersion);
-    assert.equal(await f.store.one('SELECT command_id FROM idempotency WHERE org_id=? AND command_id=?', f.actor.orgId, readyCommand.commandId), undefined);
+    assert.equal((await f.store.one('SELECT state FROM routes WHERE id=?', routeId))!.state, 'IN_PROGRESS');
+});
+test('un peso conocido que excede la capacidad bloquea aunque otro volumen sea desconocido', async (t) => {
+    const f = await fileFixture(t);
+    const shipment = await f.shipment({ volumeCm3: null });
+    await f.store.run('UPDATE parcels SET weight_grams=? WHERE id=?', 50001, shipment.parcels[0].id);
+    const routeId = await f.route();
+    await f.receive(shipment);
+    await f.assign(routeId, shipment.parcels.map(parcel => parcel.id));
+    await assert.rejects(async () => await f.domain.ready(f.actor, routeId, { ...await f.command(), expectedVersion: await f.version(routeId) }), (error: any) => error.code === 'CAPACITY_EXCEEDED');
 });
 test('reintento de intento de entrega con el mismo commandId no duplica intento, custodia ni auditoría', async (t) => {
     const f = await fileFixture(t);

@@ -94,11 +94,12 @@ test('QA-06: capacidad intermedia se verifica después de sumar retiros', async 
     await f.rejects(async () => await f.d.reorder(f.actor, r, { ...f.cmd(), expectedVersion: await f.version(r), stopIds: [pickup.id, ...stops.filter(s => s.id !== pickup.id).sort((a, b) => a.sequence - b.sequence).map(s => s.id)] }), 'CAPACITY_EXCEEDED');
     assert.deepEqual(await f.store.all('SELECT id,sequence FROM stops WHERE route_id=? ORDER BY sequence', r), before);
 });
-test('QA-07: peso desconocido conserva null y bloquea aprobación de capacidad', async (t) => {
+test('QA-07: peso desconocido conserva null y permite la ruta sin verificar capacidad', async (t) => {
     const f = await fixture(t), s = await f.shipment(1, null, 1000), r = await f.route();
     await f.receive(s);
     await f.assign(r, s.parcels.map(p => p.id));
-    await f.rejects(async () => await f.ready(r), 'VALIDATION_ERROR');
+    const result = await f.ready(r);
+    assert.equal(result.capacityVerified, false);
     assert.equal((await f.store.one('SELECT weight_grams FROM parcels WHERE id=?', s.parcels[0].id))!.weight_grams, null);
 });
 test('QA-08: defecto crítico y documento vencido impiden despacho; odómetro no retrocede', async (t) => {
