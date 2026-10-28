@@ -303,6 +303,17 @@ test('browser: one route form registers driver and vehicle then edits the same r
  await expect(form.getByRole('combobox',{name:'Vehículo',exact:true})).not.toHaveValue('');
  await form.getByRole('button',{name:'Crear ruta',exact:true}).click();
  await expect(page.getByText('Ruta creada.',{exact:true})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'Ruta unificada '+suffix,exact:true})).toBeVisible();
+ await expect(page.locator('.route-list')).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Nueva ruta',exact:true})).toHaveCount(0);
+ await page.getByRole('button',{name:'← Volver a rutas',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Listado de rutas',exact:true})).toBeVisible();
+ await page.getByRole('searchbox',{name:'Buscar ruta',exact:true}).fill(suffix);
+ await page.getByRole('button',{name:new RegExp('Ruta unificada '+suffix)}).click();
+ await expect(page.getByRole('searchbox',{name:'Buscar ruta',exact:true})).toHaveCount(0);
+ await expect(page.getByRole('heading',{name:'Pedidos y operación',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'← Volver a rutas',exact:true}).click();
+ await expect(page.getByRole('searchbox',{name:'Buscar ruta',exact:true})).toHaveValue(suffix);
  const bootstrap=await(await page.request.get('/api/bootstrap')).json(),route=bootstrap.routes.find((r:any)=>r.name==='Ruta unificada '+suffix);
  expect(route).toBeTruthy();
  const driver=(await send('/api/drivers',{name:'Reemplazo '+suffix,username:'other-'+suffix,password:'QA-Other-Driver-2026!'})).id;
@@ -320,6 +331,15 @@ test('browser: one route form registers driver and vehicle then edits the same r
  await expect(page.getByText('Ruta actualizada.',{exact:true})).toBeVisible();
  const updated=(await(await page.request.get('/api/bootstrap')).json()).routes.find((r:any)=>r.id===route.id);
  expect(updated.driverId).toBe(driver);expect(updated.vehicleId).toBe(vehicle);expect(updated.name).toBe('Ruta corregida '+suffix);
+ await expect(page.getByRole('heading',{name:'Ruta corregida '+suffix,exact:true})).toBeVisible();
+ await expect(page.locator('.route-list')).toHaveCount(0);
+ await page.screenshot({path:'.local/route-detail-desktop.png',fullPage:true});
+ await page.setViewportSize({width:390,height:844});
+ await expect(page.getByRole('button',{name:'← Volver a rutas',exact:true})).toBeVisible();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+ await page.getByRole('button',{name:'← Volver a rutas',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Listado de rutas',exact:true})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'Pedidos y operación',exact:true})).toHaveCount(0);
 });
 
 test('tracking: three views, client policy persists and route setup has a single entry', async ({page}) => {

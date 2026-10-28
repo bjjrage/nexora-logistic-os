@@ -449,7 +449,7 @@ td { font-size:14px; padding-block:13px; }
 .task-disclosure-body { padding:18px; }
 .task-disclosure-body > .card { border:0; margin:0; padding:0; }
 .routes-layout { grid-template-columns:minmax(280px,.8fr) minmax(0,1.4fr); }
-.routes-layout--list { grid-template-columns:minmax(0,1fr); }
+.routes-layout--list,.routes-layout--detail { grid-template-columns:minmax(0,1fr); }
 .routes-layout--list .route-list { grid-template-columns:repeat(2,minmax(0,1fr)); }
 .route-list { gap:10px; }
 .route-card { padding:16px; border:1px solid #cbd4e0; border-radius:12px; background:#fff; }

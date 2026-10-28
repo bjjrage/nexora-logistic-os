@@ -865,6 +865,14 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
   const [driverFuelPercent, setDriverFuelPercent] = useState("");
   const [driverInspectionItems, setDriverInspectionItems] = useState<InspectionItem[]>([{ label: "", severity: "OK", note: "" }]);
   const selectedRoute = visibleRoutes.find((route) => route.id === selectedRouteId);
+  const resetRouteTask = () => {
+    setEditRouteId(''); setAssignmentIds([]); setPickupMode(false); setScanCode(''); setStopId('');
+    setDeliveredIds([]); setFailedIds([]); setReceiverName(''); setReasonCode(''); setNextAction('');
+    setEvidenceIds([]); setEvidenceParcelId(''); setLastEvidenceId('');
+    setDriverInspectionOdometer(''); setDriverFuelPercent('');
+    setDriverInspectionItems([{ label: '', severity: 'OK', note: '' }]);
+  };
+  const backToRoutes = () => { resetRouteTask(); setSelectedRouteId(''); setShowCreate(false); setCreateError(''); };
   const stops = selectedRoute ? data.stops.filter((stop) => stop.routeId === selectedRoute.id).sort((a, b) => a.sequence - b.sequence) : [];
   const routeAssignmentIds = new Set(data.assignments.filter((assignment) => assignment.routeId === selectedRoute?.id && assignment.active).map((assignment) => assignment.parcelId));
   const routeParcels = data.parcels.filter((parcel) => routeAssignmentIds.has(parcel.id));
@@ -936,24 +944,24 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
 
   return (
     <>
-      <SectionTitle eyebrow="PLANIFICACIÓN Y CALLE" title={driverId ? "Mis rutas" : "Rutas"} description={driverId ? "Tus recorridos asignados." : "Elegí una ruta para trabajar."} action={<div className="heading-actions"><button className="button button-secondary" disabled={busy||refreshing} onClick={()=>void refreshRoutes()}>{refreshing?'Actualizando…':'Actualizar'}</button>{canPlan&&<button className="button button-primary" disabled={busy} onClick={()=>{setShowCreate(value=>!value);setCreateError('');}}><Plus aria-hidden="true" />{showCreate ? "Cerrar nueva ruta" : "Nueva ruta"}</button>}</div>} />
+      <SectionTitle eyebrow="PLANIFICACIÓN Y CALLE" title={showCreate ? 'Nueva ruta' : selectedRoute?.name ?? (driverId ? 'Mis rutas' : 'Rutas')} description={selectedRoute && !showCreate ? `Chofer: ${data.drivers.find(item=>item.id===selectedRoute.driverId)?.name ?? selectedRoute.driverId} · Vehículo: ${data.vehicles.find(item=>item.id===selectedRoute.vehicleId)?.plate ?? selectedRoute.vehicleId}` : showCreate ? undefined : driverId ? 'Tus recorridos asignados.' : 'Elegí una ruta para trabajar.'} action={<div className="heading-actions">{(selectedRoute || showCreate) && <button type="button" className="button button-secondary" disabled={busy} onClick={backToRoutes}>← Volver a rutas</button>}<button className="button button-secondary" disabled={busy||refreshing} onClick={()=>void refreshRoutes()}>{refreshing?'Actualizando…':'Actualizar'}</button>{canPlan&&!selectedRoute&&!showCreate&&<button className="button button-primary" disabled={busy} onClick={()=>{resetRouteTask();setShowCreate(true);setCreateError('');}}><Plus aria-hidden="true" />Nueva ruta</button>}</div>} />
       {createError&&<p className="notice error" role="alert">{createError}</p>}
       {canPlan && showCreate && <Panel title="Nueva ruta"><RouteSetup drivers={data.drivers} vehicles={data.vehicles} action={action} busy={busy} operationError={operationError} onCancel={()=>setShowCreate(false)} onSaved={result=>{if(typeof result.id==='string'){setJustCreated({...result,id:result.id,state:'DRAFT',version:Number(result.version??1)} as Route);setSelectedRouteId(result.id);setRouteTab('planning');setShowCreate(false);}}}/></Panel>}
-      {!showCreate && <div className={"grid-2 routes-layout " + (!selectedRoute ? "routes-layout--list" : "")}>
-        <Panel title="Rutas">
+      {!showCreate && <div className={"routes-layout " + (!selectedRoute ? "routes-layout--list" : "routes-layout--detail")}>
+        {!selectedRoute && <Panel title="Listado de rutas">
           <div className="workspace-filters"><label className="field"><span>Buscar ruta</span><input type="search" value={routeSearch} placeholder="Nombre, chofer o matrícula" onChange={event=>{setRouteSearch(event.target.value);setRoutePage(0);}} /></label><label className="field"><span>Estado de ruta</span><select value={routeFilter} onChange={event=>{setRouteFilter(event.target.value);setRoutePage(0);}}><option value="ALL">Todas</option><option value="DRAFT">Borradores</option><option value="READY">Listas para salir</option><option value="IN_PROGRESS">En curso</option><option value="CLOSED">Cerradas</option></select></label></div>
           {filteredRoutes.length === 0 ? <EmptyState>{role==='DRIVER'?`Todavía no tenés recorridos asignados. El equipo de ${data.organization.name} prepara la ruta y te la asigna.`:'No hay rutas para este filtro.'}</EmptyState> : <div className="route-list">{displayedRoutes.map((route) => {
             const driver = data.drivers.find((item) => item.id === route.driverId);
             const vehicle = data.vehicles.find((item) => item.id === route.vehicleId);
-            return <button className={"route-card " + (selectedRoute?.id === route.id ? "selected" : "")} key={route.id} onClick={() => { setSelectedRouteId(route.id); setStopId(""); setAssignmentIds([]); setRouteTab(route.state === "DRAFT" && canPlan ? "planning" : route.state === "READY" && canLoad ? "loading" : "stops"); }}>
+            return <button className="route-card" key={route.id} onClick={() => { resetRouteTask(); setSelectedRouteId(route.id); setRouteTab(route.state === "DRAFT" && canPlan ? "planning" : route.state === "READY" && canLoad ? "loading" : "stops"); }}>
               <div className="row"><strong>{route.name}</strong><StateBadge value={route.state} /></div>
               <small>{driver?.name ?? route.driverId} · {vehicle?.plate ?? route.vehicleId}</small>
               <small>{formatDate(route.startAt, data.organization.timezone)}</small>
             </button>;
           })}</div>}
           {filteredRoutes.length>8 && <div className="list-pagination"><button className="button button-secondary" disabled={routePage===0} onClick={()=>setRoutePage(p=>p-1)}>Anterior</button><span>{routePage+1} / {Math.ceil(filteredRoutes.length/8)}</span><button className="button button-secondary" disabled={(routePage+1)*8>=filteredRoutes.length} onClick={()=>setRoutePage(p=>p+1)}>Siguiente</button></div>}
-        </Panel>
-        {selectedRoute ? <Panel title={selectedRoute.name} description={"Chofer: " + (data.drivers.find((item) => item.id === selectedRoute.driverId)?.name ?? selectedRoute.driverId) + " · Vehículo: " + (data.vehicles.find((item) => item.id === selectedRoute.vehicleId)?.plate ?? selectedRoute.vehicleId)}>
+        </Panel>}
+        {selectedRoute ? <Panel title="Pedidos y operación">
           {canPlan && editRouteId!==selectedRoute.id && ['DRAFT','READY'].includes(selectedRoute.state) && <button type="button" className="button button-secondary" disabled={busy} onClick={()=>setEditRouteId(selectedRoute.id)}>Editar ruta</button>}
           {canPlan && editRouteId===selectedRoute.id && <Panel title="Editar ruta"><RouteSetup key={selectedRoute.id+':'+selectedRoute.version} route={selectedRoute} drivers={data.drivers} vehicles={data.vehicles} action={action} busy={busy} operationError={operationError} onCancel={()=>setEditRouteId('')} onSaved={()=>setEditRouteId('')}/></Panel>}
           {editRouteId!==selectedRoute.id && <><div className="route-toolbar"><StateBadge value={selectedRoute.state} /><span className="muted">Inicio: {formatDate(selectedRoute.startAt,data.organization.timezone)} · Fin: {formatDate(selectedRoute.endAt,data.organization.timezone)}</span></div>
