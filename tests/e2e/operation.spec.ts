@@ -245,7 +245,10 @@ test('browser: reservation feedback is visible in the modal for missing stock an
  const current=await(await page.request.get('/api/orders/'+order)).json();expect(current.status).toBe('RESERVED');
  await dialog.getByRole('button',{name:'Cerrar'}).click();
  await expect(page.getByRole('article').filter({hasText:'RES-'+suffix})).toContainText('Reservado · falta cargar');
- await expect(page.getByRole('article').filter({hasText:'RES-'+suffix})).toContainText('Cargado: 0/1');
+ const summary=page.getByRole('article').filter({hasText:'RES-'+suffix}).getByRole('region',{name:'Producto sin stock',exact:true});
+ await expect(summary.getByText('Reservado en depósito',{exact:true}).locator('..').locator('dd')).toHaveText('1unidad');
+ await expect(summary.getByText('Cargado en vehículo',{exact:true}).locator('..').locator('dd')).toHaveText('0unidades');
+ await expect(summary.getByText('Disponible para reservar',{exact:true}).locator('..').locator('dd')).toHaveText('0unidades');
  await page.getByRole('article').filter({hasText:'OTRO-'+suffix}).getByRole('button',{name:'Reservar pedido'}).click();
  await expect(page.getByRole('dialog',{name:'Reserva y ruta'}).getByText('Pedido reservado.')).toHaveCount(0);
  await page.getByRole('dialog',{name:'Reserva y ruta'}).getByRole('button',{name:'Cerrar'}).click();

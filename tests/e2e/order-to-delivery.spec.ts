@@ -16,6 +16,14 @@ test('reserve → assign → route load → inspection → delivery stays in the
  const order=(await send('/api/orders',{clientId:client,externalId:'FLOW-'+suffix,orderDate:'2026-10-28',recipientName:'Receptor demo',destination:'Direccion demo',lines:[{productId:product,quantity:2}]})).id;
  const route=(await send('/api/routes',{name:routeName,driverId:driver,vehicleId:vehicle,trackingProvider:'TRACCAR',startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()})).id;
  const orderDetail=async()=> (await page.request.get('/api/orders/'+order)).json();
+ const stockPage=await page.context().newPage();
+ const quantities=async(expected:Record<string,number>)=>{
+  await stockPage.goto('/');await stockPage.getByRole('button',{name:'Pedidos',exact:true}).click();
+  await stockPage.getByRole('textbox',{name:'Buscar pedidos',exact:true}).fill('FLOW-'+suffix);
+  const product=stockPage.getByRole('article').filter({hasText:'FLOW-'+suffix}).getByRole('region',{name:'Cocina demo',exact:true});
+  for(const [label,value] of Object.entries(expected))await expect(product.getByText(label,{exact:true}).locator('..').locator('dd')).toHaveText(new RegExp('^'+value+'\\s*unidad(?:es)?$'));
+ };
+ await quantities({'Pedido':2,'Disponible para reservar':3,'Reservado en depósito':0,'Cargado en vehículo':0});
  const duplicateLoads:string[]=[];page.on('request',request=>{if(/\/api\/orders\/[^/]+\/load$/.test(new URL(request.url()).pathname))duplicateLoads.push(request.url());});
  await page.goto('/');await page.getByRole('button',{name:'Pedidos',exact:true}).click();
  await page.getByRole('article').filter({hasText:'FLOW-'+suffix}).getByRole('button',{name:'Reservar pedido',exact:true}).click();
@@ -30,6 +38,7 @@ test('reserve → assign → route load → inspection → delivery stays in the
  await expect(page.getByText('Plan confirmado',{exact:true})).toBeVisible();
  await expect(page.getByRole('button',{name:'Despachar',exact:true})).toBeDisabled();
  expect((await orderDetail()).status).toBe('RESERVED');
+ await quantities({'Pedido':2,'Disponible para reservar':1,'Reservado en depósito':2,'Cargado en vehículo':0});
  const load=page.getByRole('region',{name:'Carga del vehículo',exact:true});
  await expect(page.getByText('Usar lector o ingresar código',{exact:true})).toBeVisible();
  await load.getByRole('checkbox',{name:/Cocina demo · unidad 1/}).check();
@@ -38,6 +47,7 @@ test('reserve → assign → route load → inspection → delivery stays in the
  await expect(page.getByText('Usar lector o ingresar código',{exact:true})).toBeVisible();
  await expect(load.getByRole('button',{name:'Continuar al control de salida',exact:true})).toHaveCount(0);
  expect((await orderDetail()).status).toBe('PARTIALLY_LOADED');
+ await quantities({'Pedido':2,'Disponible para reservar':1,'Reservado en depósito':1,'Cargado en vehículo':1});
  await expect(load.getByRole('checkbox',{name:/Cocina demo · unidad 1/})).toBeDisabled();
  await load.getByRole('checkbox',{name:/Cocina demo · unidad 2/}).check();
  await load.getByRole('button',{name:'Confirmar carga',exact:true}).click();
@@ -45,6 +55,12 @@ test('reserve → assign → route load → inspection → delivery stays in the
  await expect(page.getByText('Usar lector o ingresar código',{exact:true})).toHaveCount(0);
  await expect(page.getByRole('textbox',{name:'Código del bulto',exact:true})).toHaveCount(0);
  expect((await orderDetail()).status).toBe('LOADED');
+ await quantities({'Pedido':2,'Disponible para reservar':1,'Reservado en depósito':0,'Cargado en vehículo':2});
+ await stockPage.setViewportSize({width:1365,height:900});
+ await stockPage.screenshot({path:'.local/order-stock-desktop.png',fullPage:true});
+ await stockPage.setViewportSize({width:390,height:844});
+ expect(await stockPage.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await stockPage.screenshot({path:'.local/order-stock-mobile.png',fullPage:true});
  await page.screenshot({path:'.local/route-single-load.png',fullPage:true});
  await load.getByRole('button',{name:'Continuar al control de salida',exact:true}).click();
  await page.getByRole('spinbutton',{name:'Odómetro observado',exact:true}).fill('0');
@@ -66,6 +82,7 @@ test('reserve → assign → route load → inspection → delivery stays in the
  await expect(page.getByRole('link',{name:'Ver foto 2',exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Guardar resultado',exact:true}).click();
  await expect.poll(async()=> (await orderDetail()).status).toBe('DELIVERED');
+ await quantities({'Pedido':2,'Disponible para reservar':1,'Reservado en depósito':0,'Cargado en vehículo':0,'Entregado':2});
  await page.getByRole('button',{name:'Cerrar ruta',exact:true}).click();
  await expect.poll(async()=> (await(await page.request.get('/api/bootstrap')).json()).routes.find((r:any)=>r.id===route).state).toBe('OPERATIONALLY_CLOSED');
  await page.getByRole('button',{name:'Pedidos',exact:true}).click();
@@ -73,4 +90,5 @@ test('reserve → assign → route load → inspection → delivery stays in the
  await expect(card).toContainText('Entregado');await expect(card.getByRole('button',{name:/cargar|Confirmar carga/i})).toHaveCount(0);
  expect(duplicateLoads).toEqual([]);
  expect((await(await page.request.get('/api/inventory/reconciliation')).json()).ok).toBe(true);
+ await stockPage.close();
 });

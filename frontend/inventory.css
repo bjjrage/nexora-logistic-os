@@ -155,6 +155,19 @@
 .order-meta { display:flex; flex-wrap:wrap; gap:7px 14px; margin-top:11px; color:var(--muted); font-size:13px; }
 .order-lines-preview { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
 .order-lines-preview span { padding:5px 8px; border-radius:6px; background:#f3f6f9; color:#344259; font-size:13px; }
+.order-stock-summary { display:grid; gap:12px; margin-top:14px; }
+.order-stock-product { min-width:0; padding-top:12px; border-top:1px solid var(--line); }
+.order-stock-product h4 { margin:0 0 10px; font-size:14px; line-height:1.4; overflow-wrap:anywhere; }
+.order-stock-quantities { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin:0; }
+.order-stock-metric { min-width:0; padding:10px 12px; border-radius:8px; background:#f3f6f9; color:var(--navy); }
+.order-stock-metric dt { min-height:34px; font-size:12px; line-height:1.4; color:#435674; }
+.order-stock-metric dd { margin:6px 0 0; font-size:25px; font-weight:700; line-height:1.2; font-variant-numeric:tabular-nums; }
+.order-stock-metric dd small { display:block; margin-top:3px; font-size:11px; font-weight:400; color:#435674; }
+.order-stock-metric--available { background:#edf7f0; }
+.order-stock-metric--vehicle { background:#edf3fc; }
+.order-stock-metric--delivered { background:#edf7f0; }
+.order-stock-help { margin:4px 0 16px; color:var(--muted); font-size:12px; line-height:1.5; }
+@media(max-width:1100px) { .order-stock-quantities { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 .order-card-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:7px; align-content:start; }
 .return-workflow { display:grid; gap:12px; margin-top:20px; padding-top:18px; border-top:1px solid var(--line); }
 .return-workflow h3, .return-workflow p { margin:0; }
