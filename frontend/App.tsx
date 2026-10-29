@@ -607,7 +607,7 @@ function AppContent() {
           {(error||success)&&<div className="operation-feedback"><ErrorBanner error={error} /><SuccessBanner message={success} /></div>}
           {page === "home" && !isDriver && <HomeView data={bootstrap} go={changePage} role={role} />}
           {page === "shipments" && !isDriver && <ShipmentsView initialShipmentId={preferredShipmentId} data={bootstrap} action={mutate} busy={pending} uploadEvidence={uploadEvidence} role={role} />}
-          {page === "routes" && <RoutesView initialRouteId={preferredRouteId} data={bootstrap} action={mutate} busy={pending} operationError={error} onRefresh={async()=>{await refreshBootstrap();setError('');}} uploadEvidence={uploadEvidence} role={role} driverId={isDriver ? session.user.driverId ?? null : null} />}
+          {page === "routes" && <RoutesView initialRouteId={preferredRouteId} data={bootstrap} action={mutate} busy={pending} operationError={error} onClearError={()=>setError('')} onRefresh={async()=>{await refreshBootstrap();setError('');}} uploadEvidence={uploadEvidence} role={role} driverId={isDriver ? session.user.driverId ?? null : null} />}
           {page === "fleet" && !isDriver && <FleetView data={bootstrap} action={mutate} busy={pending} uploadEvidence={uploadEvidence} role={role} onPrepareRoute={()=>changePage('routes','new')} />}
           {page === "clients" && isOpsRole(role) && <ClientsPanel profileEnabled={bootstrap.clientProfilesEnabled===true} initialClientId={preferredClientId} clients={bootstrap.clients} shipments={bootstrap.shipments} canManage={true} action={mutate} busy={pending} actionError={error} onInventory={(clientId,view)=>{changePage('inventory');setInventoryEntry({clientId,view});}}/>}
           {page === "company" && role === "ADMIN" && <CompanyPanel organization={bootstrap.organization} currentUserId={session.user.id} action={mutate} busy={pending} actionError={error} onFleet={()=>changePage('fleet')}/>}
@@ -833,8 +833,8 @@ function ShipmentsView({ data, action, busy, uploadEvidence, role, initialShipme
   );
 }
 
-function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidence, driverId, role, initialRouteId = "" }: {
-  data: Bootstrap; action: Action; busy: boolean; operationError:string;onRefresh:()=>Promise<void>;uploadEvidence: EvidenceUpload; driverId: string | null; role: Role; initialRouteId?: string;
+function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,uploadEvidence, driverId, role, initialRouteId = "" }: {
+  data: Bootstrap; action: Action; busy: boolean; operationError:string;onClearError:()=>void;onRefresh:()=>Promise<void>;uploadEvidence: EvidenceUpload; driverId: string | null; role: Role; initialRouteId?: string;
 }) {
   const canPlan = isOpsRole(role);
   const canLoad = canDepotRole(role);
@@ -897,12 +897,16 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
   const pendingStops = stops.filter((stop) => !isClosed(stop.state));
   const openIncidents = selectedRoute ? data.incidents.filter((item) => item.routeId === selectedRoute.id && item.state === "OPEN") : [];
   const routeReturnItems = selectedRoute ? data.returns.filter((item) => item.routeId === selectedRoute.id) : [];
+  const missingChecklist=Boolean(selectedRoute?.state==='READY'&&canOperateRoad&&operationError.toLocaleLowerCase().includes('checklist'));
 
   useEffect(()=>{
     if(!selectedRoute)return;
     if(['loading','unloading'].includes(routeTab) && !['DRAFT','READY'].includes(selectedRoute.state))setRouteTab('stops');
     if(routeTab==='checks' && selectedRoute.state==='DRAFT')setRouteTab(canLoad?'loading':'stops');
   },[selectedRoute?.state,routeTab,canLoad]);
+  useEffect(()=>{
+    if(missingChecklist){setEditRouteId('');setRouteTab('checks');}
+  },[missingChecklist,selectedRoute?.id]);
   const refreshRoutes=async()=>{setRefreshing(true);setCreateError('');try{await onRefresh();}catch(error){setCreateError(errorMessage(error));}finally{setRefreshing(false);}};
   const submitAssign = async (event: FormEvent) => {
     event.preventDefault();
@@ -976,6 +980,7 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
           {filteredRoutes.length>8 && <div className="list-pagination"><button className="button button-secondary" disabled={routePage===0} onClick={()=>setRoutePage(p=>p-1)}>Anterior</button><span>{routePage+1} / {Math.ceil(filteredRoutes.length/8)}</span><button className="button button-secondary" disabled={(routePage+1)*8>=filteredRoutes.length} onClick={()=>setRoutePage(p=>p+1)}>Siguiente</button></div>}
         </Panel>}
         {selectedRoute ? <Panel title="Pedidos y operación">
+          {missingChecklist&&<div className="notice notice-neutral"><p>Para despachar, registrá los controles observados del vehículo.</p><button type="button" className="button button-secondary" disabled={busy} onClick={()=>{setEditRouteId('');setRouteTab('checks');onClearError();}}>Ir al control de salida</button></div>}
           {canPlan && editRouteId!==selectedRoute.id && ['DRAFT','READY'].includes(selectedRoute.state) && <button type="button" className="button button-secondary" disabled={busy} onClick={()=>setEditRouteId(selectedRoute.id)}>Editar ruta</button>}
           {canPlan && editRouteId===selectedRoute.id && <Panel title="Editar ruta"><RouteSetup key={selectedRoute.id+':'+selectedRoute.version} route={selectedRoute} drivers={data.drivers} vehicles={data.vehicles} action={action} busy={busy} operationError={operationError} onCancel={()=>setEditRouteId('')} onSaved={()=>setEditRouteId('')}/></Panel>}
           {editRouteId!==selectedRoute.id && <><div className="route-toolbar"><StateBadge value={selectedRoute.state==='READY'&&pendingLoadCount>0?'DRAFT':selectedRoute.state} label={pendingLoadCount>0&&['DRAFT','READY'].includes(selectedRoute.state)?'Carga pendiente':selectedRoute.state==='DRAFT'?'Sin confirmar':undefined} /><span className="muted">Inicio: {formatDate(selectedRoute.startAt,data.organization.timezone)} · Fin: {formatDate(selectedRoute.endAt,data.organization.timezone)}</span></div>

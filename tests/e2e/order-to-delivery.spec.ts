@@ -83,6 +83,12 @@ test('reserve → assign → route load → inspection → delivery stays in the
  await page.getByRole('button',{name:'Confirmar ruta',exact:true}).click();
  await expect(page.getByText('Ruta confirmada',{exact:true})).toBeVisible();
  await expect(page.getByRole('button',{name:'Control de salida',exact:true})).toHaveAttribute('aria-pressed','true');
+ await page.getByRole('button',{name:'Despachar ahora',exact:true}).click();
+ await expect(page.getByRole('alert')).toContainText('Falta un checklist');
+ await expect(page.getByRole('button',{name:'Control de salida',exact:true})).toHaveAttribute('aria-pressed','true');
+ await page.getByRole('button',{name:'Editar ruta',exact:true}).click();
+ await page.getByRole('button',{name:'Ir al control de salida',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Checklist de salida',exact:true})).toBeVisible();
  await page.getByRole('spinbutton',{name:'Odómetro observado',exact:true}).fill('0');
  await page.getByRole('spinbutton',{name:'Combustible (%)',exact:true}).fill('90');
  await page.getByRole('textbox',{name:'Nombre del control',exact:true}).fill('Control observado demo');
