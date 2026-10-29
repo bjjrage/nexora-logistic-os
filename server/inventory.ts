@@ -55,7 +55,7 @@ export const inventorySchemas = {
   productUpdate: z.object({ commandId: uuid, sku: nonEmpty.max(100).optional(), barcode: nonEmpty.max(160).nullable().optional(), name: nonEmpty.optional(), unit: nonEmpty.max(40).optional(), weightGrams: z.number().int().positive().nullable().optional(), volumeCm3: z.number().int().positive().nullable().optional(), active: z.boolean().optional() }).refine(value => Object.keys(value).some(key => key !== 'commandId'), 'Incluí al menos un campo para actualizar.'),
   location: z.object({ commandId: uuid, code: nonEmpty.max(80), name: nonEmpty, kind: z.enum(['DEPOT', 'STORAGE', 'QUARANTINE']).default('STORAGE') }),
   locationUpdate: z.object({ commandId: uuid, code: nonEmpty.max(80).optional(), name: nonEmpty.optional(), kind: z.enum(['DEPOT', 'STORAGE', 'QUARANTINE']).optional(), active: z.boolean().optional() }).refine(value => Object.keys(value).some(key => key !== 'commandId'), 'Incluí al menos un campo para actualizar.'),
-  receive: z.object({ commandId: uuid, clientId: uuid, productId: uuid, locationId: uuid, quantity: positive, serials: z.array(z.object({ serial: nonEmpty.max(160), barcode: nonEmpty.max(160).optional().nullable() })).max(200).optional(), reference: z.string().trim().max(160).default(''), reason: z.string().trim().max(500).default('') }),
+  receive: z.object({ commandId: uuid, clientId: uuid, productId: uuid, locationId: uuid, quantity: z.number().int().positive().max(100_000), serials: z.array(z.object({ serial: nonEmpty.max(160), barcode: nonEmpty.max(160).optional().nullable() })).max(5_000).optional(), reference: z.string().trim().max(160).default(''), reason: z.string().trim().max(500).default('') }),
   move: z.object({ commandId: uuid, clientId: uuid, productId: uuid, quantity: positive, fromLocationId: uuid, toLocationId: uuid, serials: z.array(nonEmpty.max(160)).max(200).optional(), reason: z.string().trim().max(500).default('') }),
   adjust: z.object({ commandId: uuid, clientId: uuid, productId: uuid, locationId: uuid, quantityDelta: z.number().int().min(-200).max(200).refine(value => value !== 0), serials: z.array(z.object({ serial: nonEmpty.max(160), barcode: nonEmpty.max(160).optional().nullable() })).max(200).optional(), reason: nonEmpty.max(500) }),
   order: z.object({ commandId: uuid }).extend(orderInput.shape).superRefine((value, ctx) => {
@@ -276,7 +276,17 @@ export class Inventory {
 
   async receive(actor: InventoryActor, input: Row) {
     const b = inventorySchemas.receive.parse(input);
-    return this.command(actor, 'receipts.create', b, async () => {
+    return this.command(actor, 'receipts.create', b, async () => this.applyReceipt(actor,b));
+  }
+  async receiveBatch(actor: InventoryActor, input: Row) {
+    const b=z.object({commandId:uuid,clientId:uuid,reference:nonEmpty.max(160),reason:z.string().trim().max(500).default(''),items:z.array(inventorySchemas.receive.omit({commandId:true,clientId:true,reference:true,reason:true})).min(1).max(5_000)}).parse(input);
+    ensure(b.items.reduce((sum,item)=>sum+item.quantity,0)<=100_000,'VALIDATION_ERROR','El lote admite hasta 100.000 unidades.',400);
+    return this.command(actor,'receipts.batch',b,async()=>{
+      for(const item of b.items)await this.applyReceipt(actor,{...item,commandId:b.commandId,clientId:b.clientId,reference:b.reference,reason:b.reason});
+      return {id:b.commandId,received:b.items.reduce((sum,item)=>sum+item.quantity,0),productCount:new Set(b.items.map(item=>item.productId)).size};
+    });
+  }
+  private async applyReceipt(actor: InventoryActor,b:z.infer<typeof inventorySchemas.receive>) {
       const client = await this.client(actor, b.clientId), product = await this.product(actor, b.productId, client.id), location = await this.location(actor, b.locationId);
       ensure(product.active && location.active && location.kind !== 'QUARANTINE', 'INVALID_TRANSITION', 'El producto o la ubicación no admite recepciones.');
       if (product.tracking === 'SERIAL') ensure(b.serials?.length === b.quantity, 'VALIDATION_ERROR', 'Indicá un número de serie por unidad.', 400);
@@ -294,7 +304,6 @@ export class Inventory {
         }
       }
       return { id: b.commandId, received: b.quantity, tracking: product.tracking };
-    });
   }
   async move(actor: InventoryActor, input: Row) {
     const b = inventorySchemas.move.parse(input);

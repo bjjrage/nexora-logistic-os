@@ -1,0 +1,70 @@
+import {test,expect} from '@playwright/test';
+import {readFileSync} from 'node:fs';
+import {randomUUID} from 'node:crypto';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+import {resolve} from 'node:path';
+
+test('Stock sugerido uploads 30 SKUs, previews 249 incoming units and commits once without mixing clients',async({page})=>{
+ const fixture=fileURLToPath(new URL('../fixtures/bristol-catalog-stock-demo.xlsx',import.meta.url));
+ const send=async(path:string,data:Record<string,unknown>)=>{const r=await page.request.post(path,{headers:{'X-Requested-With':'logistics-os'},data:{commandId:randomUUID(),...data}});expect(r.ok(),path+': '+await r.text()).toBeTruthy();return r.json();};
+ const session=await(await page.request.get('/api/session')).json();
+ if(session.setupRequired)await send('/api/setup',{organizationName:'QA recepción Excel',timezone:'America/Asuncion',username:'qa-browser',password:'QA-Browser-Isolated-2026!'});else await send('/api/login',{username:'qa-browser',password:'QA-Browser-Isolated-2026!'});
+ const suffix=randomUUID().slice(0,8),client=(await send('/api/clients',{name:'Bristol Excel QA '+suffix})).id,other=(await send('/api/clients',{name:'Otro Excel QA '+suffix})).id;
+ const catalog={filename:'catalogo_skus_mock.xlsx',contentBase64:readFileSync(fixture).toString('base64')};
+ for(const clientId of [client,other])await send('/api/inventory/catalog/import',{...catalog,clientId});
+ const location=(await send('/api/inventory/locations',{code:'EXCEL-'+suffix,name:'Deposito Excel QA'})).id;
+ const products=(await(await page.request.get('/api/inventory/products?clientId='+client+'&limit=100')).json()).items as Array<{id:string;sku:string}>;
+ const existing:Record<string,number>={'0003':5,'0011':7,'0012':2,'0015':31,'0018':1,'0021':5,'0026':5,'0028':1,'0029':1};
+ for(const [sku,quantity] of Object.entries(existing))await send('/api/inventory/receipts',{clientId:client,locationId:location,productId:products.find(p=>p.sku==='MOCK-NX-'+sku)!.id,quantity});
+ const stock=async(clientId:string)=>{const result=await(await page.request.get('/api/inventory/stock?clientId='+clientId+'&limit=100')).json();return {count:result.total,units:result.items.reduce((sum:number,row:{quantity:number})=>sum+row.quantity,0)};};
+ expect(await stock(client)).toEqual({count:9,units:58});
+ await page.goto('/');await page.getByRole('navigation',{name:'Navegación principal'}).getByRole('button',{name:'Inventario',exact:true}).click();
+ await page.getByRole('button',{name:'Recibir mercadería',exact:true}).click();
+ const panel=page.locator('.stock-receipt-panel');
+ await panel.getByRole('combobox',{name:'Cliente dueño de la mercadería',exact:true}).selectOption(client);
+ await panel.getByRole('combobox',{name:'Dónde se guarda',exact:true}).selectOption(location);
+ await panel.getByLabel(/^Archivo de stock/).setInputFiles(fixture);
+ await expect(panel.getByRole('combobox',{name:'Hoja de stock',exact:true})).toHaveValue('Stock sugerido');
+ await expect(panel.getByText('30 filas · 249 unidades por recibir',{exact:true})).toBeVisible();
+ await expect(panel.getByRole('textbox',{name:'SKU fila 2',exact:true})).toHaveValue('MOCK-NX-0001');
+ await expect(panel.getByRole('textbox',{name:'Cantidad fila 2',exact:true})).toHaveValue('7');
+ await panel.getByRole('button',{name:'Validar recepción',exact:true}).click();
+ await expect(panel.getByText('30 productos · 249 unidades listas para recibir',{exact:true})).toBeVisible();
+ const charger=panel.getByRole('textbox',{name:'SKU fila 16',exact:true}).locator('..').locator('..');
+ await expect(charger.getByRole('cell').nth(3)).toContainText('Cargador USB');
+ await expect(charger.getByRole('cell').nth(4)).toHaveText('31');await expect(charger.getByRole('cell').nth(5)).toHaveText('41');
+ expect(await stock(client)).toEqual({count:9,units:58});
+ await page.screenshot({path:'.local/stock-receipt-xlsx-desktop.png',fullPage:true});
+ await page.setViewportSize({width:390,height:844});
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await expect(panel.getByRole('button',{name:'Confirmar recepción del lote',exact:true})).toBeVisible();
+ await page.screenshot({path:'.local/stock-receipt-xlsx-mobile.png',fullPage:true});
+ await page.setViewportSize({width:1365,height:900});
+ const request=page.waitForRequest(r=>new URL(r.url()).pathname==='/api/inventory/receipts/batch'&&r.method()==='POST');
+ await panel.getByRole('button',{name:'Confirmar recepción del lote',exact:true}).click();const payload=(await request).postDataJSON();
+ await expect(panel.getByText(/30 productos · 249 unidades recibidas\./)).toBeVisible();
+ expect(await stock(client)).toEqual({count:30,units:307});expect(await stock(other)).toEqual({count:0,units:0});
+ const retry=await page.request.post('/api/inventory/receipts/batch',{headers:{'X-Requested-With':'logistics-os'},data:payload});expect(retry.ok()).toBe(true);
+ expect(await stock(client)).toEqual({count:30,units:307});
+ const history=await(await page.request.get('/api/inventory/receipts/imports?clientId='+client)).json();expect(history.items).toHaveLength(1);expect(history.items[0].unit_count).toBe(249);
+ await panel.getByLabel(/^Archivo de stock/).setInputFiles(fixture);await panel.getByRole('button',{name:'Validar recepción',exact:true}).click();
+ await expect(panel.getByText(/Este contenido coincide con la recepción/)).toBeVisible();
+ await expect(panel.getByRole('button',{name:'Confirmar recepción del lote',exact:true})).toBeDisabled();
+ await panel.getByRole('textbox',{name:'SKU fila 2',exact:true}).fill('SKU-INEXISTENTE-QA');
+ await panel.getByRole('button',{name:'Validar recepción',exact:true}).click();
+ await expect(panel.getByText('Corregí el lote antes de recibir',{exact:true})).toBeVisible();
+ await expect(panel.getByRole('button',{name:'Confirmar recepción del lote',exact:true})).toHaveCount(0);
+ expect(await stock(client)).toEqual({count:30,units:307});
+ expect((await(await page.request.get('/api/inventory/reconciliation')).json()).ok).toBe(true);
+});
+
+test('Stock sugerido tutorial walks through file, preview and a single confirmation without business API calls',async({page})=>{
+ const calls:string[]=[],errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(new URL(request.url()).pathname.startsWith('/api/'))calls.push(request.url());});
+ await page.goto(pathToFileURL(resolve('MANUAL_WORKFLOWS_NEXORA_PORTATIL.html')).href+'#guia/recibir-excel/1');
+ for(let step=1;step<=4;step++){
+  await expect(page.locator('.coach-step')).toContainText(step+' de 4');
+  const examples=page.getByRole('button',{name:'Usar datos de ejemplo'});if(await examples.count())await examples.click();
+  await page.locator('#practice-action').click();await expect(page.locator('#step-result')).toBeVisible();await page.locator('#next').click();
+ }
+ await expect(page.locator('.celebrate')).toBeVisible();expect(calls).toEqual([]);expect(errors).toEqual([]);
+});

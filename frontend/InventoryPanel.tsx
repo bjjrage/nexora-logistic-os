@@ -1,3 +1,4 @@
+import StockReceiptPanel, {type ReceiptSeed} from './StockReceiptPanel';
 import AccountRecovery from './AccountRecovery';
 import OrderStockSummary from './OrderStockSummary';
 import OrderReservationStock, {reservationStock} from './OrderReservationStock';
@@ -45,7 +46,6 @@ type CatalogRow = { row: number; sku: string; name: string; barcode?: string | n
 type CatalogRowError = { row: number; field?: string; message: string };
 type CatalogPreview = { valid: boolean; rowCount: number; createCount: number; updateCount: number; unchangedCount: number; rows: CatalogRow[]; rowErrors: CatalogRowError[]; ignoredColumns?: string[] };
 type CatalogSource = { clientId: string; csv?: string; filename?: string; contentBase64?: string; defaultTracking?: "QUANTITY" | "SERIAL" };
-type ReceiptBasketItem = { productId: string; quantity: number; serials: string[] };
 type StockRow = { key: string; clientId?: string; clientName: string; productId: string; sku: string; productName: string; serial?: string; barcode?: string | null; locationCode: string; quantity: number; unit: string; status: string; orderReference: string };
 type Props = { section: Section; role: Role; clients: Client[]; initialClientId?:string; initialView?:InventoryView; onReturnToClient?:(clientId:string)=>void; companyName?:string; supportContacts?:{name:string;role:string}[]; onManageClients?:()=>void; onOpenRoutes?:(routeId?:string)=>void; onReceiveStock?:(clientId:string)=>void; vehicles: Vehicle[]; routes: RouteOption[]; assignments: AssignmentOption[]; parcels: ParcelOption[]; returns: ReturnOption[]; onRefresh?: () => Promise<void>; uploadEvidence: EvidenceUpload };
 
@@ -301,23 +301,15 @@ export default function InventoryPanel({ section, role, clients, initialClientId
   useEffect(()=>{const timer=setTimeout(()=>setOrdersQuery(ordersSearch),250);return()=>clearTimeout(timer);},[ordersSearch]);
   const [importHistoryPage, setImportHistoryPage] = useState(0);
   const [orderCsvPreviewPage, setOrderCsvPreviewPage] = useState(0);
-  const [catalogMissingCode, setCatalogMissingCode] = useState("");
   const [catalogClientId, setCatalogClientId] = useState(initialClientId);
   const [catalogDefaultTracking, setCatalogDefaultTracking] = useState<"" | "QUANTITY" | "SERIAL">("");
   const [selectedClient, setSelectedClient] = useState(initialClientId);
   const [selectedProduct, setSelectedProduct] = useState("");
-  const [receiptSearch, setReceiptSearch] = useState("");
-  const [receiptPage, setReceiptPage] = useState(0);
-  const [receiptCatalog, setReceiptCatalog] = useState<Product[]>([]);
-  const [receiptTotal, setReceiptTotal] = useState(0);
-  const [receiptLoading, setReceiptLoading] = useState(false);
-  const [receiptBasket, setReceiptBasket] = useState<Record<string, ReceiptBasketItem>>({});
   const [selectedLocation, setSelectedLocation] = useState("");
   const [returnLocationId, setReturnLocationId] = useState("");
   const [targetLocation, setTargetLocation] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [reason, setReason] = useState("");
-  const [reference, setReference] = useState("");
   const [scanCounts, setScanCounts] = useState<Record<string, number>>({});
   const [scanSerials, setScanSerials] = useState<string[]>([]);
   const [scanCodes, setScanCodes] = useState<string[]>([]);
@@ -346,7 +338,8 @@ export default function InventoryPanel({ section, role, clients, initialClientId
   const [previewingImport, setPreviewingImport] = useState(false);
   const [importCommandId, setImportCommandId] = useState("");
   const [catalogFilename, setCatalogFilename] = useState("");
-  const [receiptFocusSignal, setReceiptFocusSignal] = useState(0);
+  const [receiptSeed,setReceiptSeed]=useState<ReceiptSeed|null>(null);
+  const [lastCatalogSource,setLastCatalogSource]=useState<CatalogSource|null>(null);
   const [catalogSource, setCatalogSource] = useState<CatalogSource | null>(null);
   const [catalogPreview, setCatalogPreview] = useState<CatalogPreview | null>(null);
   const [previewingCatalog, setPreviewingCatalog] = useState(false);
@@ -481,36 +474,12 @@ export default function InventoryPanel({ section, role, clients, initialClientId
     }
   };
   const eligibleProducts = inventory.products.filter((product) => product.active !== false && (!product.clientId || product.clientId === selectedClient));
-  useEffect(() => { setReceiptSearch(""); setReceiptPage(0); }, [selectedClient]);
-  useEffect(() => {
-    if (section !== "inventory" || inventoryView !== "receive" || !selectedClient) {
-      setReceiptCatalog([]); setReceiptTotal(0); return;
-    }
-    const controller = new AbortController();
-    setReceiptCatalog([]); setReceiptTotal(0); setReceiptLoading(true);
-    const timer = setTimeout(() => {
-      const params = new URLSearchParams({ clientId: selectedClient, q: receiptSearch, limit: String(INVENTORY_PAGE_SIZE), offset: String(receiptPage * INVENTORY_PAGE_SIZE) });
-      void apiRequest<{items: Product[]; total: number}>("/api/inventory/products?" + params, { signal: controller.signal })
-        .then(result => { if (!controller.signal.aborted) { setReceiptCatalog(result.items); setReceiptTotal(result.total); } })
-        .catch(caught => { if (!controller.signal.aborted) setError(inventoryError(caught)); })
-        .finally(() => { if (!controller.signal.aborted) setReceiptLoading(false); });
-    }, 200);
-    return () => { clearTimeout(timer); controller.abort(); };
-  }, [section, inventoryView, selectedClient, receiptSearch, receiptPage]);
-  const chooseReceiptProduct = (product: Product) => {
-    if (product.active === false || product.clientId !== selectedClient) return;
-    if (Object.keys(receiptBasket).some(id => id !== product.id)) {
-      setError("Confirmá la recepción pendiente antes de elegir otro producto."); return;
-    }
-    setInventory(current => ({ ...current, products: current.products.some(item => item.id === product.id) ? current.products : [product, ...current.products] }));
-    setSelectedProduct(product.id); setCatalogMissingCode(""); setError(""); setSuccess(""); setQuantity("1");
-  };
   const runMutation = async (path: string, payload: Record<string, unknown>, message: string, refresh: "inventory" | "orders" | "access" | "both" = "inventory", method = "POST") => {
     setBusy(true); setError(""); setSuccess("");
     try {
       await api(path, method, { commandId: commandId(), ...payload });
       setSuccess(message);
-      setReason(""); setReference(""); setScanCounts({}); setScanSerials([]); setScanCodes([]); setStagedReturnIds([]); setReturnEvidenceIds({}); setStagedReleaseParcelIds([]); setReleaseReason("");
+      setReason(""); setScanCounts({}); setScanSerials([]); setScanCodes([]); setStagedReturnIds([]); setReturnEvidenceIds({}); setStagedReleaseParcelIds([]); setReleaseReason("");
       const refreshTasks: Promise<void>[] = [];
       if (refresh === "inventory" || refresh === "both") refreshTasks.push(refreshInventory());
       if (refresh === "orders" || refresh === "both") refreshTasks.push(refreshOrders());
@@ -541,57 +510,6 @@ export default function InventoryPanel({ section, role, clients, initialClientId
       }catch(e){setError(inventoryError(e));return;}
     }
     const selected = productById.get(selectedProduct);
-    if (inventoryView === "receive") {
-      const resolvedForReceipt = product ?? (unit ? productById.get(unit.productId) : undefined) ?? (selected?.tracking === "SERIAL" ? selected : undefined);
-      if (!resolvedForReceipt) {
-        setCatalogMissingCode(code.trim());
-        setError(`No está en catálogo el código «${code.trim()}». Importá el listado o elegí otro cliente.`);
-        return;
-      }
-      if (resolvedForReceipt.clientId && resolvedForReceipt.clientId !== selectedClient) {
-        setError("El código corresponde a un producto de otro cliente.");
-        return;
-      }
-      setCatalogMissingCode("");
-      const pendingReceiptProductId = Object.keys(receiptBasket)[0];
-      if (pendingReceiptProductId && pendingReceiptProductId !== resolvedForReceipt.id) {
-        const pendingProduct = productById.get(pendingReceiptProductId);
-        setError(`${pendingProduct?.sku ?? "Este producto"} tiene lecturas pendientes. Confirmá esta recepción antes de cambiar de producto.`);
-        return;
-      }
-      setSelectedProduct(resolvedForReceipt.id);
-      if (resolvedForReceipt.tracking === "SERIAL") {
-        if (product) {
-          setError("");
-          setSuccess(`${resolvedForReceipt.sku} listo. Escaneá ahora cada serie individual.`);
-          return;
-        }
-        if (unit || inventory.units.some((item) => item.productId === resolvedForReceipt.id && item.serial.trim().toLowerCase() === normalized)) {
-          setError("Esa serie ya existe en el inventario. Escaneá la serie nueva que recibiste.");
-          return;
-        }
-        setReceiptBasket((current) => {
-          const item = current[resolvedForReceipt.id] ?? { productId: resolvedForReceipt.id, quantity: 0, serials: [] };
-          if (item.serials.some((serial) => serial.trim().toLowerCase() === normalized)) return current;
-          return { ...current, [resolvedForReceipt.id]: { productId: resolvedForReceipt.id, quantity: item.quantity + 1, serials: [...item.serials, code.trim()] } };
-        });
-        setError("");
-       setSuccess(`${resolvedForReceipt.sku} · serie ${code.trim()} agregada al lote.`);
-        return;
-      }
-      if (!product) {
-        setError("Escaneá el SKU o código de barras del producto del catálogo.");
-        return;
-      }
-      setReceiptBasket((current) => {
-        const item = current[resolvedForReceipt.id] ?? { productId: resolvedForReceipt.id, quantity: 0, serials: [] };
-        return { ...current, [resolvedForReceipt.id]: { ...item, quantity: item.quantity + 1 } };
-      });
-      setError("");
-      setSuccess(`${resolvedForReceipt.sku} agregado al lote de recepción.`);
-      return;
-    }
-    setCatalogMissingCode("");
     const resolved = product ?? (unit ? productById.get(unit.productId) : undefined) ?? (selected?.tracking === "SERIAL" ? selected : undefined);
     if (!resolved) { setError(`No hay un producto o una serie registrada con el código «${code}».`); return; }
     if (resolved.clientId && resolved.clientId !== selectedClient) { setError("El código corresponde a un producto de otro cliente."); return; }
@@ -606,31 +524,6 @@ export default function InventoryPanel({ section, role, clients, initialClientId
     } else setScanCounts((items) => ({ ...items, [resolved.id]: (items[resolved.id] ?? 0) + 1 }));
   };
 
-  const addManualReceiptQuantity = () => {
-    const item = productById.get(selectedProduct);
-    const amount = Number(quantity);
-    if (!item) { setError("Escaneá primero un SKU o código de barras del catálogo."); return; }
-    if (item.tracking === "SERIAL") { setError("Este producto se recibe escaneando una serie por unidad."); return; }
-    if (Object.keys(receiptBasket).some((productId) => productId !== item.id)) { setError("Confirmá la recepción pendiente antes de cambiar de producto."); return; }
-    if (!Number.isInteger(amount) || amount <= 0) { setError("Ingresá una cantidad entera mayor que cero."); return; }
-    setReceiptBasket((current) => {
-      const previous = current[item.id] ?? { productId: item.id, quantity: 0, serials: [] };
-      return { ...current, [item.id]: { ...previous, quantity: previous.quantity + amount } };
-    });
-    setError(""); setCatalogMissingCode("");
-    setSuccess(`${item.sku}: ${amount} unidad(es) sumadas al lote.`);
-    setQuantity("1");
-  };
-
-  const handleReceipt = async (event: FormEvent) => {
-    event.preventDefault();
-    const item = Object.values(receiptBasket)[0];
-    if (!selectedClient || !selectedLocation || !item) { setError("Elegí cliente y ubicación, luego escaneá o agregá un producto."); return; }
-    if (Object.keys(receiptBasket).length !== 1) { setError("Confirmá cada producto en una recepción independiente."); return; }
-    if (!Number.isInteger(item.quantity) || item.quantity <= 0 || (productById.get(item.productId)?.tracking === "SERIAL" && item.serials.length !== item.quantity)) { setError("Revisá la cantidad y las series antes de confirmar."); return; }
-    const ok = await runMutation("/api/inventory/receipts", { clientId: selectedClient, productId: item.productId, locationId: selectedLocation, quantity: item.quantity, ...(item.serials.length ? { serials: item.serials.map((serial) => ({ serial })) } : {}), ...(reference.trim() ? { reference: reference.trim() } : {}), ...(reason.trim() ? { reason: reason.trim() } : {}) }, "Recepción registrada.");
-    if (ok) { setReceiptBasket({}); setSelectedProduct(""); setQuantity("1"); setReceiptFocusSignal((signal) => signal + 1); }
-  };
   const handleMovement = async (event: FormEvent) => {
     event.preventDefault();
     const item = productById.get(selectedProduct);
@@ -684,7 +577,7 @@ export default function InventoryPanel({ section, role, clients, initialClientId
     if (!canManage || !catalogSource || !catalogPreview?.valid || catalogPreview.rowErrors.length) { setError("La importación requiere una vista previa válida y sin errores."); return; }
     const source = { ...catalogSource, clientId: catalogClientId, defaultTracking: catalogDefaultTracking || undefined };
     const ok = await runMutation("/api/inventory/catalog/import", source, "Catálogo actualizado desde el archivo.", "inventory");
-    if (ok) { setCatalogSource(null); setCatalogPreview(null); setCatalogFilename(""); setCatalogPreviewPage(0); setCatalogErrorPage(0); }
+    if (ok) { setLastCatalogSource(source); setCatalogSource(null); setCatalogPreview(null); setCatalogFilename(""); setCatalogPreviewPage(0); setCatalogErrorPage(0); }
   };
   const saveProduct = async (event: FormEvent) => {
     event.preventDefault();
@@ -901,22 +794,10 @@ export default function InventoryPanel({ section, role, clients, initialClientId
           {stockTotal > INVENTORY_PAGE_SIZE && <div className="pagination"><button type="button" className="text-button" onClick={() => setStockPage((page) => Math.max(0, page - 1))} disabled={stockPage === 0}>Anterior</button><span>Página {stockPage + 1} de {Math.ceil(stockTotal / INVENTORY_PAGE_SIZE)}</span><button type="button" className="text-button" onClick={() => setStockPage((page) => page + 1)} disabled={(stockPage + 1) * INVENTORY_PAGE_SIZE >= stockTotal}>Siguiente</button></div>}<section className="card stock-table-card"><div className="card-header"><div><h2>Existencias</h2><p>{filteredStockRows.length} resultado(s) · cantidades y series</p></div><a className="button button-secondary" href="/api/inventory/export.csv"><ArrowDownToLine aria-hidden="true" />Exportar CSV</a></div>{filteredStockRows.length ? <div className="table-wrap"><table><thead><tr><th>Cliente</th><th>Producto / serie</th><th>Ubicación</th><th>Estado</th><th>Cantidad</th><th>Pedido</th></tr></thead><tbody>{pageStockRows.map((row) => <tr key={row.key}><td>{row.clientName}</td><td><strong>{row.productName}</strong><small>{row.sku}{row.serial ? " · Serie " + row.serial : ""}{row.barcode ? " · " + row.barcode : ""}</small></td><td>{row.locationCode}</td><td><span className="badge badge-neutral">{statusLabel(row.status)}</span></td><td>{new Intl.NumberFormat("es").format(row.quantity)} {row.unit}</td><td>{row.orderReference}</td></tr>)}</tbody></table></div> : <div className="empty-state"><PackageSearch aria-hidden="true" /><h3>No encontramos existencias</h3><p>Probá cambiar la búsqueda o los filtros.</p></div>}</section>
         </>}
         {inventoryView === "receive" && (!clients.length||!hasReceiptLocations)&&<section className="card task-card setup-needed" aria-labelledby="receipt-setup-title"><h2 id="receipt-setup-title">{!clients.length?'Primero agregá un cliente':'Primero creá un depósito o sector'}</h2><p>{!clients.length?'El cliente es la empresa dueña de los productos, por ejemplo Universo.':'Es el lugar físico donde vas a guardar la mercadería, por ejemplo Depósito central · Sector A.'}</p>{canManage?<button className="button button-primary" onClick={()=>{if(!clients.length){onManageClients?.();return;}setEditingLocation(null);setLocationForm({code:'',name:'',kind:'DEPOT'});setShowLocationForm(true);}}>{!clients.length?'Agregar cliente':'Crear depósito o sector'}</button>:<div className="setup-owner"><strong>Lo configura Administración de {companyName}.</strong><p>Entrá con la cuenta administradora y abrí Inventario → Depósitos y sectores.{setupContact?' Cuenta administradora: '+setupContact+'.':''}</p></div>}</section>}
-        {inventoryView === "receive" && !!clients.length && hasReceiptLocations && <section className="card task-card"><div className="card-header"><div><h2>Mercadería del cliente</h2><p>Elegí de quién son los productos y dónde los vas a guardar.</p></div></div><form className="stack" onSubmit={(event) => void handleReceipt(event)}><div className="inventory-form-grid"><label className="field"><span>Cliente dueño de la mercadería</span><select required value={selectedClient} onChange={(event) => { if (Object.keys(receiptBasket).length) { setError("Confirmá esta recepción antes de cambiar de cliente."); return; } setSelectedClient(event.target.value); setSelectedProduct(""); }}><option value="">Seleccionar cliente</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label className="field"><span>Dónde se guarda</span><select required value={selectedLocation} onChange={(event) => setSelectedLocation(event.target.value)}><option value="">Elegir depósito o sector</option>{inventory.locations.filter((location) => location.active !== false && location.kind !== "QUARANTINE").map((location) => <option key={location.id} value={location.id}>{location.code} · {location.name}</option>)}</select></label><label className="field"><span>Referencia</span><input maxLength={120} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Remito u orden" /></label><label className="field"><span>Observación</span><input maxLength={500} value={reason} onChange={(event) => setReason(event.target.value)} /></label></div>{!inventory.locations.some((location) => location.active !== false && location.kind !== "QUARANTINE") && <p className="notice error">{role === "DEPOT" ? "Tu administrador debe crear un depósito o sector." : "Creá un depósito o sector en Inventario → Depósitos y sectores."}</p>}<BarcodeScanner focusSignal={receiptFocusSignal} onScan={acceptInventoryScan} disabled={busy || !selectedClient || !selectedLocation} label="Escanear SKU o código de barras" />
-          <section className="receipt-product" aria-label="Productos del cliente">
-            <div style={{width: "100%"}}>
-              <strong>Elegir producto del catálogo</strong>
-              <p className="muted">Buscá por nombre o código y seleccioná el producto que recibiste.</p>
-              <label className="field"><span>Buscar producto</span><input type="search" value={receiptSearch} maxLength={200} placeholder="Nombre, SKU o código de barras" onChange={event => { setReceiptSearch(event.target.value); setReceiptPage(0); }} disabled={!selectedClient} /></label>
-              {receiptLoading ? <p role="status">Buscando productos…</p> : !selectedClient ? <p className="muted">Elegí primero un cliente.</p> : receiptCatalog.length === 0 ? <p className="muted">No encontramos productos. Revisá la búsqueda o el catálogo del cliente.</p> : <div className="parcel-picker compact">{receiptCatalog.map(product => <button key={product.id} type="button" className="button button-secondary" disabled={busy || product.active === false} onClick={() => chooseReceiptProduct(product)} aria-pressed={selectedProduct === product.id}>{product.name} · {product.sku}{product.active === false ? " · Archivado" : ""}</button>)}</div>}
-              {selectedProduct && productById.get(selectedProduct)?.tracking === "SERIAL" && <p className="muted">Ahora ingresá o escaneá la serie individual de cada unidad.</p>}
-              {receiptTotal > INVENTORY_PAGE_SIZE && <div className="pagination"><button type="button" className="text-button" disabled={receiptPage === 0 || receiptLoading} onClick={() => setReceiptPage(page => page - 1)}>Anterior</button><span>Página {receiptPage + 1} de {Math.ceil(receiptTotal / INVENTORY_PAGE_SIZE)}</span><button type="button" className="text-button" disabled={(receiptPage + 1) * INVENTORY_PAGE_SIZE >= receiptTotal || receiptLoading} onClick={() => setReceiptPage(page => page + 1)}>Siguiente</button></div>}
-            </div>
-          </section>
-          {catalogMissingCode && <div className="catalog-missing"><strong>No está en el catálogo</strong><span>El código “{catalogMissingCode}” no se agregó al stock.</span>{canManage ? <button type="button" className="button button-secondary" onClick={() => { setCatalogClientId(selectedClient); setInventoryView("catalog"); setCatalogMissingCode(""); }}>Importar catálogo</button> : <small>Administración o Coordinación logística debe importar el catálogo de este cliente.</small>}</div>}
-          {selectedProduct && <div className="receipt-product"><span><small>Producto reconocido</small><strong>{productById.get(selectedProduct)?.name || "Producto"}</strong><small>SKU {productById.get(selectedProduct)?.sku || "—"} · {productById.get(selectedProduct)?.tracking === "SERIAL" ? "por serie" : "por cantidad"}</small></span>{productById.get(selectedProduct)?.tracking === "QUANTITY" && <div className="receipt-manual-quantity"><label className="field"><span>Sumar cantidad</span><input type="number" min="1" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><button className="button button-secondary" type="button" onClick={addManualReceiptQuantity} disabled={busy}>Agregar cantidad</button></div>}</div>}
-          {!!Object.keys(receiptBasket).length && <section className="receipt-basket"><div className="card-header"><div><h3>Recepción pendiente</h3><p>Confirmá antes de escanear otro SKU.</p></div><button className="text-button" type="button" onClick={() => { setReceiptBasket({}); setSelectedProduct(""); setError(""); }}>Vaciar</button></div>{Object.values(receiptBasket).map((item) => { const product = productById.get(item.productId); return <div className="receipt-basket-row" key={item.productId}><span><strong>{product?.name || "Producto"}</strong><small>{product?.sku || "SKU"} · {item.quantity} {product?.unit || "unidades"}</small>{item.serials.length > 0 && <small>Series: {item.serials.join(", ")}</small>}</span><button className="text-button" type="button" onClick={() => { setReceiptBasket({}); setSelectedProduct(""); }} disabled={busy}>Quitar</button></div>; })}<button className="button button-primary" type="submit" disabled={busy || !selectedLocation}><PackagePlus aria-hidden="true" />Confirmar recepción</button></section>}</form></section>}
+        {!!clients.length && hasReceiptLocations && canWarehouse && <div hidden={inventoryView!=="receive"}><StockReceiptPanel active={inventoryView==="receive"} clients={clients} locations={receiptLocations} clientId={selectedClient} locationId={selectedLocation} onClientChange={setSelectedClient} onLocationChange={setSelectedLocation} seed={receiptSeed} onReceived={async()=>{await refreshInventory();await onRefresh?.();}} onShowStock={()=>{setInventoryClientFilter(selectedClient);setInventoryView("stock");}} onShowCatalog={()=>{setCatalogClientId(selectedClient);setInventoryView("catalog");}}/></div>}
         {(inventoryView === "move" || inventoryView === "adjust") && <section className="card task-card"><div className="card-header"><div><h2>{inventoryView === "move" ? "Trasladar stock" : "Ajustar stock"}</h2><p>{inventoryView === "move" ? "Escaneá desde la ubicación de origen." : "Registrá la diferencia y el motivo de auditoría."}</p></div></div><form className="stack" onSubmit={(event) => void (inventoryView === "move" ? handleMovement(event) : handleAdjustment(event))}><div className="inventory-form-grid"><label className="field"><span>Cliente</span><select required value={selectedClient} onChange={(event) => setSelectedClient(event.target.value)}><option value="">Seleccionar cliente</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label className="field"><span>Producto (opcional si escaneás)</span><select value={selectedProduct} onChange={(event) => setSelectedProduct(event.target.value)}><option value="">Seleccionar producto</option>{eligibleProducts.map((product) => <option key={product.id} value={product.id}>{product.sku} · {product.name}</option>)}</select></label><label className="field"><span>{inventoryView === "move" ? "Origen" : "Ubicación"}</span><select required value={selectedLocation} onChange={(event) => setSelectedLocation(event.target.value)}><option value="">Seleccionar</option>{inventory.locations.filter((location) => location.active !== false && (inventoryView !== "move" || location.kind !== "QUARANTINE")).map((location) => <option key={location.id} value={location.id}>{location.code} · {location.name}</option>)}</select></label>{inventoryView === "move" && <label className="field"><span>Destino</span><select required value={targetLocation} onChange={(event) => setTargetLocation(event.target.value)}><option value="">Seleccionar</option>{inventory.locations.filter((location) => location.active !== false && location.kind !== "QUARANTINE").map((location) => <option key={location.id} value={location.id}>{location.code} · {location.name}</option>)}</select></label>}<label className="field"><span>{inventoryView === "move" ? "Cantidad" : "Diferencia (+/-)"}</span><input required type="number" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label className="field"><span>Motivo</span><input required={inventoryView === "adjust"} maxLength={500} value={reason} onChange={(event) => setReason(event.target.value)} /></label></div><BarcodeScanner onScan={acceptInventoryScan} disabled={busy || !selectedClient} label="Escanear SKU, serie o código de unidad" />{!!scanSerials.length && <p className="notice">Series: {scanSerials.join(", ")}</p>}<button className="button button-primary" type="submit" disabled={busy || !canWarehouse}>{inventoryView === "move" ? <><ArrowRightLeft aria-hidden="true" />Confirmar traslado</> : "Registrar ajuste"}</button></form></section>}
         {inventoryView === "catalog" && <div className="inventory-flow-grid"><section className="card task-card"><div className="card-header"><div><h2>Actualizar catálogo</h2><p>La validación no modifica productos ni existencias.</p></div><a className="text-button" href="/api/inventory/catalog/template.csv" download>Descargar plantilla CSV</a></div>{!canManage ? <p className="notice error">Administración y Coordinación logística pueden importar catálogos.</p> : <form className="stack" onSubmit={(event) => void previewCatalog(event)}><label className="field"><span>Cliente</span><select required value={catalogClientId} onChange={(event) => { setCatalogClientId(event.target.value); setCatalogSource(null); setCatalogPreview(null); }}><option value="">Seleccionar cliente</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label className="field"><span>Seguimiento para filas nuevas sin tipo</span><select value={catalogDefaultTracking} onChange={(event) => { setCatalogDefaultTracking(event.target.value as "" | "QUANTITY" | "SERIAL"); setCatalogPreview(null); }}><option value="">El archivo debe indicarlo</option><option value="QUANTITY">Por cantidad</option><option value="SERIAL">Por serie</option></select></label><label className="field"><span>Archivo CSV o Excel (.xlsx)</span><input type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => void readCatalogFile(event.target.files?.[0])} /><small>{catalogFilename || "Elegí un archivo para validar."}</small></label><div className="inventory-actions"><button className="button button-primary" type="submit" disabled={previewingCatalog || busy || !catalogSource || !catalogClientId}><Search aria-hidden="true" />{previewingCatalog ? "Validando…" : "Validar archivo"}</button>{catalogPreview && <button className="button button-secondary" type="button" onClick={() => { setCatalogPreview(null); setCatalogSource(null); setCatalogFilename(""); }}>Elegir otro archivo</button>}</div></form>}
+          {lastCatalogSource && lastCatalogSource.clientId===catalogClientId && <div className="notice"><strong>Catálogo guardado.</strong><p>Podés cargar las existencias del mismo archivo si incluye una hoja de stock.</p><button type="button" className="button button-secondary" onClick={()=>{setSelectedClient(catalogClientId);setReceiptSeed({...lastCatalogSource,token:commandId()});setInventoryView("receive");}}>Cargar existencias</button></div>}
           {catalogPreview && <div className={catalogPreview.valid && !catalogPreview.rowErrors.length ? "catalog-preview is-valid" : "catalog-preview has-errors"} aria-live="polite"><h3>{catalogPreview.valid && !catalogPreview.rowErrors.length ? "Vista previa validada" : "Revisá los errores"}</h3><div className="catalog-counts"><span><strong>{catalogPreview.rowCount}</strong> filas</span><span><strong>{catalogPreview.createCount}</strong> nuevos</span><span><strong>{catalogPreview.updateCount}</strong> actualizados</span><span><strong>{catalogPreview.unchangedCount}</strong> sin cambios</span></div>{catalogPreview.valid && !catalogPreview.rowErrors.length && <div className="notice"><strong>La validación terminó.</strong><p>Para guardar los productos, confirmá la importación.</p><button className="button button-primary" type="button" onClick={() => void importCatalog()} disabled={!canManage || busy || !catalogPreview.valid || !!catalogPreview.rowErrors.length}><Upload aria-hidden="true" />Confirmar importación</button></div>}{!catalogPreview.valid && <div className="notice error" role="alert"><strong>No se guardó ningún producto.</strong><p>Revisá los errores antes de continuar. Para productos nuevos, elegí el seguimiento: por cantidad o por serie.</p><ul>{catalogPreview.rowErrors.slice(0, 5).map((item,index)=><li key={index}>Fila {item.row}: {item.message}</li>)}</ul></div>}{!!catalogPreview.ignoredColumns?.length && <p className="muted">Columnas omitidas: {catalogPreview.ignoredColumns.join(", ")}</p>}{!!catalogPreview.rows.length && <><h4>Productos detectados</h4><div className="table-wrap"><table><thead><tr><th>Fila</th><th>SKU</th><th>Producto</th><th>Seguimiento</th><th>Acción</th></tr></thead><tbody>{pageCatalogPreviewRows.map((row) => <tr key={row.row}><td>{row.row}</td><td>{row.sku}</td><td>{row.name}</td><td>{row.tracking === "SERIAL" ? "Por serie" : row.tracking === "QUANTITY" ? "Por cantidad" : "Sin indicar"}</td><td>{row.action === "CREATE" ? "Nuevo" : row.action === "UPDATE" ? "Actualizar" : row.action === "UNCHANGED" ? "Sin cambios" : "Revisar"}</td></tr>)}</tbody></table></div>{catalogPreview.rows.length > INVENTORY_PAGE_SIZE && <div className="pagination"><button type="button" className="text-button" onClick={() => setCatalogPreviewPage((page) => Math.max(0, page - 1))} disabled={catalogPreviewPage === 0}>Anterior</button><span>Filas {catalogPreviewPage * INVENTORY_PAGE_SIZE + 1}–{Math.min((catalogPreviewPage + 1) * INVENTORY_PAGE_SIZE, catalogPreview.rows.length)} de {catalogPreview.rows.length}</span><button type="button" className="text-button" onClick={() => setCatalogPreviewPage((page) => page + 1)} disabled={(catalogPreviewPage + 1) * INVENTORY_PAGE_SIZE >= catalogPreview.rows.length}>Siguiente</button></div>}</>}{!!catalogPreview.rowErrors.length && <><h4>Errores por fila</h4><ul className="catalog-errors">{pageCatalogErrors.map((item, index) => <li key={String(item.row) + "-" + index}>Fila {item.row}{item.field ? " · " + item.field : ""}: {item.message}</li>)}</ul>{catalogPreview.rowErrors.length > INVENTORY_PAGE_SIZE && <div className="pagination"><button type="button" className="text-button" onClick={() => setCatalogErrorPage((page) => Math.max(0, page - 1))} disabled={catalogErrorPage === 0}>Anterior</button><span>Error {catalogErrorPage * INVENTORY_PAGE_SIZE + 1}–{Math.min((catalogErrorPage + 1) * INVENTORY_PAGE_SIZE, catalogPreview.rowErrors.length)} de {catalogPreview.rowErrors.length}</span><button type="button" className="text-button" onClick={() => setCatalogErrorPage((page) => page + 1)} disabled={(catalogErrorPage + 1) * INVENTORY_PAGE_SIZE >= catalogPreview.rowErrors.length}>Siguiente</button></div>}</>}</div>}</section>
           {canManage && !catalogSource && !catalogPreview && <section className="card"><div className="card-header"><div><h2>Productos registrados</h2><p>Archivar conserva la trazabilidad.</p></div><button className="button button-secondary" type="button" onClick={() => { setProductForm((form) => ({ ...form, clientId: catalogClientId || form.clientId })); setEditingProduct(null); setShowProductForm(true); }}>Agregar producto</button></div><label className="search-field catalog-product-search"><Search aria-hidden="true" /><input aria-label="Buscar productos del catálogo" value={catalogProductSearch} onChange={(event) => { setCatalogProductSearch(event.target.value); setCatalogProductPage(0); }} placeholder="Buscar SKU, nombre o código de barras" /></label>{catalogTotal > INVENTORY_PAGE_SIZE && <div className="pagination"><button type="button" className="text-button" onClick={() => setCatalogProductPage((page) => Math.max(0, page - 1))} disabled={catalogProductPage === 0}>Anterior</button><span>Página {catalogProductPage + 1} de {Math.ceil(catalogTotal / INVENTORY_PAGE_SIZE)}</span><button type="button" className="text-button" onClick={() => setCatalogProductPage((page) => page + 1)} disabled={(catalogProductPage + 1) * INVENTORY_PAGE_SIZE >= catalogTotal}>Siguiente</button></div>}<div className="table-wrap"><table><thead><tr><th>Cliente</th><th>SKU / producto</th><th>Seguimiento</th><th>Estado</th><th></th></tr></thead><tbody>{pageCatalogProducts.map((product) => <tr key={product.id}><td>{clients.find((client) => client.id === product.clientId)?.name || product.clientName || "Cliente"}</td><td><strong>{product.sku}</strong><small>{product.name}</small></td><td>{product.tracking === "SERIAL" ? "Por serie" : "Por cantidad"}</td><td>{product.active === false ? "Archivado" : "Activo"}</td><td><button className="text-button" type="button" onClick={() => setEditingProduct({ ...product })}>Editar</button> <button className="text-button" type="button" disabled={busy} onClick={() => void toggleProduct(product)}>{product.active === false ? "Activar" : "Archivar"}</button></td></tr>)}</tbody></table></div></section>}</div>}
         {inventoryView === "movements" && <section className="card task-card"><div className="card-header"><div><h2>Movimientos</h2><p>Registro reciente con referencias legibles.</p></div></div>{inventory.hasMore.movements && <p className="notice" role="status">Se muestran los últimos 500 movimientos de {new Intl.NumberFormat("es").format(inventory.counts.movements)} registrados.</p>}{inventory.movements.length ? <>{inventory.movements.length > INVENTORY_PAGE_SIZE && <div className="pagination"><button type="button" className="text-button" onClick={() => setMovementPage((page) => Math.max(0, page - 1))} disabled={movementPage === 0}>Anterior</button><span>Página {movementPage + 1} de {Math.ceil(inventory.movements.length / INVENTORY_PAGE_SIZE)}</span><button type="button" className="text-button" onClick={() => setMovementPage((page) => page + 1)} disabled={(movementPage + 1) * INVENTORY_PAGE_SIZE >= inventory.movements.length}>Siguiente</button></div>}<div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Producto</th><th>Tipo</th><th>Cantidad</th><th>Origen</th><th>Destino</th><th>Referencia / motivo</th></tr></thead><tbody>{pageMovements.map((movement) => <tr key={movement.id}><td>{new Date(movement.createdAt).toLocaleString("es")}</td><td>{movement.clientName || "Cliente"}</td><td>{movement.productName || productById.get(movement.productId || "")?.name || "Producto"}</td><td>{statusLabel((movement.action || movement.type || "Movimiento").toUpperCase())}</td><td>{movement.quantity ?? "—"}</td><td>{locationById.get(movement.fromLocationId || "")?.code || "—"}</td><td>{locationById.get(movement.toLocationId || "")?.code || "—"}</td><td>{movement.reference || movement.reason || "—"}</td></tr>)}</tbody></table></div></> : <p className="empty-state">Todavía no hay movimientos.</p>}</section>}

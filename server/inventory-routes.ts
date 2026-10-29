@@ -5,6 +5,7 @@ import { Inventory, inventorySchemas, type InventoryActor } from './inventory.ts
 import { CatalogImport } from './catalog-import.ts';
 import {parseOrdersXlsx} from './order-xlsx.ts';
 import {authorize} from './auth.ts';
+import {StockReceipts} from './stock-receipts.ts';
 
 export type InventoryAuth = (req: Request) => Promise<Actor | InventoryActor>;
 const actorForInventory = async (auth: InventoryAuth, req: Request) => await auth(req) as InventoryActor;
@@ -14,6 +15,15 @@ const queryString = (value: unknown): string | undefined => typeof value === 'st
 export function installInventoryRoutes(app: Express, store: Database, auth: InventoryAuth) {
   const inventory = new Inventory(store);
   const catalog = new CatalogImport(store);
+  const receipts = new StockReceipts(store);
+  app.get('/api/inventory/receipts/template.xlsx',async(req,res)=>{
+    const file=receipts.template(await actorForInventory(auth,req));
+    res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':'attachment; filename="nexora-stock-template.xlsx"'}).send(file);
+  });
+  app.post('/api/inventory/receipts/read',async(req,res)=>res.json(receipts.read(await actorForInventory(auth,req),req.body)));
+  app.post('/api/inventory/receipts/preview',async(req,res)=>res.json(await receipts.preview(await actorForInventory(auth,req),req.body)));
+  app.post('/api/inventory/receipts/batch',async(req,res)=>res.status(201).json(await receipts.commit(await actorForInventory(auth,req),req.body)));
+  app.get('/api/inventory/receipts/imports',async(req,res)=>res.json(await receipts.history(await actorForInventory(auth,req),queryString(req.query.clientId))));
   app.post('/api/orders/import/xlsx',async(req,res)=>{const actor=await auth(req);authorize(actor as Actor,['ADMIN','OPERATIONS']);res.json(parseOrdersXlsx(req.body));});
   app.get('/api/inventory/products',async(req,res)=>res.json(await inventory.catalogPage(await actorForInventory(auth,req),req.query)));
   app.get('/api/inventory/stock',async(req,res)=>res.json(await inventory.stockPage(await actorForInventory(auth,req),req.query)));
