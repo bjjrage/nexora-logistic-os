@@ -193,6 +193,9 @@
 .receipt-row-error { display:block; min-width:200px; margin-top:4px; color:#a32920; }
 .receipt-checkbox { display:flex; align-items:flex-start; gap:8px; margin:12px 0; }
 .receipt-checkbox input { margin-top:4px; }
+.receipt-completion-option { border:1px solid var(--line); border-radius:10px; padding:12px 14px; background:#f7f9fc; }
+.receipt-completion-option .receipt-checkbox { margin:0 0 6px; font-weight:600; }
+.receipt-completion-option p { margin:0; font-size:13px; }
 .receipt-history { display:grid; gap:12px; margin-top:20px; padding-top:16px; border-top:1px solid var(--line); }
 .stock-receipt-panel > .server-import-preview { margin-top:18px; }
 .empty-state { display:grid; justify-items:center; gap:8px; padding:36px 18px; color:var(--muted); text-align:center; }

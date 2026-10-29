@@ -25,6 +25,62 @@ async function fixture(t:any){
 }
 const isCode=(code:string)=>(e:any)=>e?.code===code;
 
+test('completar hoja descuenta recepciones previas una sola vez, conserva excedentes y repetir no agrega stock',async t=>{
+ const f=await fixture(t),another=(await f.inventory.createLocation(f.actor,{commandId:randomUUID(),code:'OTRO-DEP',name:'Otro depósito'})).id;
+ const receive=(productId:string,quantity:number,locationId=f.locationId)=>f.inventory.receive(f.actor,{commandId:randomUUID(),clientId:f.clientId,productId,quantity,locationId});
+ await receive(f.a,5);await receive(f.a,1,another);await receive(f.b,30);
+ const order=await f.inventory.createOrder(f.actor,{commandId:randomUUID(),clientId:f.clientId,externalId:'RES-COMPLETE',orderDate:'2026-10-29',destination:'Destino',recipientName:'QA',lines:[{productId:f.a,quantity:2}]});
+ await f.inventory.reserveOrder(f.actor,order.id,{commandId:randomUUID()});
+ const input=f.input([f.row('0001','4'),f.row('0002','10',{row:3}),f.row('BC-0001','6',{row:4})],{mode:'COMPLETE_SHEET'});
+ const preview=await f.receipts.preview(f.actor,input);
+ assert.equal(preview.valid,true);assert.equal(preview.unitCount,4);assert.equal(preview.productCount,1);
+ assert.deepEqual(preview.rows.map(row=>row.incoming),[0,0,4]);assert.equal(preview.rows[0].alreadyReceived,6);assert.equal(preview.rows[0].current,3);assert.equal(preview.rows[0].after,7);
+ const confirmed={...input,expectedPlanHash:preview.planHash};const result=await f.receipts.commit(f.actor,confirmed);
+ assert.equal(result.unitCount,4);assert.deepEqual(await f.receipts.commit(f.actor,confirmed),result);
+ assert.equal((await f.store.one("SELECT SUM(quantity) AS n FROM inventory_balances WHERE product_id=?",f.a))!.n,10);
+ assert.equal((await f.store.one("SELECT SUM(quantity) AS n FROM inventory_balances WHERE product_id=?",f.b))!.n,30);
+ const repeated={...input,commandId:randomUUID(),reference:'NEW-'+randomUUID()},again=await f.receipts.preview(f.actor,repeated);
+ assert.equal(again.unitCount,0);assert.equal(again.valid,true);
+ const unchanged=await f.receipts.commit(f.actor,{...repeated,expectedPlanHash:again.planHash});assert.equal(unchanged.status,'UNCHANGED');
+ assert.equal((await f.receipts.history(f.actor,f.clientId)).items.length,1);
+ assert.equal((await f.store.one("SELECT SUM(quantity) AS n FROM inventory_movements WHERE product_id=? AND action='RECEIVE'",f.a))!.n,10);
+ // Leaving AVAILABLE stock does not turn the same initial receipt into a new receipt.
+ await f.inventory.adjust(f.actor,{commandId:randomUUID(),clientId:f.clientId,productId:f.b,locationId:f.locationId,quantityDelta:-30,reason:'QA stock ya no disponible'});
+ assert.equal((await f.receipts.preview(f.actor,repeated)).unitCount,0);
+});
+
+test('completar hoja exige validar de nuevo si otra recepción cambia los faltantes',async t=>{
+ const f=await fixture(t);
+ const receive=(quantity:number)=>f.inventory.receive(f.actor,{commandId:randomUUID(),clientId:f.clientId,productId:f.a,locationId:f.locationId,quantity});
+ await receive(5);const input=f.input([f.row('0001','10')],{mode:'COMPLETE_SHEET'}),preview=await f.receipts.preview(f.actor,input);
+ assert.equal(preview.unitCount,5);
+ await assert.rejects(f.receipts.commit(f.actor,input),isCode('RECEIPT_CHANGED'));
+ await receive(3);
+ await assert.rejects(f.receipts.commit(f.actor,{...input,expectedPlanHash:preview.planHash}),isCode('RECEIPT_CHANGED'));
+ assert.equal((await f.store.one('SELECT COUNT(*) AS n FROM inventory_receipt_batches'))!.n,0);
+ const current=await f.receipts.preview(f.actor,input);assert.equal(current.unitCount,2);
+ await f.receipts.commit(f.actor,{...input,expectedPlanHash:current.planHash});
+ assert.equal((await f.store.one('SELECT SUM(quantity) AS n FROM inventory_balances'))!.n,10);
+});
+
+test('completar hoja no usa recepciones de otro cliente ni infiere números de serie',async t=>{
+ const f=await fixture(t),other=await f.product('0001','QUANTITY',f.otherClient);
+ await f.inventory.receive(f.actor,{commandId:randomUUID(),clientId:f.otherClient,productId:other,locationId:f.locationId,quantity:50});
+ const report=await f.receipts.preview(f.actor,f.input([f.row('0001','10')],{mode:'COMPLETE_SHEET'}));
+ assert.equal(report.unitCount,10);assert.equal(report.rows[0].alreadyReceived,0);
+ const serial=await f.receipts.preview(f.actor,f.input([f.row('SER','1',{serial:'NEW-SERIES'})],{mode:'COMPLETE_SHEET'}));
+ assert.equal(serial.valid,false);assert.ok(serial.rowErrors.some(row=>row.message.includes('productos por cantidad')));
+});
+
+test('completar un objetivo mayor puede recibir la misma diferencia de un lote anterior sin duplicar el total objetivo',async t=>{
+ const f=await fixture(t);await f.receipts.commit(f.actor,f.input([f.row('0001','5')]));
+ const input=f.input([f.row('0001','10')],{mode:'COMPLETE_SHEET'}),preview=await f.receipts.preview(f.actor,input);
+ assert.equal(preview.unitCount,5);assert.equal(preview.repeatedContent,false);
+ await f.receipts.commit(f.actor,{...input,expectedPlanHash:preview.planHash});
+ assert.equal((await f.receipts.preview(f.actor,input)).unitCount,0);
+ assert.equal((await f.store.one('SELECT SUM(quantity) AS n FROM inventory_balances'))!.n,10);
+});
+
 test('recepciones: Excel elige Stock sugerido, conserva códigos y permite elegir otra hoja; CSV pegado y fórmulas',()=>{
  const book=XLSX.utils.book_new();
  XLSX.utils.book_append_sheet(book,XLSX.utils.aoa_to_sheet([['SKU','Nombre'],['0001','Catálogo']]),'Catalogo');

@@ -4,7 +4,8 @@ import {randomUUID} from 'node:crypto';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
 
-test('Stock sugerido uploads 30 SKUs, previews 249 incoming units and commits once without mixing clients',async({page})=>{
+for(const complete of [false,true])test('Stock sugerido '+(complete?'completes only missing units and repeating adds zero':'adds a new receipt atomically without mixing clients'),async({page})=>{
+ const incoming=complete?212:249,total=complete?270:307,changedProducts=complete?29:30;
  const fixture=fileURLToPath(new URL('../fixtures/bristol-catalog-stock-demo.xlsx',import.meta.url));
  const send=async(path:string,data:Record<string,unknown>)=>{const r=await page.request.post(path,{headers:{'X-Requested-With':'logistics-os'},data:{commandId:randomUUID(),...data}});expect(r.ok(),path+': '+await r.text()).toBeTruthy();return r.json();};
  const session=await(await page.request.get('/api/session')).json();
@@ -28,11 +29,12 @@ test('Stock sugerido uploads 30 SKUs, previews 249 incoming units and commits on
  await expect(panel.getByText('30 filas · 249 unidades por recibir',{exact:true})).toBeVisible();
  await expect(panel.getByRole('textbox',{name:'SKU fila 2',exact:true})).toHaveValue('MOCK-NX-0001');
  await expect(panel.getByRole('textbox',{name:'Cantidad fila 2',exact:true})).toHaveValue('7');
+ if(complete)await panel.getByRole('checkbox',{name:'Cargar solo lo que falta de la hoja',exact:true}).check();
  await panel.getByRole('button',{name:'Validar recepción',exact:true}).click();
- await expect(panel.getByText('30 productos · 249 unidades listas para recibir',{exact:true})).toBeVisible();
+ await expect(panel.getByText(`${changedProducts} productos · ${incoming} unidades listas para recibir`,{exact:true})).toBeVisible();
  const charger=panel.getByRole('textbox',{name:'SKU fila 16',exact:true}).locator('..').locator('..');
  await expect(charger.getByRole('cell').nth(3)).toContainText('Cargador USB');
- await expect(charger.getByRole('cell').nth(4)).toHaveText('31');await expect(charger.getByRole('cell').nth(5)).toHaveText('41');
+ if(complete){await expect(charger.getByRole('cell').nth(4)).toHaveText('31');await expect(charger.getByRole('cell').nth(5)).toHaveText('0');await expect(charger.getByRole('cell').nth(7)).toHaveText('31');}else{await expect(charger.getByRole('cell').nth(4)).toHaveText('31');await expect(charger.getByRole('cell').nth(5)).toHaveText('41');}
  expect(await stock(client)).toEqual({count:9,units:58});
  await page.screenshot({path:'.local/stock-receipt-xlsx-desktop.png',fullPage:true});
  await page.setViewportSize({width:390,height:844});
@@ -42,19 +44,21 @@ test('Stock sugerido uploads 30 SKUs, previews 249 incoming units and commits on
  await page.setViewportSize({width:1365,height:900});
  const request=page.waitForRequest(r=>new URL(r.url()).pathname==='/api/inventory/receipts/batch'&&r.method()==='POST');
  await panel.getByRole('button',{name:'Confirmar recepción del lote',exact:true}).click();const payload=(await request).postDataJSON();
- await expect(panel.getByText(/30 productos · 249 unidades recibidas\./)).toBeVisible();
- expect(await stock(client)).toEqual({count:30,units:307});expect(await stock(other)).toEqual({count:0,units:0});
+ await expect(panel.getByText(new RegExp(changedProducts+' productos · '+incoming+' unidades recibidas\\.'))).toBeVisible();
+ expect(await stock(client)).toEqual({count:30,units:total});expect(await stock(other)).toEqual({count:0,units:0});
  const retry=await page.request.post('/api/inventory/receipts/batch',{headers:{'X-Requested-With':'logistics-os'},data:payload});expect(retry.ok()).toBe(true);
- expect(await stock(client)).toEqual({count:30,units:307});
- const history=await(await page.request.get('/api/inventory/receipts/imports?clientId='+client)).json();expect(history.items).toHaveLength(1);expect(history.items[0].unit_count).toBe(249);
+ expect(await stock(client)).toEqual({count:30,units:total});
+ const history=await(await page.request.get('/api/inventory/receipts/imports?clientId='+client)).json();expect(history.items).toHaveLength(1);expect(history.items[0].unit_count).toBe(incoming);
  await panel.getByLabel(/^Archivo de stock/).setInputFiles(fixture);await panel.getByRole('button',{name:'Validar recepción',exact:true}).click();
- await expect(panel.getByText(/Este contenido coincide con la recepción/)).toBeVisible();
- await expect(panel.getByRole('button',{name:'Confirmar recepción del lote',exact:true})).toBeDisabled();
+ if(complete){
+  await expect(panel.getByText('Hoja ya cubierta: no falta recibir mercadería.',{exact:true})).toBeVisible();
+  await expect(panel.getByRole('button',{name:'Confirmar recepción del lote',exact:true})).toHaveCount(0);
+ }else{await expect(panel.getByText(/Este contenido coincide con la recepción/)).toBeVisible();await expect(panel.getByRole('button',{name:'Confirmar recepción del lote',exact:true})).toBeDisabled();}
  await panel.getByRole('textbox',{name:'SKU fila 2',exact:true}).fill('SKU-INEXISTENTE-QA');
  await panel.getByRole('button',{name:'Validar recepción',exact:true}).click();
  await expect(panel.getByText('Corregí el lote antes de recibir',{exact:true})).toBeVisible();
  await expect(panel.getByRole('button',{name:'Confirmar recepción del lote',exact:true})).toHaveCount(0);
- expect(await stock(client)).toEqual({count:30,units:307});
+ expect(await stock(client)).toEqual({count:30,units:total});
  expect((await(await page.request.get('/api/inventory/reconciliation')).json()).ok).toBe(true);
 });
 

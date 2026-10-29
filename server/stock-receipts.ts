@@ -9,10 +9,10 @@ import {preflightZip,MAX_FILE_BYTES} from './catalog-import.ts';
 export const MAX_RECEIPT_ROWS=5_000;
 export type ReceiptRow={row:number;sku:string;quantity:string;locationCode:string;serial:string;barcode:string};
 export type ReceiptIssue={row:number;field?:string;message:string};
-export type ReceiptPreview={valid:boolean;rowCount:number;productCount:number;unitCount:number;rowErrors:ReceiptIssue[];warnings:string[];repeatedContent:boolean;rows:Array<ReceiptRow&{productName:string;locationName:string;current:number;incoming:number;after:number}>};
+export type ReceiptPreview={valid:boolean;rowCount:number;productCount:number;unitCount:number;rowErrors:ReceiptIssue[];warnings:string[];repeatedContent:boolean;mode:'ADD'|'COMPLETE_SHEET';planHash:string;rows:Array<ReceiptRow&{productName:string;locationName:string;current:number;incoming:number;after:number;alreadyReceived?:number}>};
 const text=z.string().trim();
 const receiptRow=z.object({row:z.number().int().min(1),sku:text.max(160),quantity:z.union([z.string(),z.number()]).transform(String),locationCode:text.max(160).default(''),serial:text.max(160).default(''),barcode:text.max(160).default('')});
-const body=z.object({clientId:z.uuid(),locationId:z.uuid(),reference:text.min(1).max(160),reason:text.max(500).default(''),source:z.enum(['XLSX','CSV','MANUAL']).default('MANUAL'),filename:text.max(255).default(''),rows:z.array(receiptRow).min(1).max(MAX_RECEIPT_ROWS),allowRepeatedContent:z.boolean().default(false)});
+const body=z.object({clientId:z.uuid(),locationId:z.uuid(),reference:text.min(1).max(160),reason:text.max(500).default(''),source:z.enum(['XLSX','CSV','MANUAL']).default('MANUAL'),filename:text.max(255).default(''),rows:z.array(receiptRow).min(1).max(MAX_RECEIPT_ROWS),allowRepeatedContent:z.boolean().default(false),mode:z.enum(['ADD','COMPLETE_SHEET']).default('ADD'),expectedPlanHash:text.regex(/^[a-f0-9]{64}$/).optional()});
 type Input=z.infer<typeof body>;
 type ReceiptItem={productId:string;locationId:string;quantity:number;serials?:Array<{serial:string;barcode?:string}>};
 const normalize=(s:unknown)=>String(s??'').trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
@@ -122,11 +122,12 @@ export class StockReceipts{
  }
  private async plan(actor:InventoryActor,input:Input){
   await this.client(actor,input.clientId);
-  const [products,locations,units,balances]=await Promise.all([
+  const [products,locations,units,balances,received]=await Promise.all([
    this.store.all('SELECT * FROM inventory_products WHERE org_id=? AND client_id=?',actor.orgId,input.clientId),
    this.store.all('SELECT * FROM inventory_locations WHERE org_id=?',actor.orgId),
    this.store.all('SELECT product_id,client_id,serial,barcode FROM inventory_units WHERE org_id=?',actor.orgId),
    this.store.all("SELECT product_id,location_id,SUM(quantity) AS quantity FROM inventory_balances WHERE org_id=? AND client_id=? AND status='AVAILABLE' GROUP BY product_id,location_id",actor.orgId,input.clientId),
+   input.mode==='COMPLETE_SHEET'?this.store.all("SELECT product_id,SUM(quantity) AS quantity FROM inventory_movements WHERE org_id=? AND client_id=? AND action='RECEIVE' GROUP BY product_id",actor.orgId,input.clientId):Promise.resolve([]),
   ]);
   const byCode=new Map<string,Row>();for(const p of products)for(const v of [p.sku,p.barcode])if(v)byCode.set(code(v),p);
   const byLocation=new Map<string,Row>();for(const l of locations)for(const v of [l.id,l.code])byLocation.set(code(v),l);
@@ -146,6 +147,7 @@ export class StockReceipts{
    if(!location?.active||location.kind==='QUARANTINE')error('locationCode','Ubicación inexistente, archivada o de cuarentena.');
    if(!/^\d+$/.test(row.quantity.trim())||!Number.isSafeInteger(qty)||qty<1||qty>100_000)error('quantity','La cantidad debe ser un entero entre 1 y 100.000.');
    if(product?.tracking==='SERIAL'){
+    if(input.mode==='COMPLETE_SHEET')error('serial','Completar la hoja solo admite productos por cantidad. Para series, usá una recepción nueva con sus identificadores.');
     if(!row.serial||qty!==1)error('serial','Para productos por serie, indicá una serie y cantidad 1 por fila.');
     const serialKey=`${product.id}:${code(row.serial)}`;
     if(row.serial&&(existingSerials.has(serialKey)||seenSerials.has(serialKey)||productCodes.has(code(row.serial))))error('serial','La serie ya existe, está repetida o coincide con un código de producto.');
@@ -159,27 +161,47 @@ export class StockReceipts{
    rows.push({...row,sku:product!.sku,productName:product!.name,locationName:location!.name,current:0,incoming:qty,after:0});
   }
   if(unitCount>100_000)rowErrors.push({row:1,field:'quantity',message:'El lote supera el máximo de 100.000 unidades.'});
+  if(input.mode==='COMPLETE_SHEET'){
+   const receivedByProduct=new Map(received.map(item=>[item.product_id,Number(item.quantity)]));
+   const credit=new Map(receivedByProduct);
+   for(const group of groups.values())group.quantity=0;
+   unitCount=0;
+   // Consume each SKU's previous receipts once, even across duplicate rows or depots.
+   for(const row of rows){
+    const product=byCode.get(code(row.sku))!,location=row.locationCode?byLocation.get(code(row.locationCode))!:defaultLocation!;
+    const remainingCredit=credit.get(product.id)??0,target=Number(row.quantity);
+    row.alreadyReceived=receivedByProduct.get(product.id)??0;
+    row.incoming=Math.max(0,target-remainingCredit);credit.set(product.id,Math.max(0,remainingCredit-target));
+    groups.get(`${product.id}:${location.id}`)!.quantity+=row.incoming;unitCount+=row.incoming;
+   }
+  }
   // Count serial stock only in the receiving location and AVAILABLE condition.
   const serialBalances=products.some(p=>p.tracking==='SERIAL')?await this.store.all("SELECT product_id,location_id,COUNT(*) AS quantity FROM inventory_units WHERE org_id=? AND client_id=? AND status='AVAILABLE' GROUP BY product_id,location_id",actor.orgId,input.clientId):[];
   for(const b of serialBalances)available.set(`${b.product_id}:${b.location_id}`,Number(b.quantity));
   for(const row of rows){const p=byCode.get(code(row.sku))!,l=row.locationCode?byLocation.get(code(row.locationCode))!:defaultLocation!;const key=`${p.id}:${l.id}`;row.current=available.get(key)??0;row.after=row.current+groups.get(key)!.quantity;}
-  const items=[...groups.values()];
+  const items=[...groups.values()].filter(item=>item.quantity>0);
   const contentHash=hash(items.map(i=>({...i,serials:i.serials?.map(s=>({serial:code(s.serial),barcode:code(s.barcode)})).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))})).sort((a,b)=>`${a.productId}:${a.locationId}`.localeCompare(`${b.productId}:${b.locationId}`)));
   const priorReference=await this.store.one("SELECT reference FROM inventory_receipt_batches WHERE org_id=? AND client_id=? AND reference_key=? AND status='IMPORTED'",actor.orgId,input.clientId,code(input.reference));
   if(priorReference)rowErrors.push({row:1,field:'reference',message:`La referencia ${priorReference.reference} ya fue recibida. Usá otra para una entrada nueva.`});
-  const priorContent=items.length?await this.store.one("SELECT reference FROM inventory_receipt_batches WHERE org_id=? AND client_id=? AND content_hash=? AND status='IMPORTED' ORDER BY created_at DESC LIMIT 1",actor.orgId,input.clientId,contentHash):undefined;
+  const priorContent=input.mode==='ADD'&&items.length?await this.store.one("SELECT reference FROM inventory_receipt_batches WHERE org_id=? AND client_id=? AND content_hash=? AND status='IMPORTED' ORDER BY created_at DESC LIMIT 1",actor.orgId,input.clientId,contentHash):undefined;
   if(priorContent)warnings.push(`Este contenido coincide con la recepción ${priorContent.reference}. Confirmá que se trata de una entrada de mercadería nueva.`);
-  const report:ReceiptPreview={valid:rowErrors.length===0,rowCount:input.rows.length,productCount:new Set(items.map(i=>i.productId)).size,unitCount,rowErrors:rowErrors.slice(0,500),warnings,repeatedContent:!!priorContent,rows};
+  const report:ReceiptPreview={valid:rowErrors.length===0,rowCount:input.rows.length,productCount:new Set(items.map(i=>i.productId)).size,unitCount,rowErrors:rowErrors.slice(0,500),warnings,repeatedContent:!!priorContent,mode:input.mode,planHash:contentHash,rows};
   return {report,items,contentHash};
  }
  async preview(actor:InventoryActor,input:unknown){this.allow(actor);return (await this.plan(actor,body.parse(input))).report;}
  async commit(actor:InventoryActor,input:unknown){
-  this.allow(actor);const parsed=body.extend({commandId:z.uuid()}).parse(input);const {commandId,...payload}=parsed;const digest=hash(payload);
+  this.allow(actor);const parsed=body.extend({commandId:z.uuid()}).parse(input);const {commandId,mode,expectedPlanHash,...legacyPayload}=parsed;
+  // Preserve hashes of ADD commands that were stored before this option existed.
+  const digest=hash(mode==='ADD'?legacyPayload:{...legacyPayload,mode,expectedPlanHash});
   await this.client(actor,parsed.clientId);
   const result=await this.store.transaction(async()=>{
    const prior=await this.store.one('SELECT * FROM inventory_receipt_batches WHERE org_id=? AND command_id=?',actor.orgId,commandId);
    if(prior){ensure(prior.actor_id===actor.id&&prior.body_hash===digest,'DUPLICATE_COMMAND','El identificador del lote ya se usó con otros datos o por otro usuario.');return {status:prior.status,...JSON.parse(prior.result)};}
    const {report,items,contentHash}=await this.plan(actor,parsed);
+   if(mode==='COMPLETE_SHEET'){
+    ensure(expectedPlanHash&&expectedPlanHash===report.planHash,'RECEIPT_CHANGED','Los faltantes cambiaron desde la validación. Volvé a validar la recepción antes de confirmar.',409);
+    if(report.valid&&!items.length)return {status:'UNCHANGED',...report,imported:false,batchId:commandId,reference:parsed.reference};
+   }
    if(report.repeatedContent&&!parsed.allowRepeatedContent)report.rowErrors.push({row:1,field:'allowRepeatedContent',message:'Confirmá que este contenido repetido corresponde a una recepción nueva.'});
    report.valid=report.rowErrors.length===0;
    if(report.valid)await this.inventory.receiveBatch(actor,{commandId,clientId:parsed.clientId,reference:parsed.reference,reason:parsed.reason,items});
