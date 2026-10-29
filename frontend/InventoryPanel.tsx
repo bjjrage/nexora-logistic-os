@@ -11,7 +11,7 @@ import "./inventory.css";
 type Role = "ADMIN" | "OPERATIONS" | "DEPOT" | string;
 type Client = { id: string; name: string };
 type Vehicle = { id: string; plate: string; available?: boolean | string };
-type RouteOption = { id: string; name: string; state: string; version: number };
+type RouteOption = { id: string; name: string; state: string; version: number; vehicleId?:string; startAt?:string };
 type AssignmentOption = { routeId: string; parcelId: string; active: boolean };
 type ParcelOption = { id: string; code: string; shipmentId: string };
 type ReturnOption = { id: string; parcelId: string; routeId: string; state: string; depotEvidenceId?: string | null };
@@ -457,10 +457,13 @@ export default function InventoryPanel({ section, role, clients, initialClientId
   const releaseOrders = orders.map((order) => ({ order, quarantinedParcels: (order.parcels ?? []).filter((parcel) => parcel.state === "QUARANTINE") })).filter((entry) => entry.quarantinedParcels.length > 0);
   const orderRoutes=selectedOrder?.parcelIds?.length ? routes.filter(route=>selectedOrder.parcelIds?.some(id=>assignments.some(a=>a.active&&a.routeId===route.id&&a.parcelId===id))) : [];
   const unassignedOrderParcels=(selectedOrder?.parcels??[]).filter(p=>p.state==='RESERVED'&&!assignments.some(a=>a.active&&a.parcelId===p.id));
-  const assignOrder=async()=>{
+  const assignOrder=async(openRoute:boolean)=>{
     const route=routes.find(r=>r.id===selectedRouteId);
-    if(!route||route.state!=='DRAFT'||!unassignedOrderParcels.length)return;
-    if(await runMutation('/api/routes/'+route.id+'/assignments',{expectedVersion:route.version,parcelIds:unassignedOrderParcels.map(p=>p.id),pickup:false},'Pedido asignado a la ruta.','both'))onOpenRoutes?.(route.id);
+    if(!route||!['DRAFT','READY'].includes(route.state)||!unassignedOrderParcels.length)return;
+    if(await runMutation('/api/routes/'+route.id+'/assignments',{expectedVersion:route.version,parcelIds:unassignedOrderParcels.map(p=>p.id),pickup:false},'Pedido asignado a la ruta.','both')){
+      if(openRoute)onOpenRoutes?.(route.id);
+      else {setSelectedOrderId('');setSelectedOrderMode(null);}
+    }
   };
   const eligibleProducts = inventory.products.filter((product) => product.active !== false && (!product.clientId || product.clientId === selectedClient));
   useEffect(() => { setReceiptSearch(""); setReceiptPage(0); }, [selectedClient]);
@@ -923,7 +926,7 @@ export default function InventoryPanel({ section, role, clients, initialClientId
             {orderRoutes.map(route=><div className="row" key={route.id}><span><strong>{route.name}</strong> · {route.state==='DRAFT'?'Carga y ruta por confirmar':route.state==='READY'?'Ruta confirmada':'En reparto'}</span>{onOpenRoutes&&<button type="button" className="button button-primary" disabled={busy} onClick={()=>onOpenRoutes(route.id)}>Abrir ruta</button>}</div>)}
             {unassignedOrderParcels.length>0&&<>
               <strong>Falta asignar {unassignedOrderParcels.length} bulto(s) a una ruta</strong>
-              {canManage ? <><label className="field"><span>Ruta para este pedido</span><select value={selectedRouteId} disabled={busy} onChange={e=>setSelectedRouteId(e.target.value)}><option value="">Seleccionar ruta en borrador</option>{routes.filter(r=>r.state==='DRAFT').map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select></label><button type="button" className="button button-primary" disabled={busy||!selectedRouteId} onClick={()=>void assignOrder()}>Asignar e ir a cargar</button>{onOpenRoutes&&<button type="button" className="text-button" disabled={busy} onClick={()=>onOpenRoutes('new')}>Crear una ruta nueva</button>}</> : <p>Coordinación logística debe asignar la ruta. La carga se registra allí.</p>}
+              {canManage ? <><p>Podés agregar varios pedidos a la misma ruta mientras no haya salido.</p><label className="field"><span>Ruta para este pedido</span><select value={selectedRouteId} disabled={busy} onChange={e=>setSelectedRouteId(e.target.value)}><option value="">Seleccionar ruta disponible</option>{routes.filter(r=>['DRAFT','READY'].includes(r.state)).map(r=><option key={r.id} value={r.id}>{r.name} · {vehicles.find(v=>v.id===r.vehicleId)?.plate??'Vehículo sin identificar'}{r.startAt?' · '+new Date(r.startAt).toLocaleString('es-PY',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):''} · {r.state==='READY'?'Confirmada':'En preparación'}</option>)}</select></label>{routes.find(r=>r.id===selectedRouteId)?.state==='READY'&&<p className="muted">Al agregar este pedido, la ruta quedará pendiente de confirmación. Cargá los nuevos artículos y confirmala nuevamente.</p>}<div className="button-row"><button type="button" className="button button-primary" disabled={busy||!selectedRouteId} onClick={()=>void assignOrder(true)}>Asignar e ir a cargar</button><button type="button" className="button button-secondary" disabled={busy||!selectedRouteId} onClick={()=>void assignOrder(false)}>Asignar y seguir en Pedidos</button></div>{onOpenRoutes&&<button type="button" className="text-button" disabled={busy} onClick={()=>onOpenRoutes('new')}>Crear una ruta nueva</button>}</> : <p>Coordinación logística debe asignar la ruta. La carga se registra allí.</p>}
             </>}
           </div>}
         </section></div>}

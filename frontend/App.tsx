@@ -999,8 +999,9 @@ function RoutesView({ data, action, busy, operationError,onRefresh,uploadEvidenc
             {canOperateRoad && ['READY','IN_PROGRESS'].includes(selectedRoute.state) && <button type="button" aria-pressed={routeTab==='checks'} onClick={()=>setRouteTab('checks')}>Control de salida</button>}
             {(openIncidents.length>0 || routeReturnItems.length>0) && <button type="button" aria-pressed={routeTab==='issues'} onClick={()=>setRouteTab('issues')}>Incidencias y retornos ({openIncidents.length+routeReturnItems.length})</button>}
           </nav>
-          {canPlan && selectedRoute.state === "DRAFT" && routeTab === 'loading' && <TaskDisclosure label="Agregar artículos reservados o retiros a esta ruta" open={depotLoadParcels.length===0?true:undefined}><div className="route-operations">
+          {canPlan && ['DRAFT','READY'].includes(selectedRoute.state) && routeTab === 'loading' && <TaskDisclosure label="Agregar artículos reservados o retiros a esta ruta" open={depotLoadParcels.length===0?true:undefined}><div className="route-operations">
             <form className="stack form-divider" onSubmit={submitAssign}>
+              {selectedRoute.state==='READY'&&<p>Al agregar artículos, la ruta quedará pendiente de confirmación hasta completar la nueva carga.</p>}
               <h3>{pickupMode ? "Agregar retiro al remitente" : "Asignar bultos recibidos"}</h3>
               <label className="checkbox-field"><input type="checkbox" disabled={busy} checked={pickupMode} onChange={(event) => { setPickupMode(event.target.checked); setAssignmentIds([]); }} /> Incluir retiro directo desde el remitente</label>
               {assignableParcels.length === 0 ? <p className="muted">{pickupMode ? "No hay bultos esperados pendientes de retiro." : "No hay bultos recibidos y en depósito sin asignación activa."}</p> : <div className="parcel-picker compact">{assignableParcels.map((parcel) => {

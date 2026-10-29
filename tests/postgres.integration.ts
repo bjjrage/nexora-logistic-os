@@ -39,6 +39,40 @@ test('PostgreSQL: future confirmed routes allow departure, overlapping plans and
  }),error=>error===rollback); } finally {await db.close();}
 });
 
+test('PostgreSQL: agregar un segundo pedido a una ruta confirmada conserva la carga y exige nueva confirmación',async()=>{
+ const db=new PostgresStore(process.env.DATABASE_URL??''),rollback=new Error('ROLLBACK_MULTI_ORDER'),orgId=randomUUID(),userId=randomUUID(),cmd=()=>({commandId:randomUUID()});
+ try{await assert.rejects(db.transaction(async()=>{
+  await db.run('INSERT INTO organizations VALUES(?,?,?)',orgId,'QA varias entregas','UTC');
+  await db.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)',userId,orgId,'qa-'+randomUUID(),'QA',passwordHash('QA-Multiple-2026!'),'ADMIN');
+  const actor:Actor={id:userId,orgId,name:'QA',role:'ADMIN',driverId:null},domain=new Logistics(db),inv=new Inventory(db);
+  const client=(await domain.createClient(actor,{...cmd(),name:'Cliente'})).id;await configureDelivery(db,actor,client);
+  const location=(await inv.createLocation(actor,{...cmd(),code:'DEP',name:'Depósito'})).id;
+  const product=(await inv.createProduct(actor,{...cmd(),clientId:client,sku:'MULTI',name:'Artículo',tracking:'QUANTITY',weightGrams:100,volumeCm3:100})).id;
+  await inv.receive(actor,{...cmd(),clientId:client,productId:product,locationId:location,quantity:2});
+  const parcels=[];
+  for(let i=0;i<2;i++){
+   const order=(await inv.createOrder(actor,{...cmd(),clientId:client,externalId:'QA-'+i,orderDate:'2026-10-28',destination:'Destino',recipientName:'Receptor',lines:[{productId:product,quantity:1}]})).id;
+   parcels.push((await inv.reserveOrder(actor,order,cmd())).parcels[0].id);
+  }
+  const driver=(await domain.createDriver(actor,{...cmd(),name:'Chofer',username:'qa-'+randomUUID(),password:'QA-Driver-2026!'})).id;
+  const vehicle=(await domain.createVehicle(actor,{...cmd(),plate:'QA-'+randomUUID(),capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0})).id;
+  const route=(await domain.createRoute(actor,{...cmd(),name:'Ruta',driverId:driver,vehicleId:vehicle,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()})).id;
+  const version=async()=>(await domain.route(route,actor)).version;
+  await domain.assign(actor,route,{...cmd(),expectedVersion:await version(),parcelIds:[parcels[0]],pickup:false});
+  await domain.loadSelected(actor,route,{...cmd(),expectedVersion:await version(),parcelIds:[parcels[0]]});
+  await domain.ready(actor,route,{...cmd(),expectedVersion:await version()});
+  await domain.assign(actor,route,{...cmd(),expectedVersion:await version(),parcelIds:[parcels[1]],pickup:false});
+  assert.equal((await domain.route(route,actor)).state,'DRAFT');
+  assert.equal((await db.one('SELECT state FROM parcels WHERE id=?',parcels[0]))!.state,'LOADED');
+  await assert.rejects(domain.ready(actor,route,{...cmd(),expectedVersion:await version()}),{code:'INVALID_TRANSITION'});
+  await domain.loadSelected(actor,route,{...cmd(),expectedVersion:await version(),parcelIds:[parcels[1]]});
+  await domain.ready(actor,route,{...cmd(),expectedVersion:await version()});
+  assert.equal((await domain.route(route,actor)).state,'READY');
+  assert.equal((await reconcileInventory(db,actor)).ok,true);
+  throw rollback;
+ }),error=>error===rollback);}finally{await db.close();}
+});
+
 test('PostgreSQL: desreserva de ruta confirmada revierte stock y permite reservar de nuevo; rollback',async()=>{
  const db=new PostgresStore(process.env.DATABASE_URL??''),rollback=new Error('ROLLBACK_UNRESERVE'),orgId=randomUUID(),userId=randomUUID(),cmd=()=>({commandId:randomUUID()});
  try{await assert.rejects(db.transaction(async()=>{

@@ -174,7 +174,7 @@ export class Logistics {
     async assign(actor: Actor, id: string, b: Row) {
         return await this.command(actor, `routes.${id}.assign`, b, OPS, async () => {
             const route = await this.route(id, actor, b.expectedVersion);
-            ensure(route.state === 'DRAFT', 'INVALID_TRANSITION', 'Solo se modifica un plan en borrador.');
+            ensure(['DRAFT','READY'].includes(route.state), 'INVALID_TRANSITION', 'Solo se agregan pedidos antes de que la ruta salga.');
             const parcels = await Promise.all([...new Set<string>(b.parcelIds)].map(async (p) => await this.parcel(p, actor)));
             await validateParcelRouteProvider(this.store,actor.orgId,id,parcels.map(p=>p.id));
             for (const p of parcels) {
@@ -190,8 +190,8 @@ export class Logistics {
                     }
                 }
             }
-            await this.bump(id);
-            return { id, version: route.version + 1 };
+            await this.store.run("UPDATE routes SET state='DRAFT',version=version+1 WHERE id=? AND org_id=?",id,actor.orgId);
+            return { id, state: 'DRAFT', version: route.version + 1 };
         });
     }
     async reorder(actor: Actor, id: string, b: Row) {

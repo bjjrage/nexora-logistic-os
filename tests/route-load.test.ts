@@ -67,6 +67,31 @@ test('selected load rejects foreign parcels, unauthorized roles, duplicates and 
  assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.order))!.status,'RESERVED');
  assert.equal(await f.version(),version);
 });
+test('a confirmed route accepts another reserved order before departure and requires loading and confirmation again',async t=>{
+ const f=await fixture(t),ids=f.parcels.map((p:any)=>p.id);
+ const client=(await f.db.one('SELECT client_id FROM inventory_orders WHERE id=?',f.order))!.client_id;
+ const second=(await f.inv.createOrder(f.actor,{...cmd(),clientId:client,externalId:'LOAD-SECOND',orderDate:'2026-10-28',destination:'Second address',recipientName:'Second receiver',lines:[{productId:f.product,quantity:1}]})).id;
+ const extra=(await f.inv.reserveOrder(f.actor,second,cmd())).parcels[0].id;
+ await f.d.loadSelected(f.actor,f.route,{...cmd(),expectedVersion:await f.version(),parcelIds:ids});
+ await f.d.ready(f.actor,f.route,{...cmd(),expectedVersion:await f.version()});
+ const confirmedVersion=await f.version();
+ await assert.rejects(f.d.assign(f.actor,f.route,{...cmd(),expectedVersion:confirmedVersion-1,parcelIds:[extra],pickup:false}),{code:'VERSION_CONFLICT'});
+ assert.equal((await f.d.route(f.route,f.actor)).state,'READY');
+ const request={...cmd(),expectedVersion:confirmedVersion,parcelIds:[extra],pickup:false};
+ const assigned=await f.d.assign(f.actor,f.route,request);
+ assert.deepEqual(await f.d.assign(f.actor,f.route,request),assigned);
+ assert.equal((await f.d.route(f.route,f.actor)).state,'DRAFT');
+ assert.equal((await f.db.one("SELECT count(*) n FROM parcels WHERE id IN (?,?) AND state='LOADED'",...ids))!.n,2);
+ assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',second))!.status,'RESERVED');
+ assert.equal((await f.db.one('SELECT count(*) n FROM stops WHERE route_id=?',f.route))!.n,2);
+ await assert.rejects(f.d.ready(f.actor,f.route,{...cmd(),expectedVersion:await f.version()}),{code:'INVALID_TRANSITION'});
+ await f.d.loadSelected(f.actor,f.route,{...cmd(),expectedVersion:await f.version(),parcelIds:[extra]});
+ await f.d.ready(f.actor,f.route,{...cmd(),expectedVersion:await f.version()});
+ await f.d.inspect(f.actor,f.vehicle,{...cmd(),odometer:0,fuelPercent:90,items:[{label:'Observed QA',severity:'OK',note:''}]});
+ await f.d.dispatch(f.actor,f.route,{...cmd(),expectedVersion:await f.version()});
+ await assert.rejects(f.d.assign(f.actor,f.route,{...cmd(),expectedVersion:await f.version(),parcelIds:[extra],pickup:false}),{code:'INVALID_TRANSITION'});
+ assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
+});
 test('route selected-load HTTP persists once and rejects stale versions; no order load request required',async t=>{
  const f=await fixture(t),server=createApp(f.db).listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));
  t.after(()=>new Promise<void>(resolve=>server.close(()=>resolve())));
