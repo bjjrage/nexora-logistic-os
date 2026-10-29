@@ -79,11 +79,16 @@ export default function StockReceiptPanel({active,clients,locations,clientId,loc
  const payload=()=>({clientId,locationId,reference,reason,source:sourceType,filename:source?.filename??'',rows,allowRepeatedContent:allowRepeated,mode:completeSheet?'COMPLETE_SHEET':'ADD'});
  const validate=async()=>{
   setBusy(true);setError('');setSuccess('');const version=generation.current;
-  try{const report=await post<ReceiptPreview>('/api/inventory/receipts/preview',payload());if(version===generation.current)setPreview(report);}
+  try{
+   const report=await post<ReceiptPreview>('/api/inventory/receipts/preview',payload());
+   if(version!==generation.current)return;
+   if(completeSheet&&(report.mode!=='COMPLETE_SHEET'||!/^[a-f0-9]{64}$/.test(report.planHash??''))){setPreview(null);setError('El servidor todavía no habilitó Solo faltantes. Actualizá la página en unos instantes; no se recibió stock.');return;}
+   setPreview(report);
+  }
   catch(caught){setError(problem(caught));}finally{setBusy(false);}
  };
  const confirm=async()=>{
-  if(!preview?.valid||!preview.unitCount||preview.repeatedContent&&!allowRepeated)return;
+  if(!preview?.valid||!preview.unitCount||preview.repeatedContent&&!allowRepeated||completeSheet&&(preview.mode!=='COMPLETE_SHEET'||!preview.planHash))return;
   setBusy(true);setError('');
   try{
    const result=await post<ReceiptPreview&{reference:string;status:string}>('/api/inventory/receipts/batch',{...payload(),commandId,...(completeSheet?{expectedPlanHash:preview.planHash}:{})});

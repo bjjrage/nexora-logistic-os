@@ -30,6 +30,18 @@ for(const complete of [false,true])test('Stock sugerido '+(complete?'completes o
  await expect(panel.getByRole('textbox',{name:'SKU fila 2',exact:true})).toHaveValue('MOCK-NX-0001');
  await expect(panel.getByRole('textbox',{name:'Cantidad fila 2',exact:true})).toHaveValue('7');
  if(complete)await panel.getByRole('checkbox',{name:'Cargar solo lo que falta de la hoja',exact:true}).check();
+ if(complete){
+  // A frontend deployed before the backend must never treat an ADD preview as missing-only.
+  await page.route('**/api/inventory/receipts/preview',async route=>{
+   const response=await route.fetch({postData:JSON.stringify({...route.request().postDataJSON(),mode:'ADD'})}),legacy=await response.json();delete legacy.mode;delete legacy.planHash;
+   await route.fulfill({response,json:legacy});
+  });
+  await panel.getByRole('button',{name:'Validar recepción',exact:true}).click();
+  await expect(panel.getByRole('alert')).toContainText('El servidor todavía no habilitó Solo faltantes');
+  await expect(panel.getByRole('button',{name:'Confirmar recepción del lote',exact:true})).toHaveCount(0);
+  expect(await stock(client)).toEqual({count:9,units:58});
+  await page.unroute('**/api/inventory/receipts/preview');
+ }
  await panel.getByRole('button',{name:'Validar recepción',exact:true}).click();
  await expect(panel.getByText(`${changedProducts} productos · ${incoming} unidades listas para recibir`,{exact:true})).toBeVisible();
  const charger=panel.getByRole('textbox',{name:'SKU fila 16',exact:true}).locator('..').locator('..');
