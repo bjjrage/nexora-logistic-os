@@ -64,6 +64,41 @@ test('disponibilidad del pedido refleja stock real y excluye lo reservado', asyn
   assert.equal(current.lines[0].loaded, 0);
 });
 
+test('pedido completo informa todos los faltantes sin reservar stock y admite reintentar tras la recepción', async (t) => {
+  const f=await fixture(t), serial=await f.makeProduct(f.clientId,'SERIAL-ESPERA','SERIAL');
+  const ready=await f.makeProduct(f.clientId,'CARGADOR-ESPERA');
+  const receive=(productId:string,quantity:number,serials?:Array<{serial:string}>,locationId=f.locationId)=>f.inventory.receive(f.actor,{...f.command(),clientId:f.clientId,productId,locationId,quantity,...(serials?{serials}:{})});
+  await receive(serial.id,1,[{serial:'SERIE-1'}]);
+  await receive(ready.id,31);
+  await receive(f.product.id,10,undefined,f.shelfId);
+  await f.store.run('UPDATE inventory_locations SET active=0 WHERE id=?',f.shelfId);
+  const other=await f.makeProduct(f.secondClientId,f.product.sku);
+  await f.inventory.receive(f.actor,{...f.command(),clientId:f.secondClientId,productId:other.id,locationId:f.locationId,quantity:9});
+  const order=await f.inventory.createOrder(f.actor,{...orderBody(randomUUID(),f.clientId,f.product.id,'ESPERA-COMPLETO',2),lines:[{productId:f.product.id,quantity:2},{productId:serial.id,quantity:2},{productId:ready.id,quantity:1}]});
+  const reservation=f.command(), before=await f.inventory.order(f.actor,order.id);
+  await assert.rejects(()=>f.inventory.reserveOrder(f.actor,order.id,reservation),(error:any)=>{
+    assert.equal(error.code,'INSUFFICIENT_STOCK');
+    const shortages=error.details.shortages.sort((a:any,b:any)=>a.sku.localeCompare(b.sku));
+    assert.equal(shortages.length,2);
+    for(const [id,available,missing] of [[f.product.id,0,2],[serial.id,1,1]]){
+      const shortage=shortages.find((row:any)=>row.productId===id);
+      assert.equal(shortage.requested,2);assert.equal(shortage.available,available);assert.equal(shortage.missing,missing);
+    }
+    return true;
+  });
+  const after=await f.inventory.order(f.actor,order.id);
+  assert.equal((await f.store.one('SELECT status FROM inventory_orders WHERE id=?',order.id))!.status,'DRAFT');assert.deepEqual(after.lines,before.lines);assert.equal(after.parcels.length,0);
+  assert.equal((await f.store.one('SELECT COUNT(*) AS n FROM inventory_commands WHERE command_id=?',reservation.commandId))!.n,0);
+  await receive(f.product.id,2);await receive(serial.id,1,[{serial:'SERIE-2'}]);
+  const result=await f.inventory.reserveOrder(f.actor,order.id,reservation);
+  assert.equal(result.reserved,5);assert.equal(result.status,'RESERVED');
+  assert.equal((await f.inventory.reserveOrder(f.actor,order.id,reservation)).reserved,5);
+  const complete=await f.inventory.order(f.actor,order.id);
+  assert.equal(complete.parcels.length,5);assert.ok(complete.lines.every((line:any)=>line.reserved===line.requested));
+  assert.equal(complete.lines.find((line:any)=>line.productId===ready.id)!.available,30);
+  assert.equal((await reconcileInventory(f.store,f.actor)).ok,true);
+});
+
 test('desreservar libera stock, retira solo el pedido de la ruta y admite una nueva reserva', async (t) => {
   const f=await fixture(t);
   await f.inventory.receive(f.actor,{...f.command(),clientId:f.clientId,productId:f.product.id,locationId:f.locationId,quantity:3});

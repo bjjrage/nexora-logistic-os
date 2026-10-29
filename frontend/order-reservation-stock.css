@@ -1,0 +1,13 @@
+.reservation-stock { border:1px solid #d4ddec; border-radius:12px; padding:16px; }
+.reservation-stock header { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+.reservation-stock h3 { margin:0; font-size:16px; }
+.reservation-stock p { margin:8px 0 12px; }
+.reservation-stock table { width:100%; min-width:0; margin:8px 0 12px; }
+.reservation-stock th:not(:first-child),.reservation-stock td:not(:first-child) { text-align:center; white-space:nowrap; }
+.reservation-stock td:first-child { min-width:120px; overflow-wrap:anywhere; }
+.reservation-stock td small { display:block; font-size:11px; margin-top:3px; }
+.reservation-stock-missing td:last-child { color:#c40021; background:#fff1f3; }
+@media(max-width:520px) {
+  .reservation-stock { padding:10px; }
+  .reservation-stock th,.reservation-stock td { padding:8px 4px; font-size:12px; }
+}

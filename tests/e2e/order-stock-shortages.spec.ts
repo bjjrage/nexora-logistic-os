@@ -1,0 +1,58 @@
+import {test,expect} from '@playwright/test';
+import {randomUUID} from 'node:crypto';
+
+test('multi-SKU order waits intact, lists every shortage and reserves only after all stock arrives',async({page})=>{
+  const send=async(path:string,data:Record<string,unknown>)=>{const r=await page.request.post(path,{headers:{'X-Requested-With':'logistics-os'},data:{commandId:randomUUID(),...data}});expect(r.ok(),path+': '+await r.text()).toBeTruthy();return r.json();};
+  const session=await(await page.request.get('/api/session')).json();
+  if(session.setupRequired)await send('/api/setup',{organizationName:'QA pedidos completos',timezone:'America/Asuncion',username:'qa-browser',password:'QA-Browser-Isolated-2026!'});else await send('/api/login',{username:'qa-browser',password:'QA-Browser-Isolated-2026!'});
+  const suffix=randomUUID().slice(0,8),reference='ESPERA-'+suffix;
+  const client=(await send('/api/clients',{name:'Bristol QA '+suffix})).id;
+  const location=(await send('/api/inventory/locations',{code:'QA-'+suffix,name:'Deposito QA'})).id;
+  const products:Array<{id:string;sku:string;name:string}>=[];
+  for(const [sku,name] of [['REC','Recipientes QA'],['ORG','Organizador QA'],['USB','Cargador QA']])products.push({id:(await send('/api/inventory/products',{clientId:client,sku:sku+'-'+suffix,name,tracking:'QUANTITY'})).id,sku:sku+'-'+suffix,name});
+  const receive=(index:number,quantity:number)=>send('/api/inventory/receipts',{clientId:client,productId:products[index].id,locationId:location,quantity});
+  await receive(2,31);
+  const order=(await send('/api/orders',{clientId:client,externalId:reference,orderDate:'2026-10-29',recipientName:'Receptor QA',destination:'Destino QA',lines:products.map((p,i)=>({productId:p.id,quantity:i===0?2:1}))})).id;
+  const rejected=await page.request.post('/api/orders/'+order+'/reserve',{headers:{'X-Requested-With':'logistics-os'},data:{commandId:randomUUID()}});
+  expect(rejected.status()).toBe(409);
+  const shortages=(await rejected.json()).error.details.shortages;
+  expect(shortages.map((row:any)=>row.sku).sort()).toEqual(products.slice(0,2).map(p=>p.sku).sort());
+  const detail=async()=> (await(await page.request.get('/api/orders/'+order)).json());
+  expect((await detail()).parcels).toHaveLength(0);
+  await page.goto('/');await page.getByRole('button',{name:'Pedidos',exact:true}).click();
+  await page.getByRole('article').filter({hasText:reference}).getByRole('button',{name:'Ver faltantes',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Reserva y ruta',exact:true});
+  const availability=dialog.getByRole('region',{name:'Disponibilidad para reservar',exact:true});
+  await expect(availability.getByRole('heading',{name:'En espera de mercadería',exact:true})).toBeVisible();
+  for(const [index,requested,available,missing] of [[0,2,0,2],[1,1,0,1],[2,1,31,0]]){
+    const row=availability.getByRole('row').filter({hasText:products[index].sku});
+    await expect(row.getByRole('cell')).toHaveText([products[index].name+'SKU: '+products[index].sku,String(requested),String(available),String(missing)]);
+  }
+  await expect(dialog.getByRole('button',{name:'Reservar stock',exact:true})).toBeDisabled();
+  await expect(dialog.getByRole('combobox',{name:'Ruta para este pedido',exact:true})).toHaveCount(0);
+  await page.screenshot({path:'.local/order-shortages-desktop.png',fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await expect(availability.getByText(products[0].name,{exact:true})).toBeVisible();
+  await page.screenshot({path:'.local/order-shortages-mobile.png',fullPage:true});
+  await page.setViewportSize({width:1365,height:900});
+  await dialog.getByRole('button',{name:'Recibir mercadería de este cliente',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Recibir mercadería',exact:true})).toBeVisible();
+  await expect(page.getByRole('combobox',{name:'Cliente dueño de la mercadería',exact:true})).toHaveValue(client);
+  await receive(0,1);await receive(1,1);
+  await page.getByRole('button',{name:'Pedidos',exact:true}).click();
+  await page.getByRole('article').filter({hasText:reference}).getByRole('button',{name:'Ver faltantes',exact:true}).click();
+  await expect(dialog.getByRole('button',{name:'Reservar stock',exact:true})).toBeDisabled();
+  expect((await detail()).lines.every((line:any)=>line.reserved===0)).toBe(true);
+  expect((await detail()).lines.find((line:any)=>line.productId===products[2].id).available).toBe(31);
+  await receive(0,1);
+  await dialog.getByRole('button',{name:'Actualizar disponibilidad',exact:true}).click();
+  await expect(availability.getByRole('heading',{name:'Stock completo para reservar',exact:true})).toBeVisible();
+  await expect(dialog.getByRole('button',{name:'Reservar stock',exact:true})).toBeEnabled();
+  await dialog.getByRole('button',{name:'Reservar stock',exact:true}).click();
+  await expect(dialog.getByText('Pedido reservado.',{exact:true})).toBeVisible();
+  const reserved=await detail();expect(reserved.status).toBe('RESERVED');expect(reserved.parcels).toHaveLength(4);
+  expect(reserved.lines.every((line:any)=>line.requested===line.reserved)).toBe(true);
+  expect(reserved.lines.find((line:any)=>line.productId===products[2].id).available).toBe(30);
+  expect((await(await page.request.get('/api/inventory/reconciliation')).json()).ok).toBe(true);
+});

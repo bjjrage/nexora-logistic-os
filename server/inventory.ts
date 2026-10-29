@@ -652,13 +652,17 @@ export class Inventory {
       if (b.locationId) { const location = await this.location(actor, b.locationId); ensure(location.active, 'INVALID_TRANSITION', 'La ubicación está archivada.'); }
       const lines = await this.store.all('SELECT * FROM inventory_order_lines WHERE order_id=? AND org_id=? ORDER BY id', order.id, actor.orgId);
       const planned: Array<{ line: Row; product: Row; locationId: string; unit?: Row }> = [];
+      const shortages: Array<{productId:string;sku:string;name:string;requested:number;available:number;missing:number}> = [];
       for (const line of lines) {
         const product = await this.product(actor, line.product_id, order.client_id);
         if (product.tracking === 'SERIAL') {
       const available = await this.store.all(`SELECT u.* FROM inventory_units u JOIN inventory_locations l ON l.id=u.location_id AND l.org_id=u.org_id
             WHERE u.org_id=? AND u.client_id=? AND u.product_id=? AND u.status='AVAILABLE' AND l.active=1 AND l.kind<>'QUARANTINE' ${b.locationId ? 'AND u.location_id=?' : ''}
             ORDER BY u.created_at,u.id LIMIT ?`, ...(b.locationId ? [actor.orgId, order.client_id, product.id, b.locationId, line.quantity] : [actor.orgId, order.client_id, product.id, line.quantity]));
-          ensure(available.length >= line.quantity, 'INSUFFICIENT_STOCK', `Faltan unidades del producto ${product.sku}.`);
+          if (available.length < line.quantity) {
+            shortages.push({productId:product.id,sku:product.sku,name:product.name,requested:Number(line.quantity),available:available.length,missing:Number(line.quantity)-available.length});
+            continue;
+          }
           for (const unit of available) planned.push({ line, product, locationId: unit.location_id, unit });
         } else {
           let remaining = line.quantity;
@@ -671,9 +675,10 @@ export class Inventory {
             remaining -= take;
             if (!remaining) break;
           }
-          ensure(remaining === 0, 'INSUFFICIENT_STOCK', `Faltan unidades del producto ${product.sku}.`);
+          if (remaining > 0) shortages.push({productId:product.id,sku:product.sku,name:product.name,requested:Number(line.quantity),available:Number(line.quantity)-remaining,missing:remaining});
         }
       }
+      if (shortages.length) throw new DomainError('INSUFFICIENT_STOCK', `El pedido espera mercadería de ${shortages.length} producto(s). No se reservó ninguna unidad.`, 409, {shortages});
       ensure(planned.length > 0 && planned.length <= 200, 'VALIDATION_ERROR', 'El pedido debe contener entre 1 y 200 unidades reservables.', 400);
       const parcels: Row[] = [];
       for (const item of planned) {
