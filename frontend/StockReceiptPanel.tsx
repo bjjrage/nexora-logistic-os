@@ -5,11 +5,13 @@ import {api,type ApiProblem} from './api';
 import type {ReceiptPreview,ReceiptRow} from '../server/stock-receipts';
 
 type FileSource={csv?:string;filename?:string;contentBase64?:string};
-export type ReceiptSeed=FileSource&{token:string};
+export type OrderReceiptContext={orderId:string;orderReference:string;clientId:string;items:Array<{sku:string;productName:string;missing:number;tracking?:'QUANTITY'|'SERIAL'}>};
+export type ReceiptSeed=FileSource&{token:string;order?:OrderReceiptContext};
+type DraftReceiptRow=ReceiptRow&{productName?:string;missing?:number;tracking?:'QUANTITY'|'SERIAL'};
 type ReadResult={rows:ReceiptRow[];sheets:string[];sheet:string;fields:string[]};
 type Product={id:string;sku:string;name:string;tracking:'QUANTITY'|'SERIAL'};
 type HistoryItem={id:string;reference:string;status:string;source:string;filename?:string;client_name:string;actor_name:string;row_count:number;product_count:number;unit_count:number;created_at:string};
-type Props={active:boolean;clients:Array<{id:string;name:string}>;locations:Array<{id:string;code:string;name:string}>;clientId:string;locationId:string;onClientChange:(id:string)=>void;onLocationChange:(id:string)=>void;onReceived:()=>Promise<void>;onShowStock:()=>void;onShowCatalog:()=>void;seed:ReceiptSeed|null};
+type Props={active:boolean;clients:Array<{id:string;name:string}>;locations:Array<{id:string;code:string;name:string}>;clientId:string;locationId:string;onClientChange:(id:string)=>void;onLocationChange:(id:string)=>void;onReceived:()=>Promise<void>;onShowStock:()=>void;onShowCatalog:()=>void;seed:ReceiptSeed|null;onReturnToOrder?:()=>void};
 const PAGE_SIZE=20;
 const referenceFor=(id:string)=>'REC-'+id.slice(0,8).toUpperCase();
 async function post<T>(path:string,payload:unknown){return api<T>(path,{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'logistics-os'},body:JSON.stringify(payload)});}
@@ -26,13 +28,14 @@ async function fileSource(file:File):Promise<FileSource>{
  return {filename:file.name,contentBase64:btoa(binary)};
 }
 
-export default function StockReceiptPanel({active,clients,locations,clientId,locationId,onClientChange,onLocationChange,onReceived,onShowStock,onShowCatalog,seed}:Props){
+export default function StockReceiptPanel({active,clients,locations,clientId,locationId,onClientChange,onLocationChange,onReceived,onShowStock,onShowCatalog,seed,onReturnToOrder}:Props){
+ const order=seed?.order;
  const [initialId]=useState(()=>crypto.randomUUID());
  const [commandId,setCommandId]=useState(initialId);
  const [reference,setReference]=useState(()=>referenceFor(initialId));
  const [reason,setReason]=useState('');
  const [mode,setMode]=useState<'file'|'paste'|'scan'>('file');
- const [rows,setRows]=useState<ReceiptRow[]>([]);
+ const [rows,setRows]=useState<DraftReceiptRow[]>([]);
  const [source,setSource]=useState<FileSource|null>(null);
  const [sourceType,setSourceType]=useState<'XLSX'|'CSV'|'MANUAL'>('MANUAL');
  const [sheets,setSheets]=useState<string[]>([]),[sheet,setSheet]=useState('');
@@ -69,15 +72,24 @@ export default function StockReceiptPanel({active,clients,locations,clientId,loc
   }catch(caught){if(request===reading.current)setError(problem(caught));}
   finally{if(request===reading.current)setBusy(false);}
  },[invalidate]);
- useEffect(()=>{if(seed){setMode('file');void read(seed);}return()=>{reading.current++;};},[seed,read]);
+ useEffect(()=>{
+  if(seed?.order){
+   invalidate();setCompleteSheet(false);setSourceType('MANUAL');setSource(null);setPage(0);
+   setRows(seed.order.items.flatMap(item=>Array.from({length:item.tracking==='SERIAL'?item.missing:1},()=>({...item,missing:item.tracking==='SERIAL'?1:item.missing,sku:item.sku,quantity:'0',locationCode:'',serial:'',barcode:''}))).map((row,index)=>({...row,row:index+1})));
+   setReason('Faltantes del pedido '+seed.order.orderReference);
+  }else if(seed){setMode('file');void read(seed);}
+  return()=>{reading.current++;};
+ },[seed,read,invalidate]);
  const loadHistory=useCallback(async()=>{
   setHistoryBusy(true);setHistoryError('');
   try{const result=await api<{items:HistoryItem[]}>('/api/inventory/receipts/imports'+(clientId?'?clientId='+encodeURIComponent(clientId):''));setHistory(result.items);}
   catch(caught){setHistoryError(problem(caught));}finally{setHistoryBusy(false);}
  },[clientId]);
  useEffect(()=>{if(showHistory)void loadHistory();},[showHistory,loadHistory]);
- const payload=()=>({clientId,locationId,reference,reason,source:sourceType,filename:source?.filename??'',rows,allowRepeatedContent:allowRepeated,mode:completeSheet?'COMPLETE_SHEET':'ADD'});
+ const receiptRows=order?rows.filter(row=>row.quantity.trim()!==''&&Number(row.quantity)!==0):rows;
+ const payload=()=>({clientId,locationId,reference,reason,source:sourceType,filename:source?.filename??'',rows:receiptRows.map(({row,sku,quantity,locationCode,serial,barcode})=>({row,sku,quantity,locationCode,serial,barcode})),allowRepeatedContent:allowRepeated,mode:completeSheet?'COMPLETE_SHEET':'ADD'});
  const validate=async()=>{
+  if(order&&rows.some(row=>!Number.isSafeInteger(Number(row.quantity))||Number(row.quantity)<0||Number(row.quantity)>(row.missing??0))){setError('Revisá Recibido ahora: usá una cantidad entera entre cero y el faltante.');return;}
   setBusy(true);setError('');setSuccess('');const version=generation.current;
   try{
    const report=await post<ReceiptPreview>('/api/inventory/receipts/preview',payload());
@@ -112,6 +124,16 @@ export default function StockReceiptPanel({active,clients,locations,clientId,loc
    const result=await api<{product:Product|null;unit:{serial:string}|null}>('/api/inventory/lookup?'+new URLSearchParams({clientId:start.clientId,code:value.trim()}));
    if(!start.active||!context.current.active||context.current.clientId!==start.clientId||context.current.locationId!==start.locationId)return;
    if(result.unit)throw new Error('Esa unidad ya está registrada en el inventario.');
+   if(order){
+    const product=result.product??serialProductRef.current;
+    if(!product||!order.items.some(item=>item.sku===product.sku))throw new Error('Ese código no corresponde a los faltantes de este pedido.');
+    if(result.product?.tracking==='SERIAL'){serialProductRef.current=result.product;setSerialProduct(result.product);setSuccess(`${product.name}: escaneá la serie de la unidad recibida.`);return;}
+    const index=rows.findIndex(row=>row.sku===product.sku&&Number(row.quantity)<(row.missing??0));
+    if(index<0)throw new Error('Ya marcaste todo el faltante de este producto.');
+    const serial=product.tracking==='SERIAL'?value.trim():'';
+    if(serial&&rows.some(row=>row.serial.toLowerCase()===serial.toLowerCase()))throw new Error('La serie ya está en esta recepción.');
+    invalidate();setRows(current=>current.map((row,i)=>i===index?{...row,quantity:String(Number(row.quantity)+1),serial}:row));return;
+   }
    if(result.product?.tracking==='SERIAL'){serialProductRef.current=result.product;setSerialProduct(result.product);setShowAdvanced(true);setSuccess(`${result.product.sku}: escaneá las series nuevas o elegí otro SKU.`);return;}
    const product=result.product??serialProductRef.current;
    if(!product)throw new Error('Código desconocido. Agregá el SKU al catálogo o corregí la fila.');
@@ -133,21 +155,24 @@ export default function StockReceiptPanel({active,clients,locations,clientId,loc
  const pageRows=rows.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE);
  const previewByRow=new Map(preview?.rows.map(row=>[row.row,row]));
  return <section className="card task-card stock-receipt-panel">
-  <div className="card-header"><div><h2>{completeSheet?'Completar hoja de stock':'Nueva recepción'}</h2><p>{completeSheet?'Completá el objetivo de la hoja descontando las recepciones ya registradas.':'Cargá varios productos y confirmá una sola recepción. Las cantidades se suman al stock disponible.'}</p></div><a className="text-button" href="/api/inventory/receipts/template.xlsx" download><FileSpreadsheet aria-hidden="true"/>Plantilla Excel</a></div>
-  {success&&<div className="notice" role="status"><strong>{success}</strong>{!rows.length&&<button className="text-button" type="button" onClick={onShowStock}>Ver stock actualizado</button>}</div>}
+  <div className="card-header"><div><h2>{order?'Faltantes del pedido '+order.orderReference:completeSheet?'Completar hoja de stock':'Nueva recepción'}</h2><p>{order?'Indicá cuánto llegó físicamente. Dejá en cero lo que no recibiste.':completeSheet?'Completá el objetivo de la hoja descontando las recepciones ya registradas.':'Cargá varios productos y confirmá una sola recepción. Las cantidades se suman al stock disponible.'}</p></div>{!order&&<a className="text-button" href="/api/inventory/receipts/template.xlsx" download><FileSpreadsheet aria-hidden="true"/>Plantilla Excel</a>}</div>
+  {success&&<div className="notice" role="status"><strong>{success}</strong>{!rows.length&&<button className="button button-primary" type="button" onClick={order?onReturnToOrder:onShowStock}>{order?'Volver al pedido y revisar reserva':'Ver stock actualizado'}</button>}</div>}
   {error&&<div className="notice error" role="alert">{error}</div>}
   <fieldset disabled={busy} className="receipt-fieldset">
    <div className="inventory-form-grid">
-    <label className="field"><span>Cliente dueño de la mercadería</span><select required value={clientId} onChange={event=>{invalidate();onClientChange(event.target.value);setSerialProduct(null);}}><option value="">Seleccionar cliente</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+    <label className="field"><span>Cliente dueño de la mercadería</span><select required disabled={!!order} value={clientId} onChange={event=>{invalidate();onClientChange(event.target.value);setSerialProduct(null);}}><option value="">Seleccionar cliente</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
     <label className="field"><span>Dónde se guarda</span><select required value={locationId} onChange={event=>{invalidate();onLocationChange(event.target.value);}}><option value="">Elegir depósito o sector</option>{locations.map(l=><option key={l.id} value={l.id}>{l.code} · {l.name}</option>)}</select></label>
     <label className="field"><span>Referencia de la recepción</span><input required maxLength={160} value={reference} onChange={event=>{invalidate();setReference(event.target.value);}} placeholder="Remito o referencia del ingreso"/><small>Debe ser única para este cliente.</small></label>
     <label className="field"><span>Observación</span><input maxLength={500} value={reason} onChange={event=>{invalidate();setReason(event.target.value);}}/></label>
    </div>
-   <div className="receipt-completion-option"><label className="receipt-checkbox"><input type="checkbox" checked={completeSheet} onChange={event=>{invalidate();setCompleteSheet(event.target.checked);}}/>Cargar solo lo que falta de la hoja</label><p className="muted">{completeSheet?"Cada cantidad es el total a completar. Se descuenta lo ya recibido para este cliente, incluso lo reservado, cargado o entregado. No se reducen los excedentes.":"Recepción nueva: las cantidades de la hoja se suman al stock existente."}</p></div><nav className="workflow-tabs" aria-label="Cómo cargar mercadería">{([['file','Subir Excel o CSV'],['paste','Pegar tabla'],['scan','Escanear o agregar']] as const).map(([value,label])=><button key={value} type="button" className={mode===value?'workflow-tab is-active':'workflow-tab'} aria-pressed={mode===value} onClick={()=>setMode(value)}>{label}</button>)}</nav>
+   {!order&&<><div className="receipt-completion-option"><label className="receipt-checkbox"><input type="checkbox" checked={completeSheet} onChange={event=>{invalidate();setCompleteSheet(event.target.checked);}}/>Cargar solo lo que falta de la hoja</label><p className="muted">{completeSheet?"Cada cantidad es el total a completar. Se descuenta lo ya recibido para este cliente, incluso lo reservado, cargado o entregado. No se reducen los excedentes.":"Recepción nueva: las cantidades de la hoja se suman al stock existente."}</p></div><nav className="workflow-tabs" aria-label="Cómo cargar mercadería">{([['file','Subir Excel o CSV'],['paste','Pegar tabla'],['scan','Escanear o agregar']] as const).map(([value,label])=><button key={value} type="button" className={mode===value?'workflow-tab is-active':'workflow-tab'} aria-pressed={mode===value} onClick={()=>setMode(value)}>{label}</button>)}</nav>
    {mode==='file'&&<div className="stack receipt-source"><label className="field"><span>Archivo de stock</span><input type="file" accept=".xlsx,.csv" disabled={rows.length>0} onChange={event=>{const file=event.target.files?.[0];if(file)void fileSource(file).then(next=>read(next)).catch(caught=>setError(problem(caught)));event.target.value='';}}/><small>{source?.filename||'Incluí SKU y Cantidad. Podés usar la hoja Stock sugerido del catálogo de prueba.'}{rows.length>0?' Vaciá el lote para reemplazar el archivo.':''}</small></label>{sheets.length>0&&<label className="field"><span>Hoja de stock</span><select value={sheet} onChange={event=>{if(source)void read(source,event.target.value);}}>{sheets.map(name=><option key={name}>{name}</option>)}</select></label>}</div>}
    {mode==='paste'&&<div className="stack receipt-source"><label className="field"><span>Tabla copiada desde Excel</span><textarea rows={5} value={paste} onChange={event=>setPaste(event.target.value)} placeholder={'SKU\tCantidad\nMOCK-NX-0001\t25'}/><small>Incluí los encabezados. Acepta tabulaciones, coma o punto y coma.</small></label><button type="button" className="button button-secondary" disabled={!paste.trim()||rows.length>0} onClick={()=>void read({csv:paste})}>Leer tabla</button></div>}
    {mode==='scan'&&<div className="stack receipt-source"><BarcodeScanner onScan={scan} disabled={!active||!clientId||!locationId||busy} label="Escanear SKU, código de barras o serie"/><label className="field"><span>Buscar producto</span><input value={catalogSearch} onChange={event=>{setCatalogSearch(event.target.value);setCatalogPage(0);}} placeholder="Nombre, SKU o código de barras"/></label><div className="receipt-product-picker">{catalog.filter(product=>(product as Product&{active?:boolean}).active!==false).map(product=><button type="button" className="button button-secondary" key={product.id} disabled={!clientId||!locationId} onClick={()=>scan(product.sku)}>{product.name} · {product.sku}</button>)}</div>{catalogTotal>PAGE_SIZE&&<div className="pagination"><button type="button" className="text-button" disabled={catalogPage===0} onClick={()=>setCatalogPage(value=>value-1)}>Productos anteriores</button><span>{catalogPage+1} de {Math.ceil(catalogTotal/PAGE_SIZE)}</span><button type="button" className="text-button" disabled={(catalogPage+1)*PAGE_SIZE>=catalogTotal} onClick={()=>setCatalogPage(value=>value+1)}>Más productos</button></div>}{serialProduct&&<p className="notice">{serialProduct.sku}: escaneando series individuales. <button type="button" className="text-button" onClick={()=>{serialProductRef.current=null;setSerialProduct(null);}}>Cambiar producto</button></p>}<button className="button button-secondary" type="button" onClick={addRow}><Plus aria-hidden="true"/>Agregar producto</button></div>}
-   {rows.length>0&&<>
+   </>}
+   {order&&rows.length>0&&<OrderReceiptRows rows={rows} preview={preview} onChange={change} onScan={scan} disabled={!active||!clientId||!locationId||busy}/>}
+   {order&&receiptRows.length>0&&<button className="button button-primary" type="button" disabled={!clientId||!locationId||!reference.trim()} onClick={()=>void validate()}>Validar recepción</button>}
+   {!order&&rows.length>0&&<>
     <div className="receipt-summary"><strong>{rows.length} filas · {draftUnits.toLocaleString('es-PY')} {completeSheet?'unidades objetivo':'unidades por recibir'}</strong><button className="text-button" type="button" onClick={clear}><Trash2 aria-hidden="true"/>Vaciar lote</button></div>
     <p className="muted">{completeSheet?"Validá para calcular lo que falta de cada SKU. Las filas ya cubiertas agregan cero unidades.":"Estas cantidades se suman al stock actual. Revisá «Disponible después» antes de confirmar."}</p><button className="text-button" type="button" aria-expanded={showAdvanced} onClick={()=>setShowAdvanced(value=>!value)}>{showAdvanced?"Ocultar ubicación y series por fila":"Mostrar ubicación y series por fila"}</button>
     <div className="table-wrap receipt-editor"><table><thead><tr><th>Fila</th><th>SKU o código</th><th>{completeSheet?"Objetivo hoja":"Cantidad"}</th>{showAdvanced&&<><th>Ubicación opcional</th><th>Serie opcional</th><th>Código individual</th></>}{preview&&<><th>Producto</th>{completeSheet&&<><th>Ya recibido (SKU)</th><th>Falta recibir</th></>}<th>Disponible actual</th><th>Disponible después</th></>}<th>Acción</th></tr></thead><tbody>{pageRows.map((row,index)=>{
@@ -168,4 +193,14 @@ export default function StockReceiptPanel({active,clients,locations,clientId,loc
   {busy&&<p role="status">Procesando la recepción…</p>}
   <div className="receipt-history"><button type="button" className="text-button" aria-expanded={showHistory} onClick={()=>setShowHistory(value=>!value)}><History aria-hidden="true"/>Historial de recepciones</button>{showHistory&&<div className="stack">{historyBusy&&<p role="status">Consultando recepciones…</p>}{historyError&&<p role="alert">{historyError}</p>}{!historyBusy&&!history.length&&!historyError&&<p className="muted">Todavía no hay recepciones por lote para este cliente.</p>}{history.map(item=><article key={item.id} className="history-card"><div><strong>{item.reference} · {item.status==='IMPORTED'?'Recibido':'Rechazado'}</strong><span>{item.client_name} · {item.product_count} productos · {item.unit_count} unidades</span><span>{item.actor_name} · {new Intl.DateTimeFormat('es-PY',{dateStyle:'short',timeStyle:'short'}).format(new Date(item.created_at))} · {item.filename||'Carga manual'}</span></div></article>)}</div>}</div>
  </section>;
+}
+
+function OrderReceiptRows({rows,preview,onChange,onScan,disabled}:{rows:DraftReceiptRow[];preview:ReceiptPreview|null;onChange:(index:number,field:keyof ReceiptRow,value:string)=>void;onScan:(value:string)=>void;disabled:boolean}) {
+ return <div className="stack">
+  <div className="table-wrap receipt-editor order-receipt-editor"><table aria-label="Faltantes a recibir"><thead><tr><th>Producto / SKU</th><th>Falta</th><th>Recibido ahora</th><th>Control</th></tr></thead><tbody>{rows.map((row,index)=>{
+   const report=preview?.rows.find(item=>item.row===row.row),issues=preview?.rowErrors.filter(item=>item.row===row.row)??[];
+   return <tr key={row.row}><td><strong>{row.productName}</strong><small>SKU: {row.sku}</small>{row.tracking==='SERIAL'&&<label className="field"><span>Serie de la unidad</span><input aria-label={`Serie fila ${row.row}`} value={row.serial} onChange={event=>onChange(index,'serial',event.target.value)}/></label>}{issues.map((issue,i)=><small className="receipt-row-error" key={i}>{issue.message}</small>)}</td><td data-label="Falta">{row.missing}</td><td data-label="Recibido ahora"><input type="number" min="0" max={row.missing} step="1" aria-label={`Recibido ahora ${row.sku} fila ${row.row}`} value={row.quantity} onChange={event=>onChange(index,'quantity',event.target.value)}/></td><td data-label="Control">{report?<><small>Disponible actual: {report.current}</small><small>Después: {report.after}</small></>:Number(row.quantity)>0?'Por validar':'No recibido'}</td></tr>;
+  })}</tbody></table></div>
+  <details className="receipt-source"><summary>Usar lector o código de barras (opcional)</summary><BarcodeScanner onScan={onScan} disabled={disabled} label="Escanear producto faltante o serie"/></details>
+ </div>;
 }

@@ -1,6 +1,6 @@
 import './order-reservation-stock.css';
 
-type Line = {productId:string;sku?:string;name?:string;productName?:string;quantity:number;available?:number};
+type Line = {tracking?:"QUANTITY"|"SERIAL";productId:string;sku?:string;name?:string;productName?:string;quantity:number;available?:number};
 export function reservationStock(lines:Line[]) {
   return lines.map(line => {
     const available=typeof line.available==='number'&&Number.isFinite(line.available)?Math.max(0,line.available):null;
@@ -21,6 +21,6 @@ export default function OrderReservationStock({lines,busy,onRefresh,onReceive}:{
         <td>{row.quantity}</td><td>{row.available??'—'}</td><td><strong>{row.missing??'—'}</strong></td>
       </tr>)}</tbody>
     </table></div>
-    {missing&&onReceive&&<button type="button" className="button button-secondary" disabled={busy} onClick={onReceive}>Recibir mercadería de este cliente</button>}
+    {missing&&onReceive&&<button type="button" className="button button-secondary" disabled={busy} onClick={onReceive}>Recibir faltantes de este pedido</button>}
   </section>;
 }

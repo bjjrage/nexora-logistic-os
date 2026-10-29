@@ -1,4 +1,4 @@
-import StockReceiptPanel, {type ReceiptSeed} from './StockReceiptPanel';
+import StockReceiptPanel, {type ReceiptSeed, type OrderReceiptContext} from './StockReceiptPanel';
 import AccountRecovery from './AccountRecovery';
 import OrderStockSummary from './OrderStockSummary';
 import OrderReservationStock, {reservationStock} from './OrderReservationStock';
@@ -32,7 +32,7 @@ type SnapshotLimits = { products: number | null; locations: number | null; balan
 type SnapshotHasMore = { products: boolean; locations: boolean; balances: boolean; units: boolean; movements: boolean };
 type StockTotals = Record<"AVAILABLE" | "RESERVED" | "VEHICLE" | "QUARANTINE", number>;
 type InventoryData = { products: Product[]; locations: Location[]; balances: Balance[]; units: Unit[]; movements: Movement[]; counts: SnapshotCounts; limits: SnapshotLimits; hasMore: SnapshotHasMore; totals?: StockTotals; clientTotals?: Record<string, StockTotals> };
-type OrderLine = { id?: string; productId: string; sku?: string; productName?: string; name?: string; quantity: number; requested?: number; reserved?: number; loaded?: number; delivered?: number; returned?: number; available?: number; serials?: string[] };
+type OrderLine = { tracking?: "QUANTITY" | "SERIAL"; id?: string; productId: string; sku?: string; productName?: string; name?: string; quantity: number; requested?: number; reserved?: number; loaded?: number; delivered?: number; returned?: number; available?: number; serials?: string[] };
 type OrderParcel = { id: string; code: string; productId: string; serialId?: string | null; state: string };
 type Order = { id: string; clientId: string; clientName?: string; externalId: string; date?: string; orderDate?: string; windowStart?: string | null; windowEnd?: string | null; serviceMinutes?: number | null; restrictions?: string | null; state: string; status?: string; destination: string; recipientName: string; recipientPhone?: string | null; lines?: OrderLine[]; items?: OrderLine[]; shipmentId?: string; parcelIds?: string[]; parcels?: OrderParcel[]; createdAt?: string };
 type DraftOrderForm = { orderDate: string; destination: string; recipientName: string; recipientPhone: string; windowStart: string; windowEnd: string; serviceMinutes: string; restrictions: string; lines: Array<{ productId: string; quantity: number }> };
@@ -47,7 +47,7 @@ type CatalogRowError = { row: number; field?: string; message: string };
 type CatalogPreview = { valid: boolean; rowCount: number; createCount: number; updateCount: number; unchangedCount: number; rows: CatalogRow[]; rowErrors: CatalogRowError[]; ignoredColumns?: string[] };
 type CatalogSource = { clientId: string; csv?: string; filename?: string; contentBase64?: string; defaultTracking?: "QUANTITY" | "SERIAL" };
 type StockRow = { key: string; clientId?: string; clientName: string; productId: string; sku: string; productName: string; serial?: string; barcode?: string | null; locationCode: string; quantity: number; unit: string; status: string; orderReference: string };
-type Props = { section: Section; role: Role; clients: Client[]; initialClientId?:string; initialView?:InventoryView; onReturnToClient?:(clientId:string)=>void; companyName?:string; supportContacts?:{name:string;role:string}[]; onManageClients?:()=>void; onOpenRoutes?:(routeId?:string)=>void; onReceiveStock?:(clientId:string)=>void; vehicles: Vehicle[]; routes: RouteOption[]; assignments: AssignmentOption[]; parcels: ParcelOption[]; returns: ReturnOption[]; onRefresh?: () => Promise<void>; uploadEvidence: EvidenceUpload };
+type Props = { section: Section; role: Role; clients: Client[]; initialClientId?:string; initialView?:InventoryView; initialOrder?:{id:string;reference:string}; initialReceiptSeed?:ReceiptSeed; onReturnToOrder?:()=>void; onReturnToClient?:(clientId:string)=>void; companyName?:string; supportContacts?:{name:string;role:string}[]; onManageClients?:()=>void; onOpenRoutes?:(routeId?:string)=>void; onReceiveStock?:(context:OrderReceiptContext)=>void; vehicles: Vehicle[]; routes: RouteOption[]; assignments: AssignmentOption[]; parcels: ParcelOption[]; returns: ReturnOption[]; onRefresh?: () => Promise<void>; uploadEvidence: EvidenceUpload };
 
 const blankInventory: InventoryData = { products: [], locations: [], balances: [], units: [], movements: [], counts: { products: 0, locations: 0, balances: 0, units: 0, movements: 0 }, limits: { products: null, locations: null, balances: null, units: 1000, movements: 500 }, hasMore: { products: false, locations: false, balances: false, units: false, movements: false }, totals: { AVAILABLE: 0, RESERVED: 0, VEHICLE: 0, QUARANTINE: 0 }, clientTotals: {} };
 const locationKindLabels: Record<LocationKind, string> = { DEPOT: "Depósito", STORAGE: "Sector / estante", QUARANTINE: "Cuarentena" };
@@ -270,7 +270,7 @@ function formatOrderDate(value?: string): string {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString("es");
 }
 
-export default function InventoryPanel({ section, role, clients, initialClientId='',initialView='stock',onReturnToClient,companyName="Nexora", supportContacts=[], onManageClients, onOpenRoutes, onReceiveStock, vehicles, routes, assignments, parcels, returns, onRefresh, uploadEvidence }: Props) {
+export default function InventoryPanel({ section, role, clients, initialClientId='',initialView='stock',initialOrder,initialReceiptSeed,onReturnToOrder,onReturnToClient,companyName="Nexora", supportContacts=[], onManageClients, onOpenRoutes, onReceiveStock, vehicles, routes, assignments, parcels, returns, onRefresh, uploadEvidence }: Props) {
   const isAdmin = role === "ADMIN";
   const canManage = isAdmin || role === "OPERATIONS";
   const canWarehouse = canManage || role === "DEPOT";
@@ -292,11 +292,11 @@ export default function InventoryPanel({ section, role, clients, initialClientId
   const [catalogProductPage, setCatalogProductPage] = useState(0);
   const [remoteStock,setRemoteStock]=useState<StockRow[]>([]),[stockTotal,setStockTotal]=useState(0);
   const [remoteCatalog,setRemoteCatalog]=useState<Product[]>([]),[catalogTotal,setCatalogTotal]=useState(0);
-  const [ordersSearch, setOrdersSearch] = useState("");
+  const [ordersSearch, setOrdersSearch] = useState(initialOrder?.reference??"");
   const [ordersClientFilter, setOrdersClientFilter] = useState(initialClientId);
   const [ordersStatusFilter, setOrdersStatusFilter] = useState("");
   const [ordersPage, setOrdersPage] = useState(0);
-  const [ordersTotal,setOrdersTotal]=useState(0),[ordersQuery,setOrdersQuery]=useState('');
+  const [ordersTotal,setOrdersTotal]=useState(0),[ordersQuery,setOrdersQuery]=useState(initialOrder?.reference??'');
   const ordersRequest=useRef(0);
   useEffect(()=>{const timer=setTimeout(()=>setOrdersQuery(ordersSearch),250);return()=>clearTimeout(timer);},[ordersSearch]);
   const [importHistoryPage, setImportHistoryPage] = useState(0);
@@ -317,7 +317,7 @@ export default function InventoryPanel({ section, role, clients, initialClientId
   const [returnEvidenceIds, setReturnEvidenceIds] = useState<Record<string, string>>({});
   const [uploadingReturnId, setUploadingReturnId] = useState<string | null>(null);
   const [selectedRouteId, setSelectedRouteId] = useState("");
-  const [selectedOrderMode, setSelectedOrderMode] = useState<"load" | "return" | "release" | null>(null);
+  const [selectedOrderMode, setSelectedOrderMode] = useState<"load" | "return" | "release" | null>(initialOrder?"load":null);
   const [stagedReleaseParcelIds, setStagedReleaseParcelIds] = useState<string[]>([]);
   const [releaseLocationId, setReleaseLocationId] = useState("");
   const [releaseReason, setReleaseReason] = useState("");
@@ -338,14 +338,14 @@ export default function InventoryPanel({ section, role, clients, initialClientId
   const [previewingImport, setPreviewingImport] = useState(false);
   const [importCommandId, setImportCommandId] = useState("");
   const [catalogFilename, setCatalogFilename] = useState("");
-  const [receiptSeed,setReceiptSeed]=useState<ReceiptSeed|null>(null);
+  const [receiptSeed,setReceiptSeed]=useState<ReceiptSeed|null>(initialReceiptSeed??null);
   const [lastCatalogSource,setLastCatalogSource]=useState<CatalogSource|null>(null);
   const [catalogSource, setCatalogSource] = useState<CatalogSource | null>(null);
   const [catalogPreview, setCatalogPreview] = useState<CatalogPreview | null>(null);
   const [previewingCatalog, setPreviewingCatalog] = useState(false);
   const [catalogPreviewPage, setCatalogPreviewPage] = useState(0);
   const [catalogErrorPage, setCatalogErrorPage] = useState(0);
-  const [selectedOrderId, setSelectedOrderId] = useState("");
+  const [selectedOrderId, setSelectedOrderId] = useState(initialOrder?.id??"");
   const [accessForm, setAccessForm] = useState({ clientId: "", name: "", username: "", password: "" });
 
   const refreshInventory = useCallback(async () => {
@@ -456,6 +456,19 @@ export default function InventoryPanel({ section, role, clients, initialClientId
     setBusy(true); setError("");
     try { await refreshOrders(); }
     catch (caught) { setError(inventoryError(caught)); }
+    finally { setBusy(false); }
+  };
+  const receiveOrderShortages = async () => {
+    if (!selectedOrder || !onReceiveStock) return;
+    setBusy(true); setError("");
+    try {
+      const current = await api<Order>("/api/orders/" + encodeURIComponent(selectedOrder.id));
+      if ((current.status ?? current.state).toUpperCase() !== 'DRAFT') { await refreshOrders(); return; }
+      const missing = reservationStock((current.lines ?? []).map(line=>({...line,quantity:line.requested??line.quantity})));
+      const items = missing.filter(line=>(line.missing??0)>0).map(line=>({sku:line.sku??'',productName:line.productName??line.name??line.sku??'Producto',missing:line.missing!,tracking:line.tracking}));
+      if (!items.length) { await refreshOrders(); return; }
+      onReceiveStock({orderId:current.id,orderReference:current.externalId,clientId:current.clientId,items});
+    } catch (caught) { setError(inventoryError(caught)); }
     finally { setBusy(false); }
   };
   const returnOrders = orders.map((order) => ({
@@ -778,7 +791,8 @@ export default function InventoryPanel({ section, role, clients, initialClientId
   return (
     <div className="inventory-workspace">
       {section === "inventory" && onReturnToClient && <button className="text-button inventory-back" type="button" onClick={()=>onReturnToClient(inventoryView==='catalog'?catalogClientId:selectedClient)}>← Ficha de {clients.find(client=>client.id===(inventoryView==='catalog'?catalogClientId:selectedClient))?.name||'cliente'}</button>}
-      {section === "inventory" && inventoryView !== "stock" && !onReturnToClient && <button className="text-button inventory-back" type="button" onClick={()=>setInventoryView("stock")}>← Inventario</button>}
+      {section === "inventory" && onReturnToOrder && <button className="text-button inventory-back" type="button" onClick={onReturnToOrder}>← Volver al pedido</button>}
+      {section === "inventory" && inventoryView !== "stock" && !onReturnToClient && !onReturnToOrder && <button className="text-button inventory-back" type="button" onClick={()=>setInventoryView("stock")}>← Inventario</button>}
       <div className="page-heading">
         <div><p className="eyebrow">OPERACIÓN DE DEPÓSITO</p><h1>{section === "inventory" ? inventoryTitles[inventoryView] : section === "orders" ? "Pedidos" : "Accesos cliente"}</h1><p className="muted">{section === "inventory" ? (inventoryView === "stock" ? "Consultá stock o registrá una entrada." : inventoryView === "receive" ? "Ingresá productos de un cliente a tu depósito." : inventoryView === "settings" ? "Configurá los lugares físicos donde guardás mercadería." : "") : section === "orders" ? "Reservá los pedidos y asignales una ruta. La carga y la entrega continúan en Rutas." : "Habilitá cuentas de consulta limitadas a un cliente."}</p></div>
         <div className="heading-actions"><button className="button button-secondary" type="button" onClick={() => { setLoading(true); const refresh = section === "inventory" ? Promise.all([refreshInventory(), refreshOrders()]).then(() => undefined) : section === "orders" ? Promise.all([refreshInventory(), refreshOrders(), ...(canManage ? [refreshImportHistory()] : [])]).then(() => undefined) : refreshAccesses(); void refresh.catch((caught) => setError(inventoryError(caught))).finally(() => setLoading(false)); }} disabled={loading}><RefreshCw aria-hidden="true" />Actualizar</button></div>
@@ -794,7 +808,7 @@ export default function InventoryPanel({ section, role, clients, initialClientId
           {stockTotal > INVENTORY_PAGE_SIZE && <div className="pagination"><button type="button" className="text-button" onClick={() => setStockPage((page) => Math.max(0, page - 1))} disabled={stockPage === 0}>Anterior</button><span>Página {stockPage + 1} de {Math.ceil(stockTotal / INVENTORY_PAGE_SIZE)}</span><button type="button" className="text-button" onClick={() => setStockPage((page) => page + 1)} disabled={(stockPage + 1) * INVENTORY_PAGE_SIZE >= stockTotal}>Siguiente</button></div>}<section className="card stock-table-card"><div className="card-header"><div><h2>Existencias</h2><p>{filteredStockRows.length} resultado(s) · cantidades y series</p></div><a className="button button-secondary" href="/api/inventory/export.csv"><ArrowDownToLine aria-hidden="true" />Exportar CSV</a></div>{filteredStockRows.length ? <div className="table-wrap"><table><thead><tr><th>Cliente</th><th>Producto / serie</th><th>Ubicación</th><th>Estado</th><th>Cantidad</th><th>Pedido</th></tr></thead><tbody>{pageStockRows.map((row) => <tr key={row.key}><td>{row.clientName}</td><td><strong>{row.productName}</strong><small>{row.sku}{row.serial ? " · Serie " + row.serial : ""}{row.barcode ? " · " + row.barcode : ""}</small></td><td>{row.locationCode}</td><td><span className="badge badge-neutral">{statusLabel(row.status)}</span></td><td>{new Intl.NumberFormat("es").format(row.quantity)} {row.unit}</td><td>{row.orderReference}</td></tr>)}</tbody></table></div> : <div className="empty-state"><PackageSearch aria-hidden="true" /><h3>No encontramos existencias</h3><p>Probá cambiar la búsqueda o los filtros.</p></div>}</section>
         </>}
         {inventoryView === "receive" && (!clients.length||!hasReceiptLocations)&&<section className="card task-card setup-needed" aria-labelledby="receipt-setup-title"><h2 id="receipt-setup-title">{!clients.length?'Primero agregá un cliente':'Primero creá un depósito o sector'}</h2><p>{!clients.length?'El cliente es la empresa dueña de los productos, por ejemplo Universo.':'Es el lugar físico donde vas a guardar la mercadería, por ejemplo Depósito central · Sector A.'}</p>{canManage?<button className="button button-primary" onClick={()=>{if(!clients.length){onManageClients?.();return;}setEditingLocation(null);setLocationForm({code:'',name:'',kind:'DEPOT'});setShowLocationForm(true);}}>{!clients.length?'Agregar cliente':'Crear depósito o sector'}</button>:<div className="setup-owner"><strong>Lo configura Administración de {companyName}.</strong><p>Entrá con la cuenta administradora y abrí Inventario → Depósitos y sectores.{setupContact?' Cuenta administradora: '+setupContact+'.':''}</p></div>}</section>}
-        {!!clients.length && hasReceiptLocations && canWarehouse && <div hidden={inventoryView!=="receive"}><StockReceiptPanel active={inventoryView==="receive"} clients={clients} locations={receiptLocations} clientId={selectedClient} locationId={selectedLocation} onClientChange={setSelectedClient} onLocationChange={setSelectedLocation} seed={receiptSeed} onReceived={async()=>{await refreshInventory();await onRefresh?.();}} onShowStock={()=>{setInventoryClientFilter(selectedClient);setInventoryView("stock");}} onShowCatalog={()=>{setCatalogClientId(selectedClient);setInventoryView("catalog");}}/></div>}
+        {!!clients.length && hasReceiptLocations && canWarehouse && <div hidden={inventoryView!=="receive"}><StockReceiptPanel active={inventoryView==="receive"} clients={clients} locations={receiptLocations} clientId={selectedClient} locationId={selectedLocation} onClientChange={setSelectedClient} onLocationChange={setSelectedLocation} seed={receiptSeed} onReturnToOrder={onReturnToOrder} onReceived={async()=>{await refreshInventory();await onRefresh?.();}} onShowStock={()=>{setInventoryClientFilter(selectedClient);setInventoryView("stock");}} onShowCatalog={()=>{setCatalogClientId(selectedClient);setInventoryView("catalog");}}/></div>}
         {(inventoryView === "move" || inventoryView === "adjust") && <section className="card task-card"><div className="card-header"><div><h2>{inventoryView === "move" ? "Trasladar stock" : "Ajustar stock"}</h2><p>{inventoryView === "move" ? "Escaneá desde la ubicación de origen." : "Registrá la diferencia y el motivo de auditoría."}</p></div></div><form className="stack" onSubmit={(event) => void (inventoryView === "move" ? handleMovement(event) : handleAdjustment(event))}><div className="inventory-form-grid"><label className="field"><span>Cliente</span><select required value={selectedClient} onChange={(event) => setSelectedClient(event.target.value)}><option value="">Seleccionar cliente</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label className="field"><span>Producto (opcional si escaneás)</span><select value={selectedProduct} onChange={(event) => setSelectedProduct(event.target.value)}><option value="">Seleccionar producto</option>{eligibleProducts.map((product) => <option key={product.id} value={product.id}>{product.sku} · {product.name}</option>)}</select></label><label className="field"><span>{inventoryView === "move" ? "Origen" : "Ubicación"}</span><select required value={selectedLocation} onChange={(event) => setSelectedLocation(event.target.value)}><option value="">Seleccionar</option>{inventory.locations.filter((location) => location.active !== false && (inventoryView !== "move" || location.kind !== "QUARANTINE")).map((location) => <option key={location.id} value={location.id}>{location.code} · {location.name}</option>)}</select></label>{inventoryView === "move" && <label className="field"><span>Destino</span><select required value={targetLocation} onChange={(event) => setTargetLocation(event.target.value)}><option value="">Seleccionar</option>{inventory.locations.filter((location) => location.active !== false && location.kind !== "QUARANTINE").map((location) => <option key={location.id} value={location.id}>{location.code} · {location.name}</option>)}</select></label>}<label className="field"><span>{inventoryView === "move" ? "Cantidad" : "Diferencia (+/-)"}</span><input required type="number" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label className="field"><span>Motivo</span><input required={inventoryView === "adjust"} maxLength={500} value={reason} onChange={(event) => setReason(event.target.value)} /></label></div><BarcodeScanner onScan={acceptInventoryScan} disabled={busy || !selectedClient} label="Escanear SKU, serie o código de unidad" />{!!scanSerials.length && <p className="notice">Series: {scanSerials.join(", ")}</p>}<button className="button button-primary" type="submit" disabled={busy || !canWarehouse}>{inventoryView === "move" ? <><ArrowRightLeft aria-hidden="true" />Confirmar traslado</> : "Registrar ajuste"}</button></form></section>}
         {inventoryView === "catalog" && <div className="inventory-flow-grid"><section className="card task-card"><div className="card-header"><div><h2>Actualizar catálogo</h2><p>La validación no modifica productos ni existencias.</p></div><a className="text-button" href="/api/inventory/catalog/template.csv" download>Descargar plantilla CSV</a></div>{!canManage ? <p className="notice error">Administración y Coordinación logística pueden importar catálogos.</p> : <form className="stack" onSubmit={(event) => void previewCatalog(event)}><label className="field"><span>Cliente</span><select required value={catalogClientId} onChange={(event) => { setCatalogClientId(event.target.value); setCatalogSource(null); setCatalogPreview(null); }}><option value="">Seleccionar cliente</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label className="field"><span>Seguimiento para filas nuevas sin tipo</span><select value={catalogDefaultTracking} onChange={(event) => { setCatalogDefaultTracking(event.target.value as "" | "QUANTITY" | "SERIAL"); setCatalogPreview(null); }}><option value="">El archivo debe indicarlo</option><option value="QUANTITY">Por cantidad</option><option value="SERIAL">Por serie</option></select></label><label className="field"><span>Archivo CSV o Excel (.xlsx)</span><input type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => void readCatalogFile(event.target.files?.[0])} /><small>{catalogFilename || "Elegí un archivo para validar."}</small></label><div className="inventory-actions"><button className="button button-primary" type="submit" disabled={previewingCatalog || busy || !catalogSource || !catalogClientId}><Search aria-hidden="true" />{previewingCatalog ? "Validando…" : "Validar archivo"}</button>{catalogPreview && <button className="button button-secondary" type="button" onClick={() => { setCatalogPreview(null); setCatalogSource(null); setCatalogFilename(""); }}>Elegir otro archivo</button>}</div></form>}
           {lastCatalogSource && lastCatalogSource.clientId===catalogClientId && <div className="notice"><strong>Catálogo guardado.</strong><p>Podés cargar las existencias del mismo archivo si incluye una hoja de stock.</p><button type="button" className="button button-secondary" onClick={()=>{setSelectedClient(catalogClientId);setReceiptSeed({...lastCatalogSource,token:commandId()});setInventoryView("receive");}}>Cargar existencias</button></div>}
@@ -821,7 +835,7 @@ export default function InventoryPanel({ section, role, clients, initialClientId
           {selectedOrder.state.toUpperCase() !== 'DRAFT' && <div className="order-lines-preview">{selectedOrderLines.map(line=><span key={line.productId}>{line.productName||line.name||productById.get(line.productId)?.name||line.sku||'Artículo'} × {line.quantity}</span>)}</div>}
           {selectedOrder.state.toUpperCase() === 'RESERVED' && <button type="button" className="button button-secondary" disabled={busy || !canWarehouse} onClick={() => void unreserveOrder()}>Desreservar pedido</button>}
           {selectedOrder.state.toUpperCase() === "DRAFT" ? <>
-            <OrderReservationStock lines={selectedOrderLines} busy={busy} onRefresh={()=>void refreshReservationStock()} onReceive={onReceiveStock?()=>onReceiveStock(selectedOrder.clientId):undefined}/>
+            <OrderReservationStock lines={selectedOrderLines} busy={busy} onRefresh={()=>void refreshReservationStock()} onReceive={onReceiveStock?()=>void receiveOrderShortages():undefined}/>
             <button className="button button-primary" type="button" onClick={() => void runMutation("/api/orders/" + encodeURIComponent(selectedOrder.id) + "/reserve", {}, "Pedido reservado.", "both")} disabled={busy || !canWarehouse || !canReserveComplete}><Boxes aria-hidden="true" />{busy ? "Guardando…" : "Reservar stock"}</button>
           </> : <div className="stack">
             <p>La reserva aparta stock en depósito. Seguí en Rutas → Cargar artículos; cuando la carga esté lista, confirmá la ruta.</p>

@@ -27,6 +27,7 @@ test('reserve → assign → route load → inspection → delivery stays in the
  await quantities({'Pedido':2,'Disponible para reservar':3,'Reservado en depósito':0,'Cargado en vehículo':0});
  const duplicateLoads:string[]=[];page.on('request',request=>{if(/\/api\/orders\/[^/]+\/load$/.test(new URL(request.url()).pathname))duplicateLoads.push(request.url());});
  await page.goto('/');await page.getByRole('button',{name:'Pedidos',exact:true}).click();
+ await page.getByRole('textbox',{name:'Buscar pedidos',exact:true}).fill('FLOW-'+suffix);
  await page.getByRole('article').filter({hasText:'FLOW-'+suffix}).getByRole('button',{name:'Reservar pedido',exact:true}).click();
  const dialog=page.getByRole('dialog',{name:'Reserva y ruta'});
  await dialog.getByRole('button',{name:'Reservar stock',exact:true}).click();
@@ -113,6 +114,7 @@ test('reserve → assign → route load → inspection → delivery stays in the
  await page.getByRole('button',{name:'Cerrar ruta',exact:true}).click();
  await expect.poll(async()=> (await(await page.request.get('/api/bootstrap')).json()).routes.find((r:any)=>r.id===route).state).toBe('OPERATIONALLY_CLOSED');
  await page.getByRole('button',{name:'Pedidos',exact:true}).click();
+ await page.getByRole('textbox',{name:'Buscar pedidos',exact:true}).fill('FLOW-'+suffix);
  const card=page.getByRole('article').filter({hasText:'FLOW-'+suffix});
  await expect(card).toContainText('Entregado');await expect(card.getByRole('button',{name:/cargar|Confirmar carga/i})).toHaveCount(0);
  expect(duplicateLoads).toEqual([]);

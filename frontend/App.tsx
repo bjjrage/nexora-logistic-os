@@ -11,6 +11,7 @@ import RouteLoadPanel from './RouteLoadPanel';
 import RouteParcelActions from './RouteParcelActions';
 import KpiDetails, { type KpiKind } from './KpiDetails';
 import InventoryPanel from './InventoryPanel';
+import type {ReceiptSeed} from './StockReceiptPanel';
 import CustomerPortal from './CustomerPortal';
 import ClientsPanel, {type ClientRecord} from './ClientsPanel';
 import CompanyPanel from './CompanyPanel';
@@ -375,7 +376,8 @@ function AppContent() {
   const [preferredRouteId, setPreferredRouteId] = useState("");
   const [preferredShipmentId, setPreferredShipmentId] = useState("");
   const [preferredClientId,setPreferredClientId]=useState('');
-  const [inventoryEntry,setInventoryEntry]=useState<{clientId:string;view:'catalog'|'receive'}|null>(null);
+  const [inventoryEntry,setInventoryEntry]=useState<{clientId:string;view:'catalog'|'receive';seed?:ReceiptSeed}|null>(null);
+  const [orderEntry,setOrderEntry]=useState<{id:string;reference:string;clientId:string}|null>(null);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -572,7 +574,7 @@ function AppContent() {
       ...(role === "ADMIN" ? [{ id: "customerAccess" as Page, label: "Accesos cliente", icon: <Shield /> }] : []),
     ];
 
-  const changePage = (next: Page, recordId = "") => { setPreferredRouteId(next==='routes'?recordId:''); setPreferredShipmentId(next==='shipments'?recordId:''); setPreferredClientId(next==='clients'?recordId:''); setInventoryEntry(null); setPage(next); setError(""); setSuccess(""); };
+  const changePage = (next: Page, recordId = "") => { setPreferredRouteId(next==='routes'?recordId:''); setPreferredShipmentId(next==='shipments'?recordId:''); setPreferredClientId(next==='clients'?recordId:''); setInventoryEntry(null); setOrderEntry(null); setPage(next); setError(""); setSuccess(""); };
 
   return (
     <div className="app-shell">
@@ -612,8 +614,8 @@ function AppContent() {
           {page === "clients" && isOpsRole(role) && <ClientsPanel profileEnabled={bootstrap.clientProfilesEnabled===true} initialClientId={preferredClientId} clients={bootstrap.clients} shipments={bootstrap.shipments} canManage={true} action={mutate} busy={pending} actionError={error} onInventory={(clientId,view)=>{changePage('inventory');setInventoryEntry({clientId,view});}}/>}
           {page === "company" && role === "ADMIN" && <CompanyPanel organization={bootstrap.organization} currentUserId={session.user.id} action={mutate} busy={pending} actionError={error} onFleet={()=>changePage('fleet')}/>}
           {page === "billing" && role === "ADMIN" && <Suspense fallback={<p role="status">Cargando facturación…</p>}><BillingPanel clients={bootstrap.clients}/></Suspense>}
-          {page === "inventory" && !isDriver && <InventoryPanel key={inventoryEntry?inventoryEntry.clientId+':'+inventoryEntry.view:'inventory'} initialClientId={inventoryEntry?.clientId} initialView={inventoryEntry?.view} onReturnToClient={inventoryEntry?(clientId)=>changePage('clients',clientId):undefined} section="inventory" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
-          {page === "orders" && !isDriver && <InventoryPanel section="orders" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} onOpenRoutes={(routeId)=>changePage('routes',routeId)} onReceiveStock={(clientId)=>{changePage('inventory');setInventoryEntry({clientId,view:'receive'});}} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
+          {page === "inventory" && !isDriver && <InventoryPanel key={inventoryEntry?inventoryEntry.clientId+':'+inventoryEntry.view:'inventory'} initialClientId={inventoryEntry?.clientId} initialView={inventoryEntry?.view} initialReceiptSeed={inventoryEntry?.seed} onReturnToOrder={inventoryEntry?.seed?.order?()=>{const order=inventoryEntry.seed!.order!;changePage('orders');setOrderEntry({id:order.orderId,reference:order.orderReference,clientId:order.clientId});}:undefined} onReturnToClient={inventoryEntry&&!inventoryEntry.seed?.order?(clientId)=>changePage('clients',clientId):undefined} section="inventory" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
+          {page === "orders" && !isDriver && <InventoryPanel key={orderEntry?.id??'orders'} initialOrder={orderEntry??undefined} initialClientId={orderEntry?.clientId} section="orders" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} onOpenRoutes={(routeId)=>changePage('routes',routeId)} onReceiveStock={(order)=>{changePage('inventory');setInventoryEntry({clientId:order.clientId,view:'receive',seed:{token:crypto.randomUUID(),order}});}} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
           {page === "customerAccess" && role === "ADMIN" && <InventoryPanel section="customerAccess" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
           {page === "tracking" && <TrackingView data={bootstrap} action={mutate} busy={pending} onRefresh={refreshBootstrap} onPrepareRoute={()=>changePage('routes','new')} />}
         </div>

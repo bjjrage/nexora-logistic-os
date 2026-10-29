@@ -20,6 +20,7 @@ test('orders filter all clients on the server, reset pagination and import into 
  const filter=page.getByRole('combobox',{name:'Cliente de los pedidos',exact:true});
  await expect(filter).toHaveValue('');
  for(const [id,name] of [['','Todos los clientes'],[a,'Pelmar QA '+suffix],[b,'Bristol QA '+suffix],[empty,'Sin pedidos QA '+suffix]])await expect(filter.locator('option').filter({hasText:name})).toHaveAttribute('value',id);
+ await filter.selectOption(a);await expect(page.getByRole('article')).toHaveCount(20);
  await page.getByRole('button',{name:'Siguiente',exact:true}).click();
  await expect(page.getByText('Página 2 de 2',{exact:true})).toBeVisible();
  const query=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/orders'&&new URL(r.url()).searchParams.get('clientId')===b);
