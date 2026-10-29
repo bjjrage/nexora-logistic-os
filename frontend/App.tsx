@@ -899,13 +899,13 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
   const pendingStops = stops.filter((stop) => !isClosed(stop.state));
   const openIncidents = selectedRoute ? data.incidents.filter((item) => item.routeId === selectedRoute.id && item.state === "OPEN") : [];
   const routeReturnItems = selectedRoute ? data.returns.filter((item) => item.routeId === selectedRoute.id) : [];
-  const missingChecklist=Boolean(selectedRoute?.state==='READY'&&canOperateRoad&&operationError.toLocaleLowerCase().includes('checklist'));
+  const missingChecklist=Boolean(selectedRoute&&['DRAFT','READY'].includes(selectedRoute.state)&&canOperateRoad&&operationError.toLocaleLowerCase().includes('checklist'));
 
   useEffect(()=>{
     if(!selectedRoute)return;
     if(['loading','unloading'].includes(routeTab) && !['DRAFT','READY'].includes(selectedRoute.state))setRouteTab('stops');
-    if(routeTab==='checks' && selectedRoute.state==='DRAFT')setRouteTab(canLoad?'loading':'stops');
-  },[selectedRoute?.state,routeTab,canLoad]);
+    if(routeTab==='checks' && selectedRoute.state==='DRAFT'&&!canPlan)setRouteTab(canLoad?'loading':'stops');
+  },[selectedRoute?.state,routeTab,canLoad,canPlan]);
   useEffect(()=>{
     if(missingChecklist){setEditRouteId('');setRouteTab('checks');}
   },[missingChecklist,selectedRoute?.id]);
@@ -942,11 +942,16 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
   const submitDriverInspection = async (event: FormEvent) => {
     event.preventDefault();
     if (!selectedRoute) return;
+    const submitter=(event.nativeEvent as SubmitEvent).submitter;
+    const departAfterSave=submitter instanceof HTMLButtonElement&&submitter.value==='dispatch-now';
     const items = driverInspectionItems.filter((item) => item.label.trim()).map((item) => ({ ...item, label: item.label.trim(), note: item.note.trim() }));
     const ok = await action("/api/vehicles/" + encodeURIComponent(selectedRoute.vehicleId) + "/inspections", {
       odometer: Number(driverInspectionOdometer), fuelPercent: Number(driverFuelPercent), items, commandId: commandId(),
     }, "Checklist de salida guardado.");
-    if (ok) { setDriverInspectionOdometer(""); setDriverFuelPercent(""); setDriverInspectionItems([{ label: "", severity: "OK", note: "" }]); }
+    if (ok) {
+      setDriverInspectionOdometer(""); setDriverFuelPercent(""); setDriverInspectionItems([{ label: "", severity: "OK", note: "" }]);
+      if(departAfterSave)await simpleRouteAction('dispatch','Salida de ruta registrada.');
+    }
   };
   const toggleParcel = (id: string, kind: "delivered" | "failed") => {
     const current = kind === "delivered" ? deliveredIds : failedIds;
@@ -989,20 +994,20 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
           {selectedRoute.state === 'READY' && (new Date(selectedRoute.startAt).getTime() > Date.now()||new Date(selectedRoute.endAt).getTime() < Date.now()) && <p className="muted">Al despachar ahora, el horario se actualizará automáticamente. Necesitás un checklist registrado en las últimas 24 horas.</p>}
           <div className="button-row">
             {capacityIncomplete && <p className="muted">Hay bultos sin peso o volumen. Podés continuar; la capacidad total no está verificada.</p>}
-            {canOperateRoad && selectedRoute.state === "READY" && <button className="button button-primary" disabled={busy||pendingLoadCount>0} onClick={() => simpleRouteAction("dispatch", "Salida de ruta registrada.")}>Despachar ahora</button>}
+            {canOperateRoad && (selectedRoute.state === "READY"||selectedRoute.state==='DRAFT'&&canPlan) && <button className="button button-primary" disabled={busy||pendingLoadCount>0||!routeParcels.length} onClick={() => simpleRouteAction("dispatch", "Salida de ruta registrada.")}>Despachar ahora</button>}
             {canOperateRoad && selectedRoute.state === "IN_PROGRESS" && <button className="button button-secondary" disabled={busy} onClick={() => simpleRouteAction("close", "Cierre de ruta solicitado.")}>Cerrar ruta</button>}
           </div>
           {['DRAFT','READY'].includes(selectedRoute.state)&&<section className="route-next-step" aria-label="Próximo paso de la ruta">
-            <p className="muted">Reservar pedido → Cargar vehículo → Confirmar ruta → Control de salida → Despachar</p>
-            <p role="status">{!routeParcels.length?'Agregá los artículos reservados que vas a llevar en esta ruta.':pendingLoadCount>0?`Falta cargar ${pendingLoadCount} bulto(s). La ruta se confirma después de cargar el vehículo.`:selectedRoute.state==='DRAFT'?depotLoadParcels.length?'Carga lista. Revisá el orden en Paradas y confirmá la ruta.':'Esta ruta tiene retiros en origen. Revisá Paradas y confirmá la ruta; los artículos se cargan al retirarlos.':'Ruta confirmada. Completá el control de salida y despachá.'}</p>
-            {canPlan&&selectedRoute.state==='DRAFT'&&<button type="button" className="button button-primary" disabled={busy||pendingLoadCount>0||!routeParcels.length} onClick={()=>void simpleRouteAction('ready','Ruta confirmada. Continuá con el control de salida.')}>Confirmar ruta</button>}
+            <p className="muted">Reservar pedido → Cargar vehículo → Control de salida → Despachar ahora</p>
+            <p role="status">{!routeParcels.length?'Agregá los artículos reservados que vas a llevar en esta ruta.':pendingLoadCount>0?`Falta cargar ${pendingLoadCount} bulto(s). La ruta se confirma después de cargar el vehículo.`:selectedRoute.state==='DRAFT'?canPlan?'Podés despachar ahora: la ruta se confirma al registrar la salida. Revisá Paradas y el control de salida.':'Carga lista. Coordinación logística debe confirmar la ruta.':'Ruta confirmada. Completá el control de salida y despachá.'}</p>
+            {canPlan&&selectedRoute.state==='DRAFT'&&<button type="button" className="button button-secondary" disabled={busy||pendingLoadCount>0||!routeParcels.length} onClick={()=>void simpleRouteAction('ready','Ruta confirmada. Continuá con el control de salida.')}>Confirmar ruta</button>}
             {!canPlan&&selectedRoute.state==='DRAFT'&&routeParcels.length>0&&pendingLoadCount===0&&<p className="muted">La carga está lista. Coordinación logística debe confirmar la ruta.</p>}
           </section>}
           <nav className="workspace-tabs route-task-tabs" aria-label="Tareas de la ruta">
             {canLoad&&['DRAFT','READY'].includes(selectedRoute.state)&&<button type="button" aria-pressed={routeTab==='loading'} onClick={()=>setRouteTab('loading')}>Cargar artículos ({pendingLoadCount})</button>}
             {canLoad&&['DRAFT','READY'].includes(selectedRoute.state)&&<button type="button" aria-pressed={routeTab==='unloading'} onClick={()=>setRouteTab('unloading')}>Bajar artículos ({loadedParcels.length})</button>}
             <button type="button" aria-pressed={routeTab==='stops'} onClick={()=>setRouteTab('stops')}>Paradas ({stops.length})</button>
-            {canOperateRoad && ['READY','IN_PROGRESS'].includes(selectedRoute.state) && <button type="button" aria-pressed={routeTab==='checks'} onClick={()=>setRouteTab('checks')}>Control de salida</button>}
+            {canOperateRoad && (['READY','IN_PROGRESS'].includes(selectedRoute.state)||selectedRoute.state==='DRAFT'&&canPlan) && <button type="button" aria-pressed={routeTab==='checks'} onClick={()=>setRouteTab('checks')}>Control de salida</button>}
             {(openIncidents.length>0 || routeReturnItems.length>0) && <button type="button" aria-pressed={routeTab==='issues'} onClick={()=>setRouteTab('issues')}>Incidencias y retornos ({openIncidents.length+routeReturnItems.length})</button>}
           </nav>
           {canPlan && ['DRAFT','READY'].includes(selectedRoute.state) && routeTab === 'loading' && <TaskDisclosure label="Agregar artículos reservados o retiros a esta ruta" open={depotLoadParcels.length===0?true:undefined}><div className="route-operations">
@@ -1024,7 +1029,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
           </form></details>}{canPlan&&removableParcels.length>0&&<TaskDisclosure label="Quitar artículos sin cargar de esta ruta"><RouteParcelActions key={selectedRoute.id+':unassign'} route={selectedRoute} parcels={removableParcels} shipments={data.shipments} mode="unassign" busy={busy} action={action}/></TaskDisclosure>}</div>}
           {canLoad&&['DRAFT','READY'].includes(selectedRoute.state)&&routeTab==='unloading'&&<RouteParcelActions key={selectedRoute.id+':unload'} route={selectedRoute} parcels={loadedParcels} shipments={data.shipments} mode="unload" busy={busy} action={action}/>}
           {canOperateRoad && routeTab === "checks" && <Panel title="Checklist de salida" description={"Inspección del vehículo " + (data.vehicles.find((vehicle) => vehicle.id === selectedRoute.vehicleId)?.plate ?? selectedRoute.vehicleId) + ". Guardá controles observados. Para despachar ahora, el checklist debe ser de las últimas 24 horas."}>
-            {selectedRoute.state !== "READY" && selectedRoute.state !== "IN_PROGRESS" ? <p className="muted">La inspección estará disponible cuando la ruta esté lista para salir.</p> : <form className="stack" onSubmit={submitDriverInspection}>
+            {!['READY','IN_PROGRESS'].includes(selectedRoute.state)&&!(selectedRoute.state==='DRAFT'&&canPlan) ? <p className="muted">La inspección estará disponible cuando la ruta esté lista para salir.</p> : <form className="stack" onSubmit={submitDriverInspection}>
               <fieldset disabled={busy}>
                 <div className="form-grid">
                   <Field label="Odómetro observado"><input required type="number" min="0" step="1" value={driverInspectionOdometer} onChange={(event) => setDriverInspectionOdometer(event.target.value)} /></Field>
@@ -1034,7 +1039,8 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
                   {driverInspectionItems.map((item, index) => <div className="inspection-item" key={index}><input aria-label="Nombre del control" placeholder="Control observado" value={item.label} onChange={(event) => setDriverInspectionItems((items) => items.map((row, idx) => idx === index ? { ...row, label: event.target.value } : row))} /><select aria-label="Severidad" value={item.severity} onChange={(event) => setDriverInspectionItems((items) => items.map((row, idx) => idx === index ? { ...row, severity: event.target.value as InspectionItem["severity"] } : row))}><option value="OK">OK</option><option value="MINOR">Menor</option><option value="CRITICAL">Crítico</option></select><input aria-label="Nota" placeholder="Nota (opcional)" value={item.note} onChange={(event) => setDriverInspectionItems((items) => items.map((row, idx) => idx === index ? { ...row, note: event.target.value } : row))} /></div>)}
                 </div>
               </fieldset>
-              <button className="button button-primary" disabled={busy || !driverInspectionOdometer || !driverFuelPercent || driverInspectionItems.every((item) => !item.label.trim())}>Guardar checklist</button>
+              <div className="button-row"><button className="button button-secondary" disabled={busy || !driverInspectionOdometer || !driverFuelPercent || driverInspectionItems.every((item) => !item.label.trim())}>Guardar checklist</button>
+              {['DRAFT','READY'].includes(selectedRoute.state)&&<button className="button button-primary" type="submit" name="departureAction" value="dispatch-now" disabled={busy||pendingLoadCount>0||!routeParcels.length||!driverInspectionOdometer||!driverFuelPercent||driverInspectionItems.every(item=>!item.label.trim())}>Guardar checklist y despachar ahora</button>}</div>
             </form>}
           </Panel>}
           {canPlan && selectedRoute.state === "DRAFT" && routeTab === "stops" && stops.length > 1 && <TaskDisclosure label="Cambiar orden de paradas"><StopOrderEditor key={selectedRoute.id} stops={stops} route={selectedRoute} action={action} busy={busy} shipmentLabel={id=>data.shipments.find(shipment=>shipment.id===id)?.reference??"Envío"} /></TaskDisclosure>}

@@ -357,12 +357,15 @@ export class Logistics {
     async dispatch(actor: Actor, id: string, b: Row) {
         return await this.command(actor, `routes.${id}.dispatch`, b, ROAD, async () => {
             const r = await this.route(id, actor, b.expectedVersion);
-            ensure(r.state === 'READY', 'INVALID_TRANSITION', 'La ruta debe estar lista.');
+            const confirmOnDeparture=r.state==='DRAFT'&&b.dispatchNow===true;
+            if(confirmOnDeparture)authorize(actor,OPS);
+            ensure(r.state === 'READY'||confirmOnDeparture, 'INVALID_TRANSITION', 'La ruta debe estar lista.');
             const dispatchAt=now();
             const outsideWindow=dispatchAt<r.start_at||dispatchAt>r.end_at;
             ensure(!outsideWindow||b.dispatchNow===true, 'INVALID_TRANSITION', 'El despacho está fuera de la ventana de trabajo. Usá Despachar ahora.');
             const duration=new Date(r.end_at).getTime()-new Date(r.start_at).getTime();
-            const actual=outsideWindow?{...r,start_at:dispatchAt,end_at:new Date(new Date(dispatchAt).getTime()+duration).toISOString()}:r;
+            const immediate=b.dispatchNow===true;
+            const actual=immediate?{...r,start_at:dispatchAt,end_at:new Date(new Date(dispatchAt).getTime()+duration).toISOString()}:r;
             await this.routeAvailability(actual, actor, true);
             await validateRouteProvider(this.store,actor.orgId,id);
             await this.capacity(actual, actor);
@@ -373,7 +376,7 @@ export class Logistics {
             for (const p of assigned.filter(p => !p.pickup))
                 await this.move(p, actor, 'IN_TRANSIT', 'VEHICLE', r.vehicle_id, 'DISPATCHED', b.commandId);
             await this.store.run("UPDATE routes SET state='IN_PROGRESS',start_at=?,end_at=?,version=version+1 WHERE id=? AND org_id=?",actual.start_at,actual.end_at,id,actor.orgId);
-            return { id, state: 'IN_PROGRESS', version: r.version + 1, ...(outsideWindow?{previousStartAt:r.start_at,previousEndAt:r.end_at,startAt:actual.start_at,endAt:actual.end_at}:{}) };
+            return { id, state: 'IN_PROGRESS', version: r.version + 1, ...(immediate?{previousStartAt:r.start_at,previousEndAt:r.end_at,startAt:actual.start_at,endAt:actual.end_at}:{}) };
         });
     }
     async pickup(actor: Actor, stopId: string, b: Row) {

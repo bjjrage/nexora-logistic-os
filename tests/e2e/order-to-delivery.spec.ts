@@ -39,7 +39,7 @@ test('reserve → assign → route load → inspection → delivery stays in the
  await expect(page.getByRole('button',{name:/Cargar artículos \(2\)/})).toHaveAttribute('aria-pressed','true');
  await expect(page.getByRole('button',{name:'Preparar ruta',exact:true})).toHaveCount(0);
  await expect(page.getByRole('button',{name:'Confirmar ruta',exact:true})).toBeDisabled();
- await expect(page.getByRole('button',{name:'Despachar ahora',exact:true})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Despachar ahora',exact:true})).toBeDisabled();
  expect((await orderDetail()).status).toBe('RESERVED');
  await quantities({'Pedido':2,'Disponible para reservar':1,'Reservado en depósito':2,'Cargado en vehículo':0});
  const load=page.getByRole('region',{name:'Carga del vehículo',exact:true});
@@ -55,7 +55,7 @@ test('reserve → assign → route load → inspection → delivery stays in the
  await expect(page.getByRole('button',{name:'Confirmar ruta',exact:true})).toBeDisabled();
  await load.getByRole('checkbox',{name:/Cocina demo · unidad 2/}).check();
  await load.getByRole('button',{name:'Confirmar carga',exact:true}).click();
- await expect(load).toContainText('Carga completa. Revisá las paradas y confirmá la ruta');
+ await expect(load).toContainText('Carga completa. Revisá las paradas y el control de salida antes de despachar.');
  await expect(page.getByText('Usar lector o ingresar código',{exact:true})).toHaveCount(0);
  await expect(page.getByRole('textbox',{name:'Código del bulto',exact:true})).toHaveCount(0);
  expect((await orderDetail()).status).toBe('LOADED');

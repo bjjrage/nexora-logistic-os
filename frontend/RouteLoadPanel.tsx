@@ -35,7 +35,7 @@ export default function RouteLoadPanel({route,parcels,shipments,busy,action}:Pro
     })}</div>
     {pending.length>200&&<p className="muted">Podés confirmar hasta 200 bultos por operación.</p>}
     {pending.length>0&&<button type="button" className="button button-primary" disabled={busy||!selectedPending.length} onClick={()=>void confirm()}>Confirmar carga</button>}
-    {parcels.length>0&&loaded.length===parcels.length&&<p className="notice success">{route.state==='DRAFT'?'Carga completa. Revisá las paradas y confirmá la ruta con el botón de arriba.':'Carga completa y ruta confirmada. Continuá con el control de salida.'} Para bajar un artículo, abrí Bajar artículos.</p>}
+    {parcels.length>0&&loaded.length===parcels.length&&<p className="notice success">Carga completa. Revisá las paradas y el control de salida antes de despachar. Para bajar un artículo, abrí Bajar artículos.</p>}
     {!parcels.length&&<p className="muted">Esta ruta no tiene bultos que deban cargarse en depósito.</p>}
   </section>;
 }

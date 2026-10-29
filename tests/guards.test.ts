@@ -102,11 +102,11 @@ test('nonoverlapping confirmed routes do not deadlock dispatch; active road occu
     // Planning a later day remains possible while today's driver is still out.
     await f.d.routeAvailability((await f.store.one('SELECT * FROM routes WHERE id=?', future))!, f.actor, false);
 });
-for(const offset of [7200000,-7200000])test(`Despachar ahora ajusta la ventana ${offset>0?'futura':'vencida'} sin perder la carga ni omitir el checklist`,async t=>{
+for(const offset of [7200000,-7200000,-1800000])test(`Despachar ahora ajusta la ventana ${offset>0?'futura':offset===-1800000?'vigente':'vencida'} sin perder la carga ni omitir el checklist`,async t=>{
     const f=await fixture(t),{r,s}=await f.loaded();
     const start=new Date(Date.now()+offset).toISOString(),end=new Date(Date.now()+offset+3600000).toISOString();
     await f.store.run('UPDATE routes SET start_at=?,end_at=? WHERE id=?',start,end,r);
-    await assert.rejects(f.d.dispatch(f.actor,r,{...f.cmd(),expectedVersion:await f.version(r)}),{code:'INVALID_TRANSITION'});
+    if(offset!==-1800000)await assert.rejects(f.d.dispatch(f.actor,r,{...f.cmd(),expectedVersion:await f.version(r)}),{code:'INVALID_TRANSITION'});
     const input={...f.cmd(),expectedVersion:await f.version(r),dispatchNow:true};
     const result=await f.d.dispatch(f.actor,r,input);
     assert.deepEqual(await f.d.dispatch(f.actor,r,input),result);
@@ -123,6 +123,33 @@ test('Despachar ahora rechaza un checklist antiguo y conserva la ventana program
     await f.store.run('UPDATE inspections SET created_at=? WHERE vehicle_id=?',new Date(Date.now()-90000000).toISOString(),f.vehicle);
     await assert.rejects(f.d.dispatch(f.actor,r,{...f.cmd(),expectedVersion:await f.version(r),dispatchNow:true}),(e:any)=>e.code==='INVALID_TRANSITION'&&e.message.includes('24 horas'));
     const saved=await f.d.route(r,f.actor);assert.equal(saved.state,'READY');assert.equal(saved.start_at,start);assert.equal(saved.end_at,end);
+});
+test('Despachar ahora confirma una ruta cargada en una sola operación y conserva el borrador si falla un control',async t=>{
+    const f=await fixture(t),{r,s}=await f.loaded();
+    const start=new Date(Date.now()+7200000).toISOString(),end=new Date(Date.now()+10800000).toISOString();
+    await f.store.run("UPDATE routes SET state='DRAFT',start_at=?,end_at=? WHERE id=?",start,end,r);
+    await f.store.run('UPDATE inspections SET created_at=? WHERE vehicle_id=?',new Date(Date.now()-90000000).toISOString(),f.vehicle);
+    const version=await f.version(r);
+    await assert.rejects(f.d.dispatch(f.actor,r,{...f.cmd(),expectedVersion:version,dispatchNow:true}),(e:any)=>e.message.includes('24 horas'));
+    const unchanged=await f.d.route(r,f.actor);
+    assert.equal(unchanged.state,'DRAFT');assert.equal(unchanged.start_at,start);assert.equal(unchanged.version,version);
+    assert.equal((await f.store.one('SELECT state FROM parcels WHERE id=?',s.parcels[0].id))!.state,'LOADED');
+    await f.inspect();
+    const input={...f.cmd(),expectedVersion:version,dispatchNow:true};
+    const result=await f.d.dispatch(f.actor,r,input);
+    assert.deepEqual(await f.d.dispatch(f.actor,r,input),result);
+    assert.equal(result.state,'IN_PROGRESS');assert.equal(result.version,version+1);
+    assert.equal(result.previousStartAt,start);
+    assert.equal((await f.store.one('SELECT state FROM parcels WHERE id=?',s.parcels[0].id))!.state,'IN_TRANSIT');
+});
+test('un chofer no confirma un borrador al despachar y la carga pendiente sigue bloqueando la salida inmediata',async t=>{
+    const f=await fixture(t),{r,s}=await f.loaded();
+    await f.store.run("UPDATE routes SET state='DRAFT' WHERE id=?",r);
+    const driver={...f.actor,role:'DRIVER' as const,driverId:f.driver};
+    await assert.rejects(f.d.dispatch(driver,r,{...f.cmd(),expectedVersion:await f.version(r),dispatchNow:true}),{code:'FORBIDDEN'});
+    await f.d.unload(f.actor,r,{...f.cmd(),expectedVersion:await f.version(r),parcelId:s.parcels[0].id});
+    await assert.rejects(f.d.dispatch(f.actor,r,{...f.cmd(),expectedVersion:await f.version(r),dispatchNow:true}),(e:any)=>e.message.includes('faltan bultos por cargar'));
+    assert.equal((await f.d.route(r,f.actor)).state,'DRAFT');
 });
 test('Despachar ahora rechaza un vehículo ocupado y conserva el horario de la ruta futura',async t=>{
     const f=await fixture(t),{r:today}=await f.loaded();
