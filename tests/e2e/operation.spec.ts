@@ -150,7 +150,7 @@ test('browser: isolated API fixtures → dispatch → photo evidence → Nexora 
  await post(`/api/routes/${later}/ready`,{expectedVersion:laterBootstrap.routes.find((r:any)=>r.id===later).version});
  await page.reload();await page.getByRole('button',{name:'Rutas',exact:true}).click();
  await page.getByRole('button',{name:new RegExp(name)}).click();
- await page.getByRole('button',{name:'Despachar',exact:true}).click();
+ await page.getByRole('button',{name:'Despachar ahora',exact:true}).click();
  await expect(page.getByText('Salida de ruta registrada.',{exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Registrar intento en esta parada',exact:true}).click();
  await page.getByLabel('Fallido',{exact:true}).check();

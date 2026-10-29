@@ -42,11 +42,11 @@ test('manual workflows: all nine operations change real simulation state, reconc
 test('manual: blocked steps, role boundaries, partial load, reload and undo keep the same operation',async({page})=>{
  await openFlow(page,'reparto');
  await page.locator('[data-wf-step="5"]').click();
- await page.getByRole('button',{name:'Despachar',exact:true}).click();
+ await page.getByRole('button',{name:'Despachar ahora',exact:true}).click();
  await expect(page.getByRole('alert')).toContainText('Confirmá la ruta');
  expect(await saved(page,'reparto')).toBeTruthy();
  await page.locator('#wf-actor').selectOption('DEPOT');
- await page.getByRole('button',{name:'Despachar',exact:true}).click();
+ await page.getByRole('button',{name:'Despachar ahora',exact:true}).click();
  await expect(page.getByRole('alert')).toContainText('El rol Depósito no puede');
  await page.locator('.wf-error [data-wf-next]').click();
  await page.locator('#wf-actor').selectOption('ADMIN');

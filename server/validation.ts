@@ -22,6 +22,7 @@ export const schemas={
   assign:z.object({...version,parcelIds:z.array(id).min(1).max(200),pickup:z.boolean().default(false)}),
   order:z.object({...version,stopIds:z.array(id).min(1).max(400)}),
   version:z.object(version),
+  dispatch:z.object({...version,dispatchNow:z.boolean().optional()}),
   load:z.object({...version,code:text}),
   loadSelected:routeSelection,
   routeParcels:routeSelection,

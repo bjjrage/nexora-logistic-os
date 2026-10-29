@@ -143,7 +143,7 @@
   ]);
   g('ruta-despachar','rutas','Despachar una ruta','Registrar la salida real del reparto.',[A,O,C],'Carga completa, inspección vigente y controles de salida resueltos.',[
     s('Revisá el control de salida','Verificá documentos, inspección, defectos y mantenimiento.','Control de salida','Los controles deben estar resueltos antes de intentar salir.',{path:'Rutas → Ruta Demo → Control de salida',rows:[['Carga','Completa'],['Inspección','Registrada'],['Documentos / mantenimiento','Vigentes'],['Defectos críticos','Sin pendientes']]}),
-    s('Registrá la salida en horario','Pulsá Despachar cuando la salida real ocurra dentro de la ventana prevista.','Despachar','La ruta queda En curso. Si hay una posición reciente del vehículo, puede verse el GPS del reparto.',{metrics:[['En curso','Estado de ruta']],tip:'Ante un bloqueo, leé el mensaje concreto: horario, carga, permiso, documentación o recurso no disponible.',next:'entrega'})
+    s('Registrá la salida real','Pulsá Despachar ahora cuando el vehículo esté listo para salir.','Despachar ahora','La ruta queda En curso. Si el horario previsto no incluye este momento, se ajusta automáticamente.',{metrics:[['En curso','Estado de ruta']],tip:'Necesitás un checklist de las últimas 24 horas. El sistema verifica carga, permisos y disponibilidad.',next:'entrega'})
   ]);
   g('entrega','rutas','Registrar una entrega','Resultado real, receptor y evidencia.',[A,O,C],'Ruta en curso y parada asignada. Entrega realizada.',[
     s('Abrí la parada asignada','El chofer entra a Mis rutas y abre la entrega que está atendiendo.','Abrir parada','Ves los bultos y la política de prueba de entrega.',{path:'Mis rutas → Ruta Demo → Paradas',rows:[['Destinatario Demo','2 unidades · pendiente']]}),

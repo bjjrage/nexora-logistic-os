@@ -14,7 +14,7 @@ test('reserve → assign → route load → inspection → delivery stays in the
  const product=(await send('/api/inventory/products',{clientId:client,sku:'FLOW-'+suffix,name:'Cocina demo',tracking:'QUANTITY',weightGrams:100,volumeCm3:100})).id;
  await send('/api/inventory/receipts',{clientId:client,productId:product,locationId:loc,quantity:3});
  const order=(await send('/api/orders',{clientId:client,externalId:'FLOW-'+suffix,orderDate:'2026-10-28',recipientName:'Receptor demo',destination:'Direccion demo',lines:[{productId:product,quantity:2}]})).id;
- const route=(await send('/api/routes',{name:routeName,driverId:driver,vehicleId:vehicle,trackingProvider:'TRACCAR',startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()})).id;
+ const route=(await send('/api/routes',{name:routeName,driverId:driver,vehicleId:vehicle,trackingProvider:'TRACCAR',startAt:new Date(Date.now()+3600000).toISOString(),endAt:new Date(Date.now()+7200000).toISOString()})).id;
  const orderDetail=async()=> (await page.request.get('/api/orders/'+order)).json();
  const stockPage=await page.context().newPage();
  const quantities=async(expected:Record<string,number>)=>{
@@ -38,7 +38,7 @@ test('reserve → assign → route load → inspection → delivery stays in the
  await expect(page.getByRole('button',{name:/Cargar artículos \(2\)/})).toHaveAttribute('aria-pressed','true');
  await expect(page.getByRole('button',{name:'Preparar ruta',exact:true})).toHaveCount(0);
  await expect(page.getByRole('button',{name:'Confirmar ruta',exact:true})).toBeDisabled();
- await expect(page.getByRole('button',{name:'Despachar',exact:true})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Despachar ahora',exact:true})).toHaveCount(0);
  expect((await orderDetail()).status).toBe('RESERVED');
  await quantities({'Pedido':2,'Disponible para reservar':1,'Reservado en depósito':2,'Cargado en vehículo':0});
  const load=page.getByRole('region',{name:'Carga del vehículo',exact:true});
@@ -88,7 +88,8 @@ test('reserve → assign → route load → inspection → delivery stays in the
  await page.getByRole('textbox',{name:'Nombre del control',exact:true}).fill('Control observado demo');
  await page.getByRole('button',{name:'Guardar checklist',exact:true}).click();
  await expect(page.getByText('Checklist de salida guardado.',{exact:true})).toBeVisible();
- await page.getByRole('button',{name:'Despachar',exact:true}).click();
+ await expect(page.getByText(/Al despachar ahora, el horario se actualizará automáticamente/)).toBeVisible();
+ await page.getByRole('button',{name:'Despachar ahora',exact:true}).click();
  await expect(page.getByRole('button',{name:'Registrar intento en esta parada',exact:true})).toBeVisible();
  expect((await orderDetail()).status).toBe('IN_TRANSIT');
  await page.getByRole('button',{name:'Registrar intento en esta parada',exact:true}).click();

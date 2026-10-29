@@ -68,6 +68,11 @@ test('PostgreSQL: agregar un segundo pedido a una ruta confirmada conserva la ca
   await domain.loadSelected(actor,route,{...cmd(),expectedVersion:await version(),parcelIds:[parcels[1]]});
   await domain.ready(actor,route,{...cmd(),expectedVersion:await version()});
   assert.equal((await domain.route(route,actor)).state,'READY');
+  await domain.inspect(actor,vehicle,{...cmd(),odometer:0,fuelPercent:90,items:[{label:'Control QA',severity:'OK',note:''}]});
+  const futureStart=new Date(Date.now()+7200000).toISOString(),futureEnd=new Date(Date.now()+10800000).toISOString();
+  await db.run('UPDATE routes SET start_at=?,end_at=? WHERE id=?',futureStart,futureEnd,route);
+  const departure=await domain.dispatch(actor,route,{...cmd(),expectedVersion:await version(),dispatchNow:true});
+  assert.equal(departure.previousStartAt,futureStart);assert.equal((await domain.route(route,actor)).state,'IN_PROGRESS');
   assert.equal((await reconcileInventory(db,actor)).ok,true);
   throw rollback;
  }),error=>error===rollback);}finally{await db.close();}

@@ -341,7 +341,7 @@ export class Logistics {
             return single?{id,parcelId:parcelIds[0],...(mode==='unload'?{state:'RECEIVED'}:{shipmentId}),version:route.version+1}:{id,parcelIds,version:route.version+1,...(mode==='unload'?{unloaded:parcelIds.length}:{unassigned:parcelIds.length})};
         });
     }
-    async fleetGuard(r: Row, actor: Actor) {
+    async fleetGuard(r: Row, actor: Actor, immediateAt?:string) {
         const v = await this.record('vehicles', r.vehicle_id, actor), d = await this.record('drivers', r.driver_id, actor);
         ensure(v.available && d.available, 'INVALID_TRANSITION', 'Chofer o vehículo no disponible.');
         ensure(await this.store.one('SELECT id FROM users WHERE org_id=? AND driver_id=? AND enabled=1',actor.orgId,d.id),'INVALID_TRANSITION','El chofer no tiene una cuenta activa. Revisá su acceso en Empresa y equipo → Equipo interno antes de despachar.');
@@ -350,24 +350,30 @@ export class Logistics {
         ensure(!await this.store.one('SELECT id FROM driver_documents WHERE driver_id=? AND blocks_dispatch=1 AND expires_at<=?', d.id, now()), 'INVALID_TRANSITION', 'Hay documentación impeditiva del chofer vencida.');
         ensure(!await this.store.one("SELECT id FROM maintenance WHERE vehicle_id=? AND state='OPEN' AND ((due_at IS NOT NULL AND due_at<=?) OR (due_odometer IS NOT NULL AND due_odometer<=?))", v.id, now(), v.odometer), 'INVALID_TRANSITION', 'Hay mantenimiento vencido.');
         const inspection = await this.store.one('SELECT * FROM inspections WHERE vehicle_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1', v.id);
-        ensure(inspection && inspection.created_at >= r.start_at && inspection.created_at <= r.end_at, 'INVALID_TRANSITION', 'Falta checklist de salida dentro de la ventana de trabajo.');
+        const inspectionStart=immediateAt?new Date(new Date(immediateAt).getTime()-86400000).toISOString():r.start_at;
+        const inspectionEnd=immediateAt??r.end_at;
+        ensure(inspection && inspection.created_at >= inspectionStart && inspection.created_at <= inspectionEnd, 'INVALID_TRANSITION', immediateAt?'Falta un checklist de salida registrado en las últimas 24 horas.':'Falta checklist de salida dentro de la ventana de trabajo.');
     }
     async dispatch(actor: Actor, id: string, b: Row) {
         return await this.command(actor, `routes.${id}.dispatch`, b, ROAD, async () => {
             const r = await this.route(id, actor, b.expectedVersion);
             ensure(r.state === 'READY', 'INVALID_TRANSITION', 'La ruta debe estar lista.');
-            await this.routeAvailability(r, actor, true);
+            const dispatchAt=now();
+            const outsideWindow=dispatchAt<r.start_at||dispatchAt>r.end_at;
+            ensure(!outsideWindow||b.dispatchNow===true, 'INVALID_TRANSITION', 'El despacho está fuera de la ventana de trabajo. Usá Despachar ahora.');
+            const duration=new Date(r.end_at).getTime()-new Date(r.start_at).getTime();
+            const actual=outsideWindow?{...r,start_at:dispatchAt,end_at:new Date(new Date(dispatchAt).getTime()+duration).toISOString()}:r;
+            await this.routeAvailability(actual, actor, true);
             await validateRouteProvider(this.store,actor.orgId,id);
-            ensure(now() >= r.start_at && now() <= r.end_at, 'INVALID_TRANSITION', 'El despacho está fuera de la ventana de trabajo.');
-            await this.capacity(r, actor);
+            await this.capacity(actual, actor);
             await this.vehicleCapacity(actor,r.vehicle_id);
-            await this.fleetGuard(r, actor);
+            await this.fleetGuard(actual, actor, b.dispatchNow===true?dispatchAt:undefined);
             const assigned = await this.store.all('SELECT p.*,a.pickup FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id WHERE a.route_id=? AND a.active=1', id);
             ensure(assigned.every(p => p.pickup ? p.state === 'EXPECTED' && p.custody_type === 'SENDER' : p.state === 'LOADED' && p.custody_type === 'VEHICLE' && p.custody_id === r.vehicle_id), 'INVALID_TRANSITION', 'El manifiesto no está reconciliado: faltan bultos por cargar.');
             for (const p of assigned.filter(p => !p.pickup))
                 await this.move(p, actor, 'IN_TRANSIT', 'VEHICLE', r.vehicle_id, 'DISPATCHED', b.commandId);
-            await this.store.run("UPDATE routes SET state='IN_PROGRESS',version=version+1 WHERE id=?", id);
-            return { id, state: 'IN_PROGRESS', version: r.version + 1 };
+            await this.store.run("UPDATE routes SET state='IN_PROGRESS',start_at=?,end_at=?,version=version+1 WHERE id=? AND org_id=?",actual.start_at,actual.end_at,id,actor.orgId);
+            return { id, state: 'IN_PROGRESS', version: r.version + 1, ...(outsideWindow?{previousStartAt:r.start_at,previousEndAt:r.end_at,startAt:actual.start_at,endAt:actual.end_at}:{}) };
         });
     }
     async pickup(actor: Actor, stopId: string, b: Row) {

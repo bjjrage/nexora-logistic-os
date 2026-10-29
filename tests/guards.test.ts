@@ -102,6 +102,37 @@ test('nonoverlapping confirmed routes do not deadlock dispatch; active road occu
     // Planning a later day remains possible while today's driver is still out.
     await f.d.routeAvailability((await f.store.one('SELECT * FROM routes WHERE id=?', future))!, f.actor, false);
 });
+for(const offset of [7200000,-7200000])test(`Despachar ahora ajusta la ventana ${offset>0?'futura':'vencida'} sin perder la carga ni omitir el checklist`,async t=>{
+    const f=await fixture(t),{r,s}=await f.loaded();
+    const start=new Date(Date.now()+offset).toISOString(),end=new Date(Date.now()+offset+3600000).toISOString();
+    await f.store.run('UPDATE routes SET start_at=?,end_at=? WHERE id=?',start,end,r);
+    await assert.rejects(f.d.dispatch(f.actor,r,{...f.cmd(),expectedVersion:await f.version(r)}),{code:'INVALID_TRANSITION'});
+    const input={...f.cmd(),expectedVersion:await f.version(r),dispatchNow:true};
+    const result=await f.d.dispatch(f.actor,r,input);
+    assert.deepEqual(await f.d.dispatch(f.actor,r,input),result);
+    const saved=await f.d.route(r,f.actor);
+    assert.equal(saved.state,'IN_PROGRESS');assert.equal(result.previousStartAt,start);assert.equal(result.previousEndAt,end);
+    assert.equal(new Date(saved.end_at).getTime()-new Date(saved.start_at).getTime(),3600000);
+    assert.ok(Math.abs(Date.now()-new Date(saved.start_at).getTime())<10000);
+    assert.equal((await f.store.one('SELECT state FROM parcels WHERE id=?',s.parcels[0].id))!.state,'IN_TRANSIT');
+});
+test('Despachar ahora rechaza un checklist antiguo y conserva la ventana programada',async t=>{
+    const f=await fixture(t),{r}=await f.loaded();
+    const start=new Date(Date.now()+7200000).toISOString(),end=new Date(Date.now()+10800000).toISOString();
+    await f.store.run('UPDATE routes SET start_at=?,end_at=? WHERE id=?',start,end,r);
+    await f.store.run('UPDATE inspections SET created_at=? WHERE vehicle_id=?',new Date(Date.now()-90000000).toISOString(),f.vehicle);
+    await assert.rejects(f.d.dispatch(f.actor,r,{...f.cmd(),expectedVersion:await f.version(r),dispatchNow:true}),(e:any)=>e.code==='INVALID_TRANSITION'&&e.message.includes('24 horas'));
+    const saved=await f.d.route(r,f.actor);assert.equal(saved.state,'READY');assert.equal(saved.start_at,start);assert.equal(saved.end_at,end);
+});
+test('Despachar ahora rechaza un vehículo ocupado y conserva el horario de la ruta futura',async t=>{
+    const f=await fixture(t),{r:today}=await f.loaded();
+    const start=new Date(Date.now()+7200000).toISOString(),end=new Date(Date.now()+10800000).toISOString();
+    const future=(await f.d.createRoute(f.actor,{...f.cmd(),name:'Ruta posterior',driverId:f.driver,vehicleId:f.vehicle,startAt:start,endAt:end})).id;
+    const shipment=await f.shipment();await f.receive(shipment);await f.assign(future,shipment.parcels.map(p=>p.id));await f.ready(future);
+    await f.d.dispatch(f.actor,today,{...f.cmd(),expectedVersion:await f.version(today)});
+    await assert.rejects(f.d.dispatch(f.actor,future,{...f.cmd(),expectedVersion:await f.version(future),dispatchNow:true}),{code:'VERSION_CONFLICT'});
+    const saved=await f.d.route(future,f.actor);assert.equal(saved.state,'READY');assert.equal(saved.start_at,start);assert.equal(saved.end_at,end);
+});
 
 test('QA-06: capacidad intermedia se verifica después de sumar retiros', async (t) => {
     const f = await fixture(t), a = await f.shipment(1, 4000, 4000), b = await f.shipment(1, 7000, 7000), r = await f.route();
