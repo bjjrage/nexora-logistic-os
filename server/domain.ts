@@ -153,7 +153,7 @@ export class Logistics {
             ensure(b.endAt>b.startAt,'VALIDATION_ERROR','El fin previsto debe ser posterior al inicio.',400);
             const driver=await this.record('drivers',b.driverId,actor),vehicle=await this.record('vehicles',b.vehicleId,actor);
             ensure(driver.available&&vehicle.available,'INVALID_TRANSITION','El chofer o el vehículo no está disponible.');
-            if(b.driverId!==route.driver_id)ensure(await this.store.one('SELECT id FROM users WHERE org_id=? AND driver_id=? AND enabled=1',actor.orgId,b.driverId),'INVALID_TRANSITION','El chofer elegido no tiene una cuenta activa. Revisá su acceso en Empresa y equipo → Equipo interno.');
+            if(b.driverId!==route.driver_id)ensure(await this.store.one('SELECT id FROM users WHERE org_id=? AND driver_id=? AND enabled=1',actor.orgId,b.driverId),'INVALID_TRANSITION','El chofer elegido no tiene una cuenta activa. Revisá su acceso en Flota → Choferes.');
             if(b.vehicleId!==route.vehicle_id){
                 const loaded=await this.store.one("SELECT p.id FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id WHERE a.org_id=? AND a.route_id=? AND a.active=1 AND p.custody_type='VEHICLE' LIMIT 1",actor.orgId,id);
                 ensure(!loaded,'INVALID_TRANSITION','Antes de cambiar de vehículo, bajá al depósito los bultos desde la pestaña Bajar artículos.');
@@ -344,7 +344,7 @@ export class Logistics {
     async fleetGuard(r: Row, actor: Actor, immediateAt?:string) {
         const v = await this.record('vehicles', r.vehicle_id, actor), d = await this.record('drivers', r.driver_id, actor);
         ensure(v.available && d.available, 'INVALID_TRANSITION', 'Chofer o vehículo no disponible.');
-        ensure(await this.store.one('SELECT id FROM users WHERE org_id=? AND driver_id=? AND enabled=1',actor.orgId,d.id),'INVALID_TRANSITION','El chofer no tiene una cuenta activa. Revisá su acceso en Empresa y equipo → Equipo interno antes de despachar.');
+        ensure(await this.store.one('SELECT id FROM users WHERE org_id=? AND driver_id=? AND enabled=1',actor.orgId,d.id),'INVALID_TRANSITION','El chofer no tiene una cuenta activa. Revisá su acceso en Flota → Choferes antes de despachar.');
         ensure(!await this.store.one("SELECT id FROM defects WHERE vehicle_id=? AND state='OPEN' AND severity='CRITICAL'", v.id), 'INVALID_TRANSITION', 'Hay un defecto crítico abierto.');
         ensure(!await this.store.one('SELECT id FROM vehicle_documents WHERE vehicle_id=? AND blocks_dispatch=1 AND expires_at<=?', v.id, now()), 'INVALID_TRANSITION', 'Hay documentación impeditiva vencida.');
         ensure(!await this.store.one('SELECT id FROM driver_documents WHERE driver_id=? AND blocks_dispatch=1 AND expires_at<=?', d.id, now()), 'INVALID_TRANSITION', 'Hay documentación impeditiva del chofer vencida.');

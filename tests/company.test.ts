@@ -10,6 +10,22 @@ import {createApp} from '../server/app.ts';
 
 const command=()=>({commandId:randomUUID()});
 const forbidden=(error:any)=>error.code==='FORBIDDEN';
+test('un chofer conserva sus rutas al crear acceso después de eliminar su cuenta',async t=>{
+ const {store,actor,domain,company}=await fixture(t);
+ const driver=(await domain.createDriver(actor,{...command(),name:'Chofer QA',username:'chofer-original',password:'QA-Driver-2026!'})).id;
+ const original=(await store.one('SELECT id FROM users WHERE driver_id=?',driver))!.id;
+ await company.remove(actor,String(original),command());
+ const input={...command(),username:'chofer-nuevo',password:'QA-Driver-2026!'};
+ for(const role of ['OPERATIONS','DEPOT','DRIVER','CUSTOMER'] as const)await assert.rejects(()=>company.createDriverAccess({...actor,role},driver,input),forbidden);
+ const result=await company.createDriverAccess(actor,driver,input);
+ assert.deepEqual(await company.createDriverAccess(actor,driver,input),result);
+ assert.equal((await store.one('SELECT driver_id FROM users WHERE id=?',result.id))!.driver_id,driver);
+ assert.equal((await store.one('SELECT COUNT(*) n FROM drivers WHERE id=?',driver))!.n,1);
+ assert.equal((await company.read(actor)).team.find(member=>member.id===result.id)!.driverId,driver);
+ await assert.rejects(()=>company.createDriverAccess(actor,driver,{...command(),username:'otro',password:'QA-Driver-2026!'}),(e:any)=>e.code==='INVALID_TRANSITION');
+ const foreign=randomUUID();await store.run('INSERT INTO organizations VALUES(?,?,?)',foreign,'Otra','UTC');
+ await assert.rejects(()=>company.createDriverAccess({...actor,orgId:foreign},driver,{...command(),username:'otro',password:'QA-Driver-2026!'}),(e:any)=>e.code==='NOT_FOUND');
+});
 async function fixture(t:any){
  const store=new Store(':memory:');t.after(()=>store.close());
  const initial=await setup(store,{organizationName:'Universo',timezone:'America/Asuncion',username:'qa.admin',password:'QA-Company-2026!'});

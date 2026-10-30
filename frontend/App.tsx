@@ -15,6 +15,7 @@ import type {ReceiptSeed} from './StockReceiptPanel';
 import CustomerPortal from './CustomerPortal';
 import ClientsPanel, {type ClientRecord} from './ClientsPanel';
 import CompanyPanel from './CompanyPanel';
+import AccountRecovery from './AccountRecovery';
 const BillingPanel=lazy(()=>import('./BillingPanel'));
 import {api,type ApiProblem} from './api';
 import {reportClientError,sourcePosition} from './diagnostics';
@@ -1170,6 +1171,14 @@ function FleetView({ data, action, busy, uploadEvidence, role,onPrepareRoute }: 
   const [driverName, setDriverName] = useState("");
   const [driverUsername, setDriverUsername] = useState("");
   const [driverPassword, setDriverPassword] = useState("");
+  const [driverAccounts,setDriverAccounts]=useState<Array<{id:string;driverId:string|null;username:string;enabled:boolean|number}>>([]);
+  const [accountsRevision,setAccountsRevision]=useState(0);
+  const [accessDriverId,setAccessDriverId]=useState('');
+  const [accessUsername,setAccessUsername]=useState('');
+  const [accessPassword,setAccessPassword]=useState('');
+  const [accountError,setAccountError]=useState('');
+  const [accountsLoading,setAccountsLoading]=useState(true);
+  useEffect(()=>{if(role!=='ADMIN'||fleetTab!=='drivers')return;const controller=new AbortController();setAccountsLoading(true);api<{team:Array<{id:string;driverId:string|null;username:string;enabled:boolean|number}>}>('/api/company',{signal:controller.signal}).then(result=>{if(!controller.signal.aborted){setDriverAccounts(result.team);setAccountError('');}}).catch(()=>{if(!controller.signal.aborted)setAccountError('No se pudo consultar el acceso de los choferes. Actualizá la página.');}).finally(()=>{if(!controller.signal.aborted)setAccountsLoading(false);});return()=>controller.abort();},[role,fleetTab,accountsRevision]);
   const [plate, setPlate] = useState("");
   const [capacityWeight, setCapacityWeight] = useState("");
   const [capacityVolume, setCapacityVolume] = useState("");
@@ -1192,8 +1201,9 @@ function FleetView({ data, action, busy, uploadEvidence, role,onPrepareRoute }: 
   const submitDriver = async (event: FormEvent) => {
     event.preventDefault();
     const ok = await action("/api/drivers", { name: driverName.trim(), username: driverUsername.trim(), password: driverPassword }, "Chofer registrado.");
-    if (ok) { setDriverName(""); setDriverUsername(""); setDriverPassword(""); }
+    if (ok) { setDriverName(""); setDriverUsername(""); setDriverPassword(""); setAccountsRevision(v=>v+1); }
   };
+  const createDriverAccess=async(event:FormEvent)=>{event.preventDefault();if(await action('/api/drivers/'+encodeURIComponent(accessDriverId)+'/access',{username:accessUsername.trim(),password:accessPassword},'Acceso del chofer creado.')){setAccessDriverId('');setAccessUsername('');setAccessPassword('');setAccountsRevision(v=>v+1);}};
   const submitVehicle = async (event: FormEvent) => {
     event.preventDefault();
     const ok = await action("/api/vehicles", {
@@ -1276,7 +1286,7 @@ function FleetView({ data, action, busy, uploadEvidence, role,onPrepareRoute }: 
           <button className="button button-primary" disabled={busy || !selectedDefectId || !defectEvidenceId} onClick={() => void resolveDefect()}>Guardar resolución</button>
         </div>}
       </Panel>}
-      {fleetTab === "drivers" && <Panel title="Choferes"><div className="table-wrap"><table className="table"><thead><tr><th>Nombre</th><th>Disponibilidad</th></tr></thead><tbody>{data.drivers.map((driver) => <tr key={driver.id}><td>{driver.name}</td><td><StateBadge value={availabilityLabel(driver.available)} /></td></tr>)}</tbody></table></div></Panel>}
+      {fleetTab === "drivers" && <Panel title="Choferes">{accountError&&<p role="alert" className="notice error">{accountError}</p>}<div className="table-wrap"><table className="table"><thead><tr><th>Nombre</th><th>Disponibilidad</th>{role==='ADMIN'&&<th>Acceso al OS</th>}</tr></thead><tbody>{data.drivers.map((driver) => {const account=driverAccounts.find(item=>item.driverId===driver.id);return <tr key={driver.id}><td>{driver.name}</td><td><StateBadge value={availabilityLabel(driver.available)} /></td>{role==='ADMIN'&&<td>{accountsLoading?'Consultando acceso…':accountError?'No disponible':account?<span className="inventory-actions"><span>{account.username} · {account.enabled?'Activo':'Suspendido'}</span>{account.enabled&&<AccountRecovery id={account.id}/>}<button type="button" className="button button-secondary" disabled={busy} onClick={async()=>{if(await action('/api/users/'+encodeURIComponent(account.id)+'/access',{enabled:!account.enabled},account.enabled?'Acceso suspendido.':'Acceso activado.'))setAccountsRevision(v=>v+1);}}>{account.enabled?'Suspender':'Activar'}</button></span>:<button type="button" className="button button-secondary" disabled={busy} onClick={()=>{setAccessDriverId(driver.id);setAccessUsername('');setAccessPassword('');}}>Crear acceso</button>}</td>}</tr>})}</tbody></table></div>{accessDriverId&&<form className="stack form-divider" onSubmit={createDriverAccess}><h3>Crear acceso para {data.drivers.find(d=>d.id===accessDriverId)?.name}</h3><p>El chofer conserva sus rutas y su historial.</p><div className="form-grid"><Field label="Usuario"><input required minLength={3} maxLength={100} value={accessUsername} onChange={e=>setAccessUsername(e.target.value)} autoComplete="off" /></Field><Field label="Contraseña inicial" hint="Mínimo 6 caracteres."><input required minLength={6} maxLength={200} type="password" value={accessPassword} onChange={e=>setAccessPassword(e.target.value)} autoComplete="new-password" /></Field></div><div className="inventory-actions"><button className="button button-primary" disabled={busy}>Crear acceso</button><button type="button" className="button button-secondary" disabled={busy} onClick={()=>{setAccessDriverId('');setAccessPassword('');}}>Cancelar</button></div></form>}</Panel>}
       {fleetTab === "documents" && documentTarget === "drivers" && <DriverDocumentsPanel drivers={data.drivers} documents={data.driverDocuments} timezone={data.organization.timezone} canManage={canManage} busy={busy} action={action} />}
       {fleetTab === "maintenance" && <MaintenancePanel vehicles={vehicles} maintenance={data.maintenance} timezone={data.organization.timezone} canManage={canManage} busy={busy} action={action} uploadEvidence={uploadEvidence} />}
     </>

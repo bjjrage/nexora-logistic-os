@@ -115,6 +115,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     app.post('/api/company',async(req,res)=>res.json(await new CompanyAdministration(store).update(await auth(req),req.body)));
     app.post('/api/users/:id/delete',async(req,res)=>res.json(await new CompanyAdministration(store).remove(await auth(req),String(req.params.id),req.body)));
     app.post('/api/users/:id/access',async(req,res)=>res.json(await new CompanyAdministration(store).setAccess(await auth(req),String(req.params.id),req.body)));
+    app.post('/api/drivers/:id/access',async(req,res)=>res.json(await new CompanyAdministration(store).createDriverAccess(await auth(req),String(req.params.id),req.body)));
     app.get('/api/shipments', async (req, res) => {
         const actor = await auth(req), limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25)), offset = Math.max(0, Number(req.query.offset) || 0);
         ensure(Number.isInteger(limit) && Number.isInteger(offset) && offset <= 1000000, 'VALIDATION_ERROR', 'Paginación inválida.', 400);
