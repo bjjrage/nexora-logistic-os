@@ -7,6 +7,8 @@ import {Logistics} from '../server/domain.ts';
 import {Inventory} from '../server/inventory.ts';
 import {Routing} from '../server/routing.ts';
 import {ReservedDispatch} from '../server/reserved-dispatch.ts';
+import {correctDispatchOrders} from '../server/dispatch-corrections.ts';
+import {confirmDispatchLocations} from '../server/dispatch-location-review.ts';
 import {solveLocal,type RoutingProviders} from '../server/routing-providers.ts';
 import {reconcileInventory} from '../server/reconciliation.ts';
 const cmd=()=>({commandId:randomUUID()});
@@ -36,6 +38,49 @@ async function fixture(t:any,real=false){
 }
 const automatic=(f:Awaited<ReturnType<typeof fixture>>)=>new ReservedDispatch(f.db,{...f.providers,solve:async m=>({routes:[{vehicleId:m.fleet[0].vehicleId,driverId:m.fleet[0].driverId,durationSeconds:m.orders.length*660+60,stops:m.orders.map((o:any,i:number)=>({orderId:o.id,arrivalSeconds:60+i*660}))}],unassigned:[]})});
 const departure={date:'2026-10-30',startAt:'2026-10-30T08:00:00Z',endAt:'2026-10-30T18:00:00Z'};
+
+test('release multiple reservations from Routes atomically and replay without adding stock twice',async t=>{
+ const f=await fixture(t);await f.inv.receive(f.actor,{...cmd(),clientId:f.client,productId:f.product,locationId:f.location,quantity:1});for(const id of f.orders)await f.inv.reserveOrder(f.actor,id,cmd());
+ const request={...cmd(),orderIds:f.orders,mode:'RELEASE'},result=await correctDispatchOrders(f.db,f.actor,request);
+ assert.equal(result.released,4);assert.deepEqual(await correctDispatchOrders(f.db,f.actor,request),result);
+ assert.equal((await f.db.one("SELECT SUM(quantity) AS n FROM inventory_balances WHERE status='AVAILABLE'"))!.n,4);assert.equal((await automatic(f).queue(f.actor,departure.date)).orders.length,0);assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
+});
+test('loaded orders need physical confirmation, then can return to planning and be released in the same route flow',async t=>{
+ const f=await fixture(t);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());const result=await automatic(f).organize(f.actor,{...cmd(),...departure}),routeId=result.routes[0].id,ids=(await f.db.all('SELECT parcel_id FROM route_assignments WHERE route_id=?',routeId)).map(r=>r.parcel_id);
+ await f.d.loadSelected(f.actor,routeId,{...cmd(),expectedVersion:(await f.d.route(routeId,f.actor)).version,parcelIds:ids});
+ await assert.rejects(correctDispatchOrders(f.db,f.actor,{...cmd(),orderIds:[f.orders[0]],mode:'RELEASE'}),{code:'PHYSICAL_UNLOAD_REQUIRED'});
+ const requeued=await correctDispatchOrders(f.db,f.actor,{...cmd(),orderIds:[f.orders[0]],mode:'REQUEUE',confirmUnloaded:true});assert.equal(requeued.unloaded,2);assert.equal((await automatic(f).board(f.actor,departure.date)).orders.length,1);
+ assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.orders[0]))!.status,'RESERVED');assert.equal((await f.db.one('SELECT COUNT(*) AS n FROM route_assignments WHERE active=1'))!.n,0);
+ const organized=await automatic(f).organize(f.actor,{...cmd(),...departure});assert.equal(organized.organized,1);
+ const released=await correctDispatchOrders(f.db,f.actor,{...cmd(),orderIds:[f.orders[0]],mode:'RELEASE'});assert.equal(released.released,2);assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
+});
+test('a late invalid order rolls back the whole reservation correction and rejects other tenants or roles',async t=>{
+ const f=await fixture(t);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());
+ await assert.rejects(correctDispatchOrders(f.db,f.actor,{...cmd(),orderIds:f.orders,mode:'RELEASE'}),{code:'INVALID_TRANSITION'});
+ assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.orders[0]))!.status,'RESERVED');
+ await assert.rejects(correctDispatchOrders(f.db,{...f.actor,role:'DEPOT'},{...cmd(),orderIds:[f.orders[0]],mode:'RELEASE'}),{code:'FORBIDDEN'});
+ await assert.rejects(correctDispatchOrders(f.db,{...f.actor,orgId:randomUUID()},{...cmd(),orderIds:[f.orders[0]],mode:'RELEASE'}),{code:'NOT_FOUND'});assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
+});
+test('approximate street proposals can be confirmed together before organization without client-supplied coordinates',async t=>{
+ const f=await fixture(t);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());await f.db.run("DELETE FROM routing_points WHERE entity_kind='ORDER'");
+ const service=new ReservedDispatch(f.db,{...f.providers,search:async()=>[{name:'Calle de prueba',latitude:-25.31,longitude:-57.61,addressRank:26}]});
+ const pending=await service.organize(f.actor,{...cmd(),...departure});assert.equal(pending.organized,0);assert.equal(pending.locationSuggestions.length,1);
+ await assert.rejects(confirmDispatchLocations(f.db,f.actor,{...cmd(),proposalCommandId:pending.id,orderIds:[randomUUID()]}),{code:'VALIDATION_ERROR'});
+ const request={...cmd(),proposalCommandId:pending.id,orderIds:[f.orders[0]]},confirmed=await confirmDispatchLocations(f.db,f.actor,request);assert.equal(confirmed.confirmed,1);assert.deepEqual(await confirmDispatchLocations(f.db,f.actor,request),confirmed);
+ assert.equal((await service.organize(f.actor,{...cmd(),...departure})).organized,1);
+ const board=await new ReservedDispatch(f.db,f.providers).board(f.actor,departure.date);assert.equal(board.routes[0].orders[0].point.approximate,true);assert.equal(board.routes[0].orders[0].point.name,'Calle de prueba');
+});
+test('delivery instructions require review of their actual text instead of blocking free text forever',async t=>{
+ const f=await fixture(t),text='Bulto frágil: manipular con cuidado.';await f.db.run('UPDATE inventory_orders SET restrictions=? WHERE id=?',text,f.orders[0]);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());
+ assert.match((await automatic(f).organize(f.actor,{...cmd(),...departure})).pending[0].reason,/indicaciones/);
+ assert.equal((await automatic(f).organize(f.actor,{...cmd(),...departure,reviewedInstructions:[{orderId:f.orders[0],text:'otra instrucción'}]})).organized,0);
+ assert.equal((await automatic(f).organize(f.actor,{...cmd(),...departure,reviewedInstructions:[{orderId:f.orders[0],text}]})).organized,1);
+});
+test('expired delivery windows propose the next local shift and can be organized there',async t=>{
+ const f=await fixture(t);await f.db.run('UPDATE inventory_orders SET window_start=?,window_end=? WHERE id=?','08:00','14:00',f.orders[0]);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());
+ const pending=await automatic(f).organize(f.actor,{...cmd(),date:departure.date,startAt:'2026-10-30T18:00:00Z',endAt:'2026-10-31T04:00:00Z'});assert.equal(pending.organized,0);assert.ok(pending.nextDeparture);assert.match(pending.nextDeparture.startAt,/T08:00:00/);
+ assert.equal((await automatic(f).organize(f.actor,{...cmd(),date:departure.date,startAt:pending.nextDeparture.startAt,endAt:pending.nextDeparture.endAt})).organized,1);
+});
 test('reservation needs stock only, and routing queues only confirmed overdue reservations',async t=>{
  const f=await fixture(t);await f.db.run('DELETE FROM routing_points');
  await f.inv.reserveOrder(f.actor,f.orders[0],cmd());

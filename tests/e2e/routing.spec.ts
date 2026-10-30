@@ -11,7 +11,7 @@ test('confirm reservation without maps, automatically organize in Routes and loa
  const location=(await send('/api/inventory/locations',{code:'PLAN-BASE',name:'Base QA'})).id;
  const product=(await send('/api/inventory/products',{clientId:client,sku:'PLAN-SKU',name:'Ventilador QA',tracking:'QUANTITY',weightGrams:100,volumeCm3:100})).id;
  await send('/api/inventory/receipts',{clientId:client,productId:product,locationId:location,quantity:2});
- const order=(await send('/api/orders',{clientId:client,externalId:'PLAN-BROWSER',orderDate:'2026-10-29',recipientName:'Receptor browser',destination:'Av. Mariscal Estigarribia 1080, Centro, San Lorenzo, Paraguay',lines:[{productId:product,quantity:2}]})).id;
+ const order=(await send('/api/orders',{clientId:client,externalId:'PLAN-BROWSER',orderDate:'2026-10-29',recipientName:'Receptor browser',destination:'Av. Mariscal Estigarribia 1080, Centro, San Lorenzo, Paraguay',restrictions:'PRUEBA FICTICIA. Descargar en planta baja.',lines:[{productId:product,quantity:2}]})).id;
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto('/');await page.getByRole('button',{name:'Pedidos',exact:true}).click();
  await expect(page.getByRole('button',{name:'Organizar pedidos',exact:true})).toHaveCount(0);
@@ -38,17 +38,11 @@ test('confirm reservation without maps, automatically organize in Routes and loa
  await page.getByRole('button',{name:'Rutas',exact:true}).click();
  const panel=page.getByRole('region',{name:'Reservados por organizar'});
  const unassigned=panel.getByRole('region',{name:'Pedidos por organizar',exact:true});await expect(unassigned.getByText('PLAN-BROWSER',{exact:true})).toBeVisible();await expect(unassigned).toContainText('PLAN-SKU');await expect(unassigned).toContainText('2 bultos reservados');
+ await panel.getByLabel('Revisé las indicaciones y autorizo organizar estos pedidos').check();
  await panel.getByRole('button',{name:'Organizar todos los reservados'}).click();
- await expect(panel.getByRole('button',{name:'Revisar direcci\u00f3n'})).toBeVisible();
- await panel.getByRole('button',{name:'Revisar direcci\u00f3n'}).click();
- const editor=panel.getByRole('region',{name:'Revisar direcci\u00f3n'}).locator('.place-picker');
- await expect(editor.locator('.leaflet-marker-icon')).toBeVisible();
- await expect(editor.getByText('Encontramos la calle',{exact:false})).toBeVisible();
+ await expect(panel.getByRole('region',{name:'Confirmar ubicaciones aproximadas'})).toContainText('PLAN-BROWSER');
  expect((await(await page.request.get('/api/routing/context')).json()).points).toHaveLength(1);
- await page.screenshot({path:'.local/dispatch-map-nearby.png',fullPage:true});
- await editor.getByRole('button',{name:'Guardar ubicaci\u00f3n'}).click();
-
- await panel.getByRole('button',{name:'Organizar todos los reservados'}).click();
+ await panel.getByRole('button',{name:'Confirmar ubicaciones propuestas y organizar'}).click();
  await expect(panel.getByRole('status').filter({hasText:'Organizados en esta operación: 1'})).toBeVisible({timeout:25000});
  await expect(panel.locator('.routing-route')).toContainText('PLAN-TEST');
  await expect(panel.locator('.routing-route')).toContainText('Chofer browser');
@@ -63,5 +57,19 @@ test('confirm reservation without maps, automatically organize in Routes and loa
  await page.getByRole('button',{name:'Seleccionar pendientes',exact:true}).click();
  await page.getByRole('button',{name:'Confirmar carga',exact:true}).click();
  await expect.poll(async()=>(await(await page.request.get('/api/orders/'+order)).json()).status).toBe('LOADED');
+ const management=page.getByRole('region',{name:'Gestionar reservas de este camión'});
+ await expect(management.getByRole('button',{name:'Bajar y desreservar',exact:true})).toBeVisible();
+ page.once('dialog',dialog=>dialog.dismiss());await management.getByRole('button',{name:'Bajar y desreservar',exact:true}).click();
+ expect((await(await page.request.get('/api/orders/'+order)).json()).status).toBe('LOADED');
+ page.once('dialog',dialog=>dialog.accept());await management.getByRole('button',{name:'Bajar y desreservar',exact:true}).click();
+ await expect.poll(async()=>(await(await page.request.get('/api/orders/'+order)).json()).status).toBe('DRAFT');
+ await management.getByRole('button',{name:'Volver a organizar pedidos',exact:true}).click();
+ const extra=[];for(let i=1;i<=2;i++){const id=(await send('/api/orders',{clientId:client,externalId:'BULK-'+i,orderDate:'2026-10-29',recipientName:'Bulk '+i,destination:'Otra dirección',lines:[{productId:product,quantity:1}]})).id;extra.push(id);await send('/api/orders/'+id+'/reserve',{});}
+ await page.getByRole('button',{name:'Actualizar',exact:true}).click();
+ await expect(unassigned.getByText('BULK-1',{exact:true})).toBeVisible();
+ await panel.getByRole('button',{name:'Seleccionar pedidos',exact:true}).click();
+ page.once('dialog',dialog=>dialog.accept());await panel.getByRole('button',{name:'Desreservar seleccionados',exact:true}).click();
+ for(const id of extra)await expect.poll(async()=>(await(await page.request.get('/api/orders/'+id)).json()).status).toBe('DRAFT');
+ await expect(unassigned.getByText('BULK-1',{exact:true})).toHaveCount(0);
  expect(errors).toEqual([]);
 });

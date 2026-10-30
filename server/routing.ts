@@ -12,7 +12,7 @@ import {resolvePlusCode} from './plus-code.ts';
 const roles:Actor['role'][]=['ADMIN','OPERATIONS'];
 const timestamp=()=>new Date().toISOString();
 const digest=(data:unknown)=>createHash('sha256').update(JSON.stringify(data)).digest('hex');
-const inputSchema=z.object({date:z.iso.date(),reservedOnly:z.boolean().default(false),locationId:z.uuid(),clientId:z.uuid().optional(),orderIds:z.array(z.uuid()).min(1).max(80).optional(),startAt:z.iso.datetime({offset:true}),endAt:z.iso.datetime({offset:true}),allowUnknownCapacity:z.boolean().default(false),fleet:z.array(z.object({vehicleId:z.uuid(),driverId:z.uuid()})).min(1).max(8)}).superRefine((v,c)=>{
+const inputSchema=z.object({date:z.iso.date(),reservedOnly:z.boolean().default(false),reviewedInstructions:z.array(z.object({orderId:z.uuid(),text:z.string().max(4000)})).max(1000).default([]),locationId:z.uuid(),clientId:z.uuid().optional(),orderIds:z.array(z.uuid()).min(1).max(80).optional(),startAt:z.iso.datetime({offset:true}),endAt:z.iso.datetime({offset:true}),allowUnknownCapacity:z.boolean().default(false),fleet:z.array(z.object({vehicleId:z.uuid(),driverId:z.uuid()})).min(1).max(8)}).superRefine((v,c)=>{
  if(new Set(v.fleet.map(f=>f.vehicleId)).size!==v.fleet.length||new Set(v.fleet.map(f=>f.driverId)).size!==v.fleet.length)c.addIssue({code:'custom',message:'Cada vehículo y chofer debe aparecer una sola vez.'});
  const duration=Date.parse(v.endAt)-Date.parse(v.startAt);if(duration<=0||duration>16*3600000)c.addIssue({code:'custom',message:'La jornada debe durar entre 1 minuto y 16 horas.'});
 });
@@ -90,7 +90,8 @@ export class Routing {
   const organization=await this.store.one('SELECT * FROM organizations WHERE id=?',actor.orgId);
   const local=new Intl.DateTimeFormat('en-CA',{timeZone:organization!.timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date(b.startAt));
   const part=(name:string)=>local.find(p=>p.type===name)!.value;
-  ensure(`${part('year')}-${part('month')}-${part('day')}`===b.date,'VALIDATION_ERROR','El inicio debe corresponder al día de los pedidos en la zona horaria de la empresa.');
+  const departureDate=`${part('year')}-${part('month')}-${part('day')}`;
+  ensure(b.reservedOnly?departureDate>=b.date:departureDate===b.date,'VALIDATION_ERROR','La salida no puede ser anterior al día de los pedidos en la zona horaria de la empresa.');
   const startSeconds=Number(part('hour'))*3600+Number(part('minute'))*60+Number(part('second')),horizon=Math.floor((Date.parse(b.endAt)-Date.parse(b.startAt))/1000);
   const fleet=[];
   for(const pair of b.fleet){
@@ -106,9 +107,9 @@ export class Routing {
   if(b.orderIds)ensure(b.orderIds.every(id=>eligible.some(o=>o.id===id)),'STALE_PLAN','Un pedido seleccionado ya tiene ruta o cambió de estado. Actualizá la lista.');
   const raw=b.orderIds?eligible.filter(o=>b.orderIds!.includes(o.id)):eligible;
   for(const row of raw){
-   const item:Row={id:row.id,reference:row.external_id,clientName:row.client_name,recipientName:row.recipient_name,destination:row.destination,updatedAt:row.updated_at};
+   const item:Row={id:row.id,reference:row.external_id,clientName:row.client_name,recipientName:row.recipient_name,destination:row.destination,instructions:row.restrictions,updatedAt:row.updated_at};
    const p=await this.store.one("SELECT * FROM routing_points WHERE org_id=? AND entity_kind='ORDER' AND entity_id=?",actor.orgId,row.id);
-   let reason=row.delivery_provider!=='NEXORA'?'Circuito externo o sin definir':!p||p.address!==row.destination?'Confirmar ubicación del destinatario':row.restrictions?'Revisar restricciones especiales':null;
+   let reason=row.delivery_provider!=='NEXORA'?'Circuito externo o sin definir':!p||p.address!==row.destination?'Confirmar ubicación del destinatario':row.restrictions&&!b.reviewedInstructions.some(r=>r.orderId===row.id&&r.text===row.restrictions)?'Revisar indicaciones de entrega':null;
    const lines=await this.store.all('SELECT l.*,p.sku,p.name,p.tracking,p.active,p.weight_grams,p.volume_cm3 FROM inventory_order_lines l JOIN inventory_products p ON p.id=l.product_id AND p.org_id=l.org_id WHERE l.org_id=? AND l.order_id=? ORDER BY l.id',actor.orgId,row.id);
    item.lines=lines.map(l=>({name:l.name,sku:l.sku,quantity:l.quantity}));
    let weight=0,volume=0,unknown=false;const deductions:Array<[string,number]>=[];
@@ -136,7 +137,7 @@ export class Routing {
    for(const [key,n] of deductions)stock.set(key,stock.get(key)!-n);
    orders.push({...item,latitude:p!.latitude,longitude:p!.longitude,weight,volume,unknown,serviceSeconds:(row.service_minutes??10)*60,window});
   }
-  return {input:b,point:{latitude:point.latitude,longitude:point.longitude},fleet,orders,pending,horizon};
+  return {input:b,departureDate,point:{latitude:point.latitude,longitude:point.longitude},fleet,orders,pending,horizon};
  }
  async preview(actor:Actor,input:unknown){
   const model=await this.store.transaction(()=>this.model(actor,input));
@@ -171,7 +172,7 @@ export class Routing {
    const proposal=JSON.parse(plan.proposal);ensure(proposal.routes.length,'NO_ELIGIBLE_ORDERS','No hay rutas para aplicar.');
    const routes=[];
    for(const proposed of proposal.routes){
-    const route=await domain.createRoute(actor,{commandId:randomUUID(),name:`Reparto ${model.input.date} · ${proposed.plate}`,driverId:proposed.driverId,vehicleId:proposed.vehicleId,trackingProvider:'TRACCAR',startAt:model.input.startAt,endAt:model.input.endAt});
+    const route=await domain.createRoute(actor,{commandId:randomUUID(),name:`Reparto ${model.departureDate} · ${proposed.plate}`,driverId:proposed.driverId,vehicleId:proposed.vehicleId,trackingProvider:'TRACCAR',startAt:model.input.startAt,endAt:model.input.endAt});
     for(const stop of proposed.stops){
      const order=await domain.record('inventory_orders',stop.orderId,actor);
      if(order.status==='DRAFT')await inv.reserveOrder(actor,order.id,{commandId:randomUUID(),locationId:model.input.locationId});

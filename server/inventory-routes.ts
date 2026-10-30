@@ -8,6 +8,8 @@ import {authorize} from './auth.ts';
 import {StockReceipts} from './stock-receipts.ts';
 import {Routing} from './routing.ts';
 import {relayRouting} from './routing-relay.ts';
+import {correctDispatchOrders} from './dispatch-corrections.ts';
+import {confirmDispatchLocations} from './dispatch-location-review.ts';
 import {ReservedDispatch} from './reserved-dispatch.ts';
 
 export type InventoryAuth = (req: Request) => Promise<Actor | InventoryActor>;
@@ -23,6 +25,8 @@ export function installInventoryRoutes(app: Express, store: Database, auth: Inve
   const dispatch = new ReservedDispatch(store);
   app.get('/api/routing/queue',async(req,res)=>res.json(await dispatch.board(await auth(req) as Actor,queryString(req.query.date))));
   app.post('/api/routing/organize',async(req,res)=>{const actor=await auth(req) as Actor;res.json(await relayRouting(req,actor,store.kind,'/organize')??await dispatch.organize(actor,req.body));});
+  app.post('/api/routing/correct-orders',async(req,res)=>res.json(await correctDispatchOrders(store,await auth(req) as Actor,req.body)));
+  app.post('/api/routing/confirm-locations',async(req,res)=>res.json(await confirmDispatchLocations(store,await auth(req) as Actor,req.body)));
   app.post('/api/routing/suggest',async(req,res)=>{const actor=await auth(req) as Actor;res.json(await relayRouting(req,actor,store.kind,'/suggest')??await routing.suggest(actor,req.body));});
   app.get('/api/routing/context',async(req,res)=>{const actor=await auth(req) as Actor;res.json(await relayRouting(req,actor,store.kind,'/context')??await routing.context(actor));});
   app.get('/api/routing/orders',async(req,res)=>res.json(await routing.orders(await auth(req) as Actor,String(req.query.date??''),queryString(req.query.clientId),req.query.reservedOnly==='true')));

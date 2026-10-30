@@ -1,3 +1,4 @@
+import RouteOrderManagement from './RouteOrderManagement';
 import ReservedDispatch from './ReservedDispatch';
 import { ChangeEvent, Component, ErrorInfo, FormEvent, ReactNode, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MaintenancePanel from './MaintenancePanel';
@@ -612,7 +613,7 @@ function AppContent() {
           {(error||success)&&<div className="operation-feedback"><ErrorBanner error={error} /><SuccessBanner message={success} /></div>}
           {page === "home" && !isDriver && <HomeView data={bootstrap} go={changePage} role={role} />}
           {page === "shipments" && !isDriver && <ShipmentsView initialShipmentId={preferredShipmentId} data={bootstrap} action={mutate} busy={pending} uploadEvidence={uploadEvidence} role={role} />}
-          {page === "routes" && <RoutesView initialRouteId={preferredRouteId} onConfigureDepot={role==="ADMIN"?()=>changePage("company"):undefined} data={bootstrap} action={mutate} busy={pending} operationError={error} onClearError={()=>setError('')} onRefresh={async()=>{await refreshBootstrap();setError('');}} uploadEvidence={uploadEvidence} role={role} driverId={isDriver ? session.user.driverId ?? null : null} />}
+          {page === "routes" && <RoutesView initialRouteId={preferredRouteId} onConfigureDepot={role==="ADMIN"?()=>changePage("company"):undefined} data={bootstrap} action={mutate} busy={pending} operationError={error} onClearError={()=>setError('')} onRefresh={async()=>{await refreshBootstrap();setError('');setSuccess('');}} uploadEvidence={uploadEvidence} role={role} driverId={isDriver ? session.user.driverId ?? null : null} />}
           {page === "fleet" && !isDriver && <FleetView data={bootstrap} action={mutate} busy={pending} uploadEvidence={uploadEvidence} role={role} onPrepareRoute={()=>changePage('routes','new')} />}
           {page === "clients" && isOpsRole(role) && <ClientsPanel profileEnabled={bootstrap.clientProfilesEnabled===true} initialClientId={preferredClientId} clients={bootstrap.clients} shipments={bootstrap.shipments} canManage={true} action={mutate} busy={pending} actionError={error} onInventory={(clientId,view)=>{changePage('inventory');setInventoryEntry({clientId,view});}}/>}
           {page === "company" && role === "ADMIN" && <CompanyPanel onDepots={()=>{changePage("inventory");setInventoryEntry({clientId:"",view:"settings"});}} organization={bootstrap.organization} currentUserId={session.user.id} action={mutate} busy={pending} actionError={error} onFleet={()=>changePage('fleet')}/>}
@@ -896,7 +897,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
   const pendingReturnParcelIds = new Set(data.returns.filter(item => item.state !== 'SENT_TO_SENDER').map(item => item.parcelId));
   const assignableParcels = data.parcels.filter((parcel) => !activeAssignmentIds.has(parcel.id) && !pendingReturnParcelIds.has(parcel.id) && (pickupMode
     ? parcel.state === "EXPECTED" && parcel.custodyType === "SENDER"
-    : isReceivedAndAtDepot(parcel)));
+    : !parcel.product && isReceivedAndAtDepot(parcel)));
   const pendingStops = stops.filter((stop) => !isClosed(stop.state));
   const openIncidents = selectedRoute ? data.incidents.filter((item) => item.routeId === selectedRoute.id && item.state === "OPEN") : [];
   const routeReturnItems = selectedRoute ? data.returns.filter((item) => item.routeId === selectedRoute.id) : [];
@@ -1005,6 +1006,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
             {canOperateRoad&&selectedRoute.state==='READY'&&<button type="button" className="button button-primary" disabled={busy||pendingLoadCount>0||!routeParcels.length} onClick={()=>void simpleRouteAction('dispatch','Salida de ruta registrada.')}>Despachar ahora</button>}
             {!canPlan&&selectedRoute.state==='DRAFT'&&routeParcels.length>0&&pendingLoadCount===0&&<p className="muted">La carga está lista. Coordinación logística debe confirmar la ruta.</p>}
           </section>}
+          {canPlan&&['DRAFT','READY'].includes(selectedRoute.state)&&<RouteOrderManagement routeId={selectedRoute.id} revision={data} onChanged={onRefresh} onOrganize={backToRoutes}/>}
           <nav className="workspace-tabs route-task-tabs" aria-label="Tareas de la ruta">
             {canLoad&&['DRAFT','READY'].includes(selectedRoute.state)&&<button type="button" aria-pressed={routeTab==='loading'} onClick={()=>setRouteTab('loading')}>Cargar artículos ({pendingLoadCount})</button>}
             {canLoad&&['DRAFT','READY'].includes(selectedRoute.state)&&<button type="button" aria-pressed={routeTab==='unloading'} onClick={()=>setRouteTab('unloading')}>Bajar artículos ({loadedParcels.length})</button>}
@@ -1012,7 +1014,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
             {canOperateRoad && (['READY','IN_PROGRESS'].includes(selectedRoute.state)||selectedRoute.state==='DRAFT'&&canPlan) && <button type="button" aria-pressed={routeTab==='checks'} onClick={()=>setRouteTab('checks')}>Control de salida</button>}
             {(openIncidents.length>0 || routeReturnItems.length>0) && <button type="button" aria-pressed={routeTab==='issues'} onClick={()=>setRouteTab('issues')}>Incidencias y retornos ({openIncidents.length+routeReturnItems.length})</button>}
           </nav>
-          {canPlan && ['DRAFT','READY'].includes(selectedRoute.state) && routeTab === 'loading' && <TaskDisclosure label="Agregar artículos reservados o retiros a esta ruta" open={depotLoadParcels.length===0?true:undefined}><div className="route-operations">
+          {canPlan && ['DRAFT','READY'].includes(selectedRoute.state) && routeTab === 'loading' && <TaskDisclosure label="Agregar envíos directos o retiros (avanzado)"><div className="route-operations">
             <form className="stack form-divider" onSubmit={submitAssign}>
               {selectedRoute.state==='READY'&&<p>Al agregar artículos, la ruta quedará pendiente de confirmación hasta completar la nueva carga.</p>}
               <h3>{pickupMode ? "Agregar retiro al remitente" : "Asignar bultos recibidos"}</h3>
@@ -1028,7 +1030,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
           {canLoad && ['DRAFT','READY'].includes(selectedRoute.state) && routeTab === "loading" && <div className="route-operations"><RouteLoadPanel key={selectedRoute.id} route={selectedRoute} parcels={depotLoadParcels} shipments={data.shipments} busy={busy} action={action}/>{pendingLoadCount>0&&<details><summary>Usar lector o ingresar código</summary><form className="stack form-divider" onSubmit={submitScan}>
             <Field label="Código del bulto"><input required value={scanCode} onChange={(event) => setScanCode(event.target.value)} placeholder="Escaneá o escribí el código" /></Field>
             <button className="button button-secondary" disabled={busy || !scanCode.trim()}>Registrar escaneo</button>
-          </form></details>}{canPlan&&removableParcels.length>0&&<TaskDisclosure label="Quitar artículos sin cargar de esta ruta"><RouteParcelActions key={selectedRoute.id+':unassign'} route={selectedRoute} parcels={removableParcels} shipments={data.shipments} mode="unassign" busy={busy} action={action}/></TaskDisclosure>}</div>}
+          </form></details>}{canPlan&&removableParcels.some(p=>!p.product)&&<TaskDisclosure label="Quitar artículos sin cargar de esta ruta"><RouteParcelActions key={selectedRoute.id+':unassign'} route={selectedRoute} parcels={removableParcels.filter(p=>!p.product)} shipments={data.shipments} mode="unassign" busy={busy} action={action}/></TaskDisclosure>}</div>}
           {canLoad&&['DRAFT','READY'].includes(selectedRoute.state)&&routeTab==='unloading'&&<RouteParcelActions key={selectedRoute.id+':unload'} route={selectedRoute} parcels={loadedParcels} shipments={data.shipments} mode="unload" busy={busy} action={action}/>}
           {canOperateRoad && routeTab === "checks" && <Panel title="Checklist de salida" description={"Inspección del vehículo " + (data.vehicles.find((vehicle) => vehicle.id === selectedRoute.vehicleId)?.plate ?? selectedRoute.vehicleId) + ". Guardá controles observados. Para despachar ahora, el checklist debe ser de las últimas 24 horas."}>
             {!['READY','IN_PROGRESS'].includes(selectedRoute.state)&&!(selectedRoute.state==='DRAFT'&&canPlan) ? <p className="muted">La inspección estará disponible cuando la ruta esté lista para salir.</p> : <form className="stack" onSubmit={submitDriverInspection}>

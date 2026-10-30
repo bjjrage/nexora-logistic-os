@@ -20,11 +20,15 @@ export async function dispatchBoard(db:Database,actor:Actor,queue:Row){
   const order=orders.get(key)!;order.units++;if(['EXPECTED','RECEIVED'].includes(row.parcel_state))order.pendingLoad++;if(['LOADED','IN_TRANSIT','RETURN_PENDING'].includes(row.parcel_state))order.loaded++;if(row.parcel_state==='DELIVERED')order.delivered++;
   if(row.product_sku){const line=order.lines.find((l:Row)=>l.sku===row.product_sku);if(line)line.quantity++;else order.lines.push({name:row.product_name,sku:row.product_sku,quantity:1});}
  }
- const points=await db.all("SELECT entity_kind,entity_id,address,latitude,longitude FROM routing_points WHERE org_id=?",actor.orgId);
+ const points=await db.all("SELECT entity_kind,entity_id,address,latitude,longitude,updated_at FROM routing_points WHERE org_id=?",actor.orgId);
+ const confirmations=await db.all("SELECT i.response FROM idempotency i JOIN audit a ON a.org_id=i.org_id AND a.command_id=i.command_id WHERE i.org_id=? AND i.operation='routing.confirmLocations' ORDER BY a.created_at DESC,a.id DESC",actor.orgId),approximate=new Map<string,Row>();
+ for(const entry of confirmations)for(const location of JSON.parse(entry.response).locations??[]){const point=points.find(p=>p.entity_kind==='ORDER'&&p.entity_id===location.id);if(point&&point.updated_at===location.updatedAt&&!approximate.has(location.id))approximate.set(location.id,location);}
+ const orderPoint=(id:string,address:string)=>{const point=points.find(p=>p.entity_kind==='ORDER'&&p.entity_id===id&&p.address===address);const quality=approximate.get(id);return point?{...point,...(quality?{approximate:true,precision:quality.precision,name:quality.label}:{})}:null;};
+ for(const route of routes.values())for(const order of route.orders)order.point=orderPoint(order.id,order.destination);
  const last=await db.one("SELECT i.response FROM idempotency i JOIN audit a ON a.org_id=i.org_id AND a.command_id=i.command_id WHERE i.org_id=? AND i.operation='routing.organizeReserved' ORDER BY a.created_at DESC,a.id DESC LIMIT 1",actor.orgId);
  const previous:Row[]=last?JSON.parse(last.response).pending??[]:[];
- return {...queue,orders:queue.orders.map((order:Row)=>{
-  const point=points.find(p=>p.entity_kind==='ORDER'&&p.entity_id===order.id&&p.address===order.destination),oldReason=previous.find(p=>p.id===order.id)?.reason;
+ return {...queue,features:{batchCorrections:true,bulkLocationReview:true},orders:queue.orders.map((order:Row)=>{
+  const point=orderPoint(order.id,order.destination),oldReason=previous.find(p=>p.id===order.id)?.reason;
   return {...order,point:point??null,reason:oldReason&&!(point&&oldReason.includes('ubicación del destinatario'))?oldReason:point?'Listo para organizar':'Ubicación por confirmar'};
  }),routes:[...routes.values()]};
 }

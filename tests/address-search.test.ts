@@ -20,3 +20,11 @@ test('search failures do not invent a point or retry an unavailable provider',as
  assert.deepEqual(await searchAddress('Un lugar sin resultados',async()=>[]),[]);let calls=0;
  await assert.rejects(searchAddress('Palma 145, Asunción, Paraguay',async()=>{calls++;throw new Error('OFFLINE');}),/OFFLINE/);assert.equal(calls,1);
 });
+test('Paraguayan house numbers and c/ intersections do not prevent finding the main street',async()=>{
+ const seen:string[]=[];const result=await searchAddress('Calle Tte. Rojas Silva N° 1004 c/ Puerto Pabla, B° Valle Apuá, Lambaré',async q=>{seen.push(q);return q==='Teniente Rojas Silva, Lambaré'?[{name:'Teniente Rojas Silva, Lambaré',latitude:-25.34,longitude:-57.62,addressRank:26}]:q.includes('c/')?[{name:'Lambaré',latitude:-25.34,longitude:-57.62,addressRank:16}]:[];});
+ assert.ok(seen.includes('Teniente Rojas Silva, Lambaré'));assert.equal(result[0].precision,'STREET');
+});
+test('a city fallback cannot select a same-named street in another department',async()=>{
+ const rows=await searchAddress('Calle Caañabé 2583, B° Caañabé, Lambaré',async()=>[{name:'Lambaré, Menno, Loma Plata, Boquerón, Paraguay',latitude:-22.4,longitude:-59.9,addressRank:26},{name:'Lambaré, Central, Paraguay',latitude:-25.34,longitude:-57.62,addressRank:16}]);
+ assert.equal(rows[0].precision,'AREA');assert.equal(rows[0].latitude,-25.34);assert.equal(rows.length,1);
+});
