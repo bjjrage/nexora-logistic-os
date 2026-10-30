@@ -164,8 +164,7 @@ test('browser: isolated API fixtures → dispatch → photo evidence → Nexora 
  await page.getByRole('button',{name:'Registrar resultado de entrega',exact:true}).click();
  await page.getByLabel('Entregado',{exact:true}).check();
  await page.getByLabel('Nombre de quien recibe',{exact:true}).fill('Receptor ficticio QA');
- await page.getByLabel(/Bulto al que pertenece la foto/).selectOption(parcel.id);
- await page.getByLabel(/Agregar evidencia fotográfica/).setInputFiles({name:'foto-qa.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aCioAAAAASUVORK5CYII=','base64')});
+ await page.getByLabel(/Foto de este artículo/).setInputFiles({name:'foto-qa.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aCioAAAAASUVORK5CYII=','base64')});
  await expect(page.getByRole('link',{name:'Ver foto 1',exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Guardar resultado',exact:true}).click();
  await expect.poll(async()=>{const b=await(await page.request.get('/api/bootstrap')).json();return b.parcels.find((p:any)=>p.id===parcel.id)?.state;}).toBe('DELIVERED');

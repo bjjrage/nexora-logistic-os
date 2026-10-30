@@ -870,8 +870,6 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
   const [reasonCode, setReasonCode] = useState("");
   const [nextAction, setNextAction] = useState("");
   const [evidenceIds, setEvidenceIds] = useState<Array<{id:string;parcelId:string}>>([]);
-  const [evidenceParcelId, setEvidenceParcelId] = useState("");
-  const [lastEvidenceId, setLastEvidenceId] = useState("");
   const [driverInspectionOdometer, setDriverInspectionOdometer] = useState("");
   const [driverFuelPercent, setDriverFuelPercent] = useState("");
   const [driverInspectionItems, setDriverInspectionItems] = useState<InspectionItem[]>([{ label: "", severity: "OK", note: "" }]);
@@ -879,7 +877,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
   const resetRouteTask = () => {
     setEditRouteId(''); setAssignmentIds([]); setPickupMode(false); setScanCode(''); setStopId('');
     setDeliveredIds([]); setFailedIds([]); setReceiverName(''); setReasonCode(''); setNextAction('');
-    setEvidenceIds([]); setEvidenceParcelId(''); setLastEvidenceId('');
+    setEvidenceIds([]);
     setDriverInspectionOdometer(''); setDriverFuelPercent('');
     setDriverInspectionItems([{ label: '', severity: 'OK', note: '' }]);
   };
@@ -939,7 +937,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
       evidenceIds:evidenceIds.filter(e=>deliveredIds.includes(e.parcelId)||failedIds.includes(e.parcelId)).map(e=>e.id), reasonCode:failedIds.length?reasonCode.trim():'', nextAction:failedIds.length?nextAction.trim():'',
       expectedVersion: selectedRoute.version, commandId: commandId(),
     }, "Resultado de la entrega registrado.");
-    if (ok) { setStopId(''); setDeliveredIds([]); setFailedIds([]); setReceiverName(""); setReasonCode(""); setNextAction(""); setEvidenceIds([]); setEvidenceParcelId(''); }
+    if (ok) { setStopId(''); setDeliveredIds([]); setFailedIds([]); setReceiverName(""); setReasonCode(""); setNextAction(""); setEvidenceIds([]); }
   };
   const submitDriverInspection = async (event: FormEvent) => {
     event.preventDefault();
@@ -962,11 +960,11 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
     update(current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
     if (!current.includes(id)) (kind === "delivered" ? setFailedIds : setDeliveredIds)(other.filter((item) => item !== id));
   };
-  const onUpload = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file || !evidenceParcelId) return;
-    const id = await uploadEvidence(evidenceParcelId, file);
-    if (id) { setEvidenceIds((current) => [...current, {id,parcelId:evidenceParcelId}]); setLastEvidenceId(id); event.target.value = ""; }
+  const onUpload = async (event: ChangeEvent<HTMLInputElement>, parcelId:string) => {
+    const input=event.currentTarget, file=input.files?.[0];
+    if (!file) return;
+    const id = await uploadEvidence(parcelId, file);
+    if (id) { setEvidenceIds((current) => [...current, {id,parcelId}]); input.value = ""; }
   };
 
   return (
@@ -1065,7 +1063,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
                 {['DRAFT','READY'].includes(selectedRoute.state)&&<p className="muted">{stopParcels.filter(isLoadedHere).length} de {stopParcels.length} bultos en el vehículo · {selectedRoute.state==='DRAFT'?'Ruta sin confirmar':'Ruta confirmada'}</p>}
                 <details className="parcel-code-details"><summary>{stopParcels.length} {stopParcels.length === 1 ? 'bulto' : 'bultos'} · ver códigos</summary><div className="parcel-tags">{stopParcels.map((parcel) => <span key={parcel.id}>{parcel.code} · {displayState(parcel.state)}</span>)}</div></details>
                 {!isClosed(stop.state) && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && stop.kind?.toUpperCase() === "PICKUP" && <PickupAction stop={stop} route={selectedRoute} parcels={routeParcels.filter((parcel) => parcel.shipmentId === stop.shipmentId)} action={action} busy={busy} />}
-                {!isClosed(stop.state) && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && stop.kind?.toUpperCase() !== "PICKUP" && <button type="button" className="text-button" disabled={busy||earlierPending} onClick={() => { setStopId(stop.id); setDeliveredIds([]); setFailedIds([]); setReceiverName(""); setEvidenceIds([]); setEvidenceParcelId(""); setReasonCode(""); setNextAction(""); }}>{earlierPending?'Primero completá la parada anterior':'Registrar resultado de entrega'}</button>}
+                {!isClosed(stop.state) && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && stop.kind?.toUpperCase() !== "PICKUP" && <button type="button" className="text-button" disabled={busy||earlierPending} onClick={() => { setStopId(stop.id); setDeliveredIds([]); setFailedIds([]); setReceiverName(""); setEvidenceIds([]); setReasonCode(""); setNextAction(""); }}>{earlierPending?'Primero completá la parada anterior':'Registrar resultado de entrega'}</button>}
                 {canOperateRoad && selectedRoute.state === 'IN_PROGRESS' && stop.kind === 'DELIVERY' && ['FAILED','PARTIAL'].includes(stop.state) && routeParcels.some(parcel=>parcel.shipmentId===stop.shipmentId&&parcel.state==='RETURN_PENDING'&&!data.returns.some(item=>item.parcelId===parcel.id&&item.state!=='SENT_TO_SENDER')) && <button type="button" className="button button-secondary" disabled={busy} onClick={()=>void action('/api/stops/'+encodeURIComponent(stop.id)+'/retry',{commandId:commandId(),expectedVersion:selectedRoute.version},'Nuevo intento habilitado. Registrá el resultado de la nueva visita.')}>Habilitar nuevo intento</button>}
               </div>;
             })}
@@ -1083,17 +1081,13 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
                 <label><input type="radio" name={'resultado-'+parcel.id} checked={!deliveredIds.includes(parcel.id)&&!failedIds.includes(parcel.id)} onChange={()=>{setDeliveredIds(items=>items.filter(id=>id!==parcel.id));setFailedIds(items=>items.filter(id=>id!==parcel.id));}} /> Pendiente</label>
                 <label><input type="radio" name={'resultado-'+parcel.id} checked={deliveredIds.includes(parcel.id)} onChange={() => toggleParcel(parcel.id, "delivered")} /> Entregado</label>
                 <label><input type="radio" name={'resultado-'+parcel.id} checked={failedIds.includes(parcel.id)} onChange={() => toggleParcel(parcel.id, "failed")} /> No entregado</label>
+                {deliveredIds.includes(parcel.id)&&<div className="parcel-photo"><label>Foto de este artículo<input type="file" accept="image/*" onChange={event=>void onUpload(event,parcel.id)} /></label>{evidenceIds.filter(e=>e.parcelId===parcel.id).map((e,index)=><a key={e.id} href={'/api/evidence/'+encodeURIComponent(e.id)} target="_blank" rel="noreferrer">Ver foto {index+1}</a>)}</div>}
               </div>)}</div>
               <div className="form-grid">
                 {deliveredIds.length>0&&<Field label="Nombre de quien recibe"><input value={receiverName} onChange={(event) => setReceiverName(event.target.value)} /></Field>}
                 {failedIds.length>0&&<><Field label="Motivo de no entrega"><select value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}><option value="">Seleccionar motivo</option><option value="ABSENT">Ausente</option><option value="REFUSED">Rechazado</option><option value="ADDRESS_ISSUE">Problema de dirección</option><option value="DAMAGED">Dañado</option><option value="OTHER">Otro</option></select></Field>
                 <Field label="Próxima acción"><input value={nextAction} onChange={(event) => setNextAction(event.target.value)} /></Field></>}
               </div>
-              {deliveredIds.length > 0 && <div className="evidence-control">
-                <Field label="Bulto al que pertenece la foto"><select value={evidenceParcelId} onChange={(event) => setEvidenceParcelId(event.target.value)}><option value="">Seleccionar bulto</option>{routeParcels.filter(parcel=>deliveredIds.includes(parcel.id)).map((parcel) => <option key={parcel.id} value={parcel.id}>{parcel.product?.name || 'Artículo'} · {parcel.code}</option>)}</select></Field>
-                <Field label="Agregar evidencia fotográfica"><input type="file" accept="image/*" disabled={busy || !deliveredIds.includes(evidenceParcelId)} onChange={onUpload} /></Field>
-              </div>}
-              {evidenceIds.some(e=>deliveredIds.includes(e.parcelId)) && <ul className="evidence-list" aria-label="Evidencias cargadas">{evidenceIds.filter(e=>deliveredIds.includes(e.parcelId)).map((e,index) => <li key={e.id}><a href={"/api/evidence/" + encodeURIComponent(e.id)} target="_blank" rel="noreferrer">Ver foto {index+1}</a> · {routeParcels.find(p=>p.id===e.parcelId)?.product?.name||'Artículo'} ({routeParcels.find(p=>p.id===e.parcelId)?.code})</li>)}</ul>}
             </fieldset>
             <button className="button button-primary" disabled={busy || (deliveredIds.length === 0 && failedIds.length === 0) || (deliveredIds.length > 0 && !receiverName.trim()) || (failedIds.length > 0 && (!reasonCode || !nextAction.trim()))}>Guardar resultado</button>
           </form>}
