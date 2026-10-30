@@ -1,0 +1,18 @@
+import {useEffect,useRef,useState} from 'react';
+import {api} from './api';
+import {PointEditor} from './RoutingPanel';
+type Row=Record<string,any>;
+export default function ReservedDispatch({onRefresh,onOpen,onConfigureDepot}:{onConfigureDepot?:()=>void;onRefresh:()=>Promise<void>;onOpen:(id:string)=>void}){
+ const [queue,setQueue]=useState<Row|null>(null),[result,setResult]=useState<Row|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[review,setReview]=useState<Row|null>(null);
+ const command=useRef<string|null>(null);
+ async function refresh(){setQueue(await api<Row>('/api/routing/queue'));}
+ useEffect(()=>{void refresh().catch(e=>setError(e.message));},[]);
+ async function organize(){setBusy(true);setError('');command.current??=crypto.randomUUID();try{const value=await api<Row>('/api/routing/organize',{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'logistics-os'},body:JSON.stringify({commandId:command.current})},{timeoutMs:120000});setResult(value);command.current=null;await Promise.all([refresh(),onRefresh()]);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+ return <section className="card reserved-dispatch" aria-label="Reservados por organizar"><div className="card-header"><div><h2>Reservados por organizar</h2><p>{queue?`${queue.orders.length} pedidos pendientes, incluidos los atrasados`:'Consultando reservas…'}</p></div><button type="button" className="button button-primary" disabled={busy||!queue?.orders.length} onClick={()=>void organize()}>{busy?'Organizando…':'Organizar todos los reservados'}</button></div>
+  {error&&<p className="notice error" role="alert">{error}</p>}
+  {result&&<div role="status"><strong>{result.organized} organizados · {result.pending.length} pendientes de resolver</strong>{result.routes.map((route:Row)=><div className="routing-route" key={route.id}><strong>{route.plate} · {route.driverName}</strong><p>{route.orders} pedidos · {route.stops.reduce((n:number,s:Row)=>n+s.lines.reduce((q:number,l:Row)=>q+l.quantity,0),0)} artículos asignados</p>{route.capacityUnverified&&<small>Capacidad sin verificar: peso o volumen no informados.</small>}<button className="button button-primary" type="button" onClick={()=>onOpen(route.id)}>Cargar este camión</button></div>)}</div>}
+  {result&&result.pending.length>0&&<div className="dispatch-pending"><h3>Necesitan revisión</h3>{result.pending.map((order:Row)=><div className="row" key={order.id}><span><strong>{order.recipientName??order.recipient_name} · {order.reference??order.external_id}</strong><small>{order.reason}</small></span>{onConfigureDepot&&order.reason.includes('ubicación del depósito')&&<button className="button button-secondary" type="button" onClick={onConfigureDepot}>Configurar depósito</button>}{order.reason.includes('ubicación del destinatario')&&<button className="button button-secondary" type="button" onClick={()=>setReview(order)}>Revisar dirección</button>}</div>)}</div>}
+  {review&&<section className="routing-route" aria-label="Revisar dirección"><div className="card-header"><strong>{review.recipientName??review.recipient_name}</strong><button type="button" className="text-button" onClick={()=>setReview(null)}>Cerrar</button></div><PointEditor key={review.id} kind="ORDER" item={{...review,external_id:review.reference??review.external_id}} onSave={()=>{setReview(null);setResult(null);command.current=null;void refresh();}}/></section>}
+  {queue&&!queue.orders.length&&!result&&<p>Primero confirmá las reservas en Pedidos. Los pedidos ya asignados siguen en sus camiones.</p>}
+ </section>;
+}

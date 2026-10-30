@@ -8,6 +8,7 @@ import {authorize} from './auth.ts';
 import {StockReceipts} from './stock-receipts.ts';
 import {Routing} from './routing.ts';
 import {relayRouting} from './routing-relay.ts';
+import {ReservedDispatch} from './reserved-dispatch.ts';
 
 export type InventoryAuth = (req: Request) => Promise<Actor | InventoryActor>;
 const actorForInventory = async (auth: InventoryAuth, req: Request) => await auth(req) as InventoryActor;
@@ -19,9 +20,12 @@ export function installInventoryRoutes(app: Express, store: Database, auth: Inve
   const catalog = new CatalogImport(store);
   const receipts = new StockReceipts(store);
   const routing = new Routing(store);
+  const dispatch = new ReservedDispatch(store);
+  app.get('/api/routing/queue',async(req,res)=>res.json(await dispatch.queue(await auth(req) as Actor,queryString(req.query.date))));
+  app.post('/api/routing/organize',async(req,res)=>{const actor=await auth(req) as Actor;res.json(await relayRouting(req,actor,store.kind,'/organize')??await dispatch.organize(actor,req.body));});
   app.post('/api/routing/suggest',async(req,res)=>{const actor=await auth(req) as Actor;res.json(await relayRouting(req,actor,store.kind,'/suggest')??await routing.suggest(actor,req.body));});
   app.get('/api/routing/context',async(req,res)=>{const actor=await auth(req) as Actor;res.json(await relayRouting(req,actor,store.kind,'/context')??await routing.context(actor));});
-  app.get('/api/routing/orders',async(req,res)=>res.json(await routing.orders(await auth(req) as Actor,String(req.query.date??''),queryString(req.query.clientId))));
+  app.get('/api/routing/orders',async(req,res)=>res.json(await routing.orders(await auth(req) as Actor,String(req.query.date??''),queryString(req.query.clientId),req.query.reservedOnly==='true')));
   app.post('/api/routing/points',async(req,res)=>res.json(await routing.point(await auth(req) as Actor,req.body)));
   app.post('/api/routing/matrix',async(req,res)=>res.json(await routing.matrix(await auth(req) as Actor,req.body)));
   app.post('/api/routing/search',async(req,res)=>{const actor=await auth(req) as Actor;res.json(await relayRouting(req,actor,store.kind,'/search')??await routing.search(actor,req.body));});

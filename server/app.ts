@@ -189,8 +189,8 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     app.use('/api', (_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Endpoint no encontrado.' } }));
     app.use('/manual',express.static(resolve('manual'),{index:false,redirect:false}));
     app.get(['/manual','/manual/'],(_req,res)=>res.redirect('/manual.html'));
-    app.get(['/manual.html','/MANUAL_MAESTRO_NEXORA_OS.html'],(_req,res)=>res.sendFile(resolve('MANUAL_MAESTRO_NEXORA_OS.html')));
-    app.get('/manual-portatil.html',(_req,res)=>res.download(resolve('MANUAL_WORKFLOWS_NEXORA_PORTATIL.html'),'MANUAL_WORKFLOWS_NEXORA_PORTATIL.html'));
+    app.get(['/manual.html','/MANUAL_MAESTRO_NEXORA_OS.html'],(_req,res)=>res.sendFile(resolve('MANUAL_MAESTRO_NEXORA_OS.html'),{dotfiles:'allow'}));
+    app.get('/manual-portatil.html',(_req,res)=>res.download(resolve('MANUAL_WORKFLOWS_NEXORA_PORTATIL.html'),'MANUAL_WORKFLOWS_NEXORA_PORTATIL.html',{dotfiles:'allow'}));
     const dist = resolve('dist');
     if (existsSync(resolve(dist, 'index.html'))) {
         app.use(express.static(dist));

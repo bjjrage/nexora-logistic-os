@@ -11,7 +11,7 @@ import {resolvePlusCode} from './plus-code.ts';
 const roles:Actor['role'][]=['ADMIN','OPERATIONS'];
 const timestamp=()=>new Date().toISOString();
 const digest=(data:unknown)=>createHash('sha256').update(JSON.stringify(data)).digest('hex');
-const inputSchema=z.object({date:z.iso.date(),locationId:z.uuid(),clientId:z.uuid().optional(),orderIds:z.array(z.uuid()).min(1).max(80).optional(),startAt:z.iso.datetime({offset:true}),endAt:z.iso.datetime({offset:true}),allowUnknownCapacity:z.boolean().default(false),fleet:z.array(z.object({vehicleId:z.uuid(),driverId:z.uuid()})).min(1).max(8)}).superRefine((v,c)=>{
+const inputSchema=z.object({date:z.iso.date(),reservedOnly:z.boolean().default(false),locationId:z.uuid(),clientId:z.uuid().optional(),orderIds:z.array(z.uuid()).min(1).max(80).optional(),startAt:z.iso.datetime({offset:true}),endAt:z.iso.datetime({offset:true}),allowUnknownCapacity:z.boolean().default(false),fleet:z.array(z.object({vehicleId:z.uuid(),driverId:z.uuid()})).min(1).max(8)}).superRefine((v,c)=>{
  if(new Set(v.fleet.map(f=>f.vehicleId)).size!==v.fleet.length||new Set(v.fleet.map(f=>f.driverId)).size!==v.fleet.length)c.addIssue({code:'custom',message:'Cada vehículo y chofer debe aparecer una sola vez.'});
  const duration=Date.parse(v.endAt)-Date.parse(v.startAt);if(duration<=0||duration>16*3600000)c.addIssue({code:'custom',message:'La jornada debe durar entre 1 minuto y 16 horas.'});
 });
@@ -58,7 +58,7 @@ export class Routing {
    if(!busy&&!onboard)fleet.push(pair);
   }
   ensure(fleet.length,'VEHICLE_BUSY','Los camiones o choferes seleccionados están ocupados. Cambiá la selección o el horario aquí mismo.');
-  const eligible=await this.orders(actor,b.date,b.clientId);
+  const eligible=await this.orders(actor,b.date,b.clientId,b.reservedOnly,b.orderIds);
   const deadline=Date.now()+15000;
   for(const order of eligible.filter(o=>!b.orderIds||b.orderIds.includes(o.id))){
    if(Date.now()>deadline)break;
@@ -76,9 +76,9 @@ export class Routing {
   const b=z.object({points:z.array(z.object({latitude:z.number().finite().min(-90).max(90),longitude:z.number().finite().min(-180).max(180)})).min(1).max(81)}).parse(input);
   return this.providers.matrix(b.points);
  }
- async orders(actor:Actor,date:string,clientId?:string){
+ async orders(actor:Actor,date:string,clientId?:string,reservedOnly=false,orderIds?:string[]){
   authorize(actor,roles);z.iso.date().parse(date);if(clientId)z.uuid().parse(clientId);
-  const rows=await this.store.all(`SELECT o.*,c.name AS client_name,p.delivery_provider FROM inventory_orders o JOIN clients c ON c.id=o.client_id AND c.org_id=o.org_id LEFT JOIN client_delivery_policies p ON p.org_id=o.org_id AND p.client_id=o.client_id WHERE o.org_id=? AND o.order_date=? AND o.status IN('DRAFT','RESERVED') ${clientId?'AND o.client_id=?':''} AND NOT EXISTS(SELECT 1 FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id WHERE a.org_id=o.org_id AND p.shipment_id=o.shipment_id AND a.active=1) ORDER BY o.created_at,o.rowid LIMIT 81`,...[actor.orgId,date,...(clientId?[clientId]:[])]);
+  const rows=await this.store.all(`SELECT o.*,c.name AS client_name,p.delivery_provider FROM inventory_orders o JOIN clients c ON c.id=o.client_id AND c.org_id=o.org_id LEFT JOIN client_delivery_policies p ON p.org_id=o.org_id AND p.client_id=o.client_id WHERE o.org_id=? AND o.order_date${reservedOnly?'<=':'='}? AND o.status IN('DRAFT','RESERVED') ${reservedOnly?"AND o.status='RESERVED'":''} ${clientId?'AND o.client_id=?':''} ${orderIds?.length?`AND o.id IN (${orderIds.map(()=>'?').join(',')})`:''} AND NOT EXISTS(SELECT 1 FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id WHERE a.org_id=o.org_id AND p.shipment_id=o.shipment_id AND a.active=1) ORDER BY o.created_at,o.rowid LIMIT 81`,...[actor.orgId,date,...(clientId?[clientId]:[]),...(orderIds??[])]);
   ensure(rows.length<=80,'PLAN_LIMIT','Hay más de 80 pedidos pendientes. Filtrá por cliente para planificar este lote.');
   return rows;
  }
@@ -101,7 +101,7 @@ export class Routing {
    fleet.push({...pair,plate:vehicle.plate,driverName:driver.name,capacityWeight:vehicle.capacity_weight_grams,capacityVolume:vehicle.capacity_volume_cm3});
   }
   const pending:Row[]=[],orders:Row[]=[],stock=new Map<string,number>();
-  const eligible=await this.orders(actor,b.date,b.clientId);
+  const eligible=await this.orders(actor,b.date,b.clientId,b.reservedOnly,b.orderIds);
   if(b.orderIds)ensure(b.orderIds.every(id=>eligible.some(o=>o.id===id)),'STALE_PLAN','Un pedido seleccionado ya tiene ruta o cambió de estado. Actualizá la lista.');
   const raw=b.orderIds?eligible.filter(o=>b.orderIds!.includes(o.id)):eligible;
   for(const row of raw){

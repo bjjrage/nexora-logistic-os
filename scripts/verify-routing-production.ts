@@ -6,6 +6,7 @@ import {passwordHash,hash,type Actor} from '../server/auth.ts';
 import {Logistics} from '../server/domain.ts';
 import {Inventory} from '../server/inventory.ts';
 import {Routing} from '../server/routing.ts';
+import {ReservedDispatch} from '../server/reserved-dispatch.ts';
 import {solveLocal} from '../server/routing-providers.ts';
 import {reconcileInventory} from '../server/reconciliation.ts';
 
@@ -47,8 +48,9 @@ try{
   const browserContext=await browser.newContext({viewport:{width:1365,height:900},timezoneId:'UTC'});
   await browserContext.addCookies([{name:'logistics_session',value:token,url:origin.origin,httpOnly:true,secure:origin.protocol==='https:',sameSite:'Strict'}]);
   const page=await browserContext.newPage(),errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.goto(origin.origin);await page.getByRole('button',{name:'Pedidos',exact:true}).click();await page.getByRole('button',{name:'Organizar reparto',exact:true}).click();
-  await page.getByRole('region',{name:'Organizar reparto'}).getByRole('heading',{name:'Organizar reparto',exact:true}).waitFor();
+  await page.goto(origin.origin);await page.getByRole('button',{name:'Rutas',exact:true}).click();
+  await page.getByRole('region',{name:'Reservados por organizar'}).getByRole('heading',{name:'Reservados por organizar',exact:true}).waitFor();
+  const queue=await api('/api/routing/queue');if(queue.orders.length)throw new Error('La cola QA no está aislada.');
   await page.screenshot({path:folder+'/published-panel.png',fullPage:true});
   if(errors.length)throw new Error('Errores en la pantalla publicada: '+errors.join(';'));report.browser='PASS';
  }finally{await browser.close();}
@@ -65,16 +67,18 @@ try{
    const driverId=(await domain.createDriver(actor,{...cmd(),name:'Chofer QA '+i,username:'qa-'+randomUUID(),password:randomBytes(20).toString('hex')})).id;
    const vehicleId=(await domain.createVehicle(actor,{...cmd(),plate:'QA-'+i,capacityWeightGrams:250,capacityVolumeCm3:250,odometer:0})).id;fleet.push({driverId,vehicleId});
   }
-  const routing=new Routing(db,{search:address=>api('/api/routing/search',{address}),matrix:points=>api('/api/routing/matrix',{points}),solve:solveLocal});
+  const providers={search:(address:string)=>api('/api/routing/search',{address}),matrix:(points:Array<{latitude:number;longitude:number}>)=>api('/api/routing/matrix',{points}),solve:solveLocal};
+  const routing=new Routing(db,providers),organizer=new ReservedDispatch(db,providers);
   await routing.point(actor,{...cmd(),kind:'LOCATION',id:location,latitude:places[0].latitude,longitude:places[0].longitude});
   for(let i=1;i<3;i++){
    const order=(await inv.createOrder(actor,{...cmd(),clientId:client,externalId:'QA-'+i,orderDate:date,destination:places[i].name,recipientName:'Receptor QA '+i,lines:[{productId:product,quantity:2}]})).id;
    await routing.point(actor,{...cmd(),kind:'ORDER',id:order,latitude:places[i].latitude,longitude:places[i].longitude});
+   await inv.reserveOrder(actor,order,cmd());
   }
-  const proposal=await routing.preview(actor,{date,locationId:location,startAt:date+'T08:00:00Z',endAt:date+'T18:00:00Z',fleet});
-  if(proposal.routes.length!==2||proposal.pending.length)throw new Error('La planificación real no distribuyó los dos pedidos completos.');
-  const applied=await routing.apply(actor,{...cmd(),planId:proposal.id});
-  const replay=await routing.apply(actor,{...cmd(),planId:proposal.id});if(JSON.stringify(applied)!==JSON.stringify(replay))throw new Error('La aplicación no es idempotente.');
+  const request={...cmd(),date,startAt:new Date().toISOString(),endAt:new Date(Date.now()+10*3600000).toISOString()};
+  const applied=await organizer.organize(actor,request);
+  if(applied.routes.length!==2||applied.pending.length||applied.organized!==2)throw new Error('La organización real no distribuyó las dos reservas completas.');
+  const replay=await organizer.organize(actor,request);if(JSON.stringify(applied)!==JSON.stringify(replay))throw new Error('La organización no es idempotente.');
   await db.run('INSERT INTO organization_test_mode VALUES(?,1)',actor.orgId);
   for(const planned of applied.routes){
    const version=async()=>(await domain.route(planned.id,actor)).version;

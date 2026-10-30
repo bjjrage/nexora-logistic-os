@@ -6,6 +6,7 @@ import {passwordHash,type Actor} from '../server/auth.ts';
 import {Logistics} from '../server/domain.ts';
 import {Inventory} from '../server/inventory.ts';
 import {Routing} from '../server/routing.ts';
+import {ReservedDispatch} from '../server/reserved-dispatch.ts';
 import {reconcileInventory} from '../server/reconciliation.ts';
 const cmd=()=>({commandId:randomUUID()});
 test('private routing schema on PostgreSQL runtime role applies once and reconciles inventory',async()=>{
@@ -25,12 +26,22 @@ test('private routing schema on PostgreSQL runtime role applies once and reconci
   const order=(await inv.createOrder(actor,{...cmd(),clientId:client,externalId:'PG',orderDate:'2026-10-29',destination:'Destino PG',recipientName:'Receptor',lines:[{productId:product,quantity:2}]})).id;
   const driver=(await d.createDriver(actor,{...cmd(),name:'Chofer',username:'driver-'+actor.id,password:'Driver-QA-2026!'})).id;
   const vehicle=(await d.createVehicle(actor,{...cmd(),plate:'PG',capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0})).id;
-  const routing=new Routing(db,{search:async()=>[],matrix:async()=>[[0,60],[60,0]],solve:async()=>({routes:[{vehicleId:vehicle,driverId:driver,durationSeconds:720,stops:[{orderId:order,arrivalSeconds:60}]}],unassigned:[]})});
+  const providers={search:async()=>[],matrix:async(points:any[])=>points.map((_,i)=>points.map((_,j)=>i===j?0:60)),solve:async()=>({routes:[{vehicleId:vehicle,driverId:driver,durationSeconds:720,stops:[{orderId:order,arrivalSeconds:60}]}],unassigned:[]})};const routing=new Routing(db,providers);
   await routing.point(actor,{...cmd(),kind:'LOCATION',id:location,latitude:-25.3,longitude:-57.6});
   await routing.point(actor,{...cmd(),kind:'ORDER',id:order,latitude:-25.31,longitude:-57.61});
-  const proposed=await routing.preview(actor,{date:'2026-10-29',locationId:location,startAt:'2026-10-29T08:00:00Z',endAt:'2026-10-29T18:00:00Z',fleet:[{vehicleId:vehicle,driverId:driver}]});
-  const first=await routing.apply(actor,{...cmd(),planId:proposed.id});
-  assert.deepEqual(await routing.apply(actor,{...cmd(),planId:proposed.id}),first);
+  await inv.reserveOrder(actor,order,cmd());
+  const startAt=new Date().toISOString(),dispatch=new ReservedDispatch(db,providers),request={...cmd(),date:startAt.slice(0,10),startAt,endAt:new Date(Date.now()+10*3600000).toISOString()};
+  const first=await dispatch.organize(actor,request);assert.equal(first.organized,1);
+  assert.deepEqual(await dispatch.organize(actor,request),first);
+  const routeId=first.routes[0].id,oldCargo=(await db.all('SELECT parcel_id FROM route_assignments WHERE route_id=?',routeId)).map(p=>p.parcel_id);
+  await d.loadSelected(actor,routeId,{...cmd(),expectedVersion:(await d.route(routeId,actor)).version,parcelIds:oldCargo});
+  await inv.receive(actor,{...cmd(),clientId:client,locationId:location,productId:product,quantity:1});
+  const extra=(await inv.createOrder(actor,{...cmd(),clientId:client,externalId:'PG-EXTRA',orderDate:'2026-10-29',destination:'Destino PG extra',recipientName:'Receptor extra',lines:[{productId:product,quantity:1}]})).id;
+  await routing.point(actor,{...cmd(),kind:'ORDER',id:extra,latitude:-25.32,longitude:-57.62});
+  await inv.reserveOrder(actor,extra,cmd());
+  const appended=await dispatch.organize(actor,{...request,commandId:randomUUID()});assert.equal(appended.organized,1);assert.equal(appended.routes[0].id,routeId);
+  assert.equal((await db.one('SELECT status FROM inventory_orders WHERE id=?',order))!.status,'LOADED');
+
   assert.equal((await db.one('SELECT COUNT(*) AS n FROM routes WHERE org_id=?',actor.orgId))!.n,1);
   assert.equal((await reconcileInventory(db,actor)).ok,true);
   const denied=await db.all("SELECT grantee FROM information_schema.role_table_grants WHERE table_schema='nexora' AND table_name='routing_plans' AND grantee IN('anon','authenticated','nexora_tracking_worker')");assert.equal(denied.length,0);

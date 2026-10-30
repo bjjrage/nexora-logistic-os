@@ -6,6 +6,7 @@ import {setup,type Actor} from '../server/auth.ts';
 import {Logistics} from '../server/domain.ts';
 import {Inventory} from '../server/inventory.ts';
 import {Routing} from '../server/routing.ts';
+import {ReservedDispatch} from '../server/reserved-dispatch.ts';
 import {solveLocal,type RoutingProviders} from '../server/routing-providers.ts';
 import {reconcileInventory} from '../server/reconciliation.ts';
 const cmd=()=>({commandId:randomUUID()});
@@ -33,6 +34,98 @@ async function fixture(t:any,real=false){
  const input={date:'2026-10-29',locationId:location,startAt:'2026-10-29T08:00:00.000Z',endAt:'2026-10-29T18:00:00.000Z',fleet:[{vehicleId:vehicle,driverId:driver}]};
  return {db,actor,d,inv,routing,orders,input,client,product,location,vehicle,driver,providers};
 }
+const automatic=(f:Awaited<ReturnType<typeof fixture>>)=>new ReservedDispatch(f.db,{...f.providers,solve:async m=>({routes:[{vehicleId:m.fleet[0].vehicleId,driverId:m.fleet[0].driverId,durationSeconds:m.orders.length*660+60,stops:m.orders.map((o:any,i:number)=>({orderId:o.id,arrivalSeconds:60+i*660}))}],unassigned:[]})});
+const departure={date:'2026-10-30',startAt:'2026-10-30T08:00:00Z',endAt:'2026-10-30T18:00:00Z'};
+test('reservation needs stock only, and routing queues only confirmed overdue reservations',async t=>{
+ const f=await fixture(t);await f.db.run('DELETE FROM routing_points');
+ await f.inv.reserveOrder(f.actor,f.orders[0],cmd());
+ assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.orders[0]))!.status,'RESERVED');
+ assert.equal((await f.db.one('SELECT COUNT(*) AS n FROM routes'))!.n,0);
+ const service=automatic(f),queue=await service.queue(f.actor,departure.date);
+ assert.deepEqual(queue.orders.map(o=>o.id),[f.orders[0]]);
+ const result=await service.organize(f.actor,{...cmd(),...departure});assert.equal(result.organized,0);assert.match(result.pending[0].reason,/depósito/);
+ await assert.rejects(service.queue({...f.actor,role:'DEPOT'}),{code:'FORBIDDEN'});
+});
+test('automatic distribution assigns reserved orders once without another stock deduction or physical load',async t=>{
+ const f=await fixture(t);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());
+ const service=automatic(f),request={...cmd(),...departure};const first=await service.organize(f.actor,request);
+ assert.equal(first.organized,1);assert.equal(first.routes[0].plate,'ROUTING');
+ assert.deepEqual(await service.organize(f.actor,request),first);
+ assert.equal((await service.organize(f.actor,{...cmd(),...departure})).organized,0);
+ assert.equal((await f.db.one('SELECT COUNT(*) AS n FROM routes'))!.n,1);
+ assert.equal((await f.db.one("SELECT SUM(quantity) AS n FROM inventory_balances WHERE status='AVAILABLE'"))!.n,1);
+ assert.equal((await f.db.one("SELECT COUNT(*) AS n FROM parcels WHERE custody_type='VEHICLE'"))!.n,0);
+ assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.orders[1]))!.status,'DRAFT');
+ await f.inv.unreserveOrder(f.actor,f.orders[0],cmd());assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
+});
+test('a missing destination stays reserved while complete destinations are organized',async t=>{
+ const f=await fixture(t);await f.inv.receive(f.actor,{...cmd(),clientId:f.client,productId:f.product,locationId:f.location,quantity:1});
+ for(const id of f.orders)await f.inv.reserveOrder(f.actor,id,cmd());
+ await f.db.run("DELETE FROM routing_points WHERE entity_kind='ORDER' AND entity_id=?",f.orders[1]);
+ const result=await automatic(f).organize(f.actor,{...cmd(),...departure});
+ assert.equal(result.organized,1);assert.equal(result.pending.length,1);assert.match(result.pending[0].reason,/ubicación/);
+ assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.orders[1]))!.status,'RESERVED');
+ assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
+});
+test('availability automatically replaces an occupied truck/driver and leaves future orders pending',async t=>{
+ const f=await fixture(t);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());
+ const occupied=await f.d.createRoute(f.actor,{...cmd(),name:'En calle',driverId:f.driver,vehicleId:f.vehicle,startAt:departure.startAt,endAt:departure.endAt,trackingProvider:'TRACCAR'});
+ await f.db.run("UPDATE routes SET state='IN_PROGRESS' WHERE id=?",occupied.id);
+ const vehicle=(await f.d.createVehicle(f.actor,{...cmd(),plate:'LIBRE',capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0})).id;
+ const driver=(await f.d.createDriver(f.actor,{...cmd(),name:'Chofer libre',username:'free-routing',password:'Driver-QA-2026!'})).id;
+ const result=await automatic(f).organize(f.actor,{...cmd(),...departure});
+ assert.equal(result.routes[0].plate,'LIBRE');const route=await f.d.route(result.routes[0].id,f.actor);assert.equal(route.driver_id,driver);assert.equal(route.vehicle_id,vehicle);
+});
+test('new reservations join a compatible preparing truck without moving loaded cargo',async t=>{
+ const f=await fixture(t);await f.inv.receive(f.actor,{...cmd(),clientId:f.client,productId:f.product,locationId:f.location,quantity:1});
+ const startAt=new Date().toISOString(),body={date:startAt.slice(0,10),startAt,endAt:new Date(Date.now()+10*3600000).toISOString()};
+ await f.inv.reserveOrder(f.actor,f.orders[0],cmd());const service=automatic(f),first=await service.organize(f.actor,{...cmd(),...body});
+ const routeId=first.routes[0].id,loaded=(await f.db.all('SELECT parcel_id FROM route_assignments WHERE route_id=?',routeId)).map(p=>p.parcel_id);
+ await f.d.loadSelected(f.actor,routeId,{...cmd(),expectedVersion:(await f.d.route(routeId,f.actor)).version,parcelIds:loaded});
+ await f.d.ready(f.actor,routeId,{...cmd(),expectedVersion:(await f.d.route(routeId,f.actor)).version});
+ await f.inv.reserveOrder(f.actor,f.orders[1],cmd());const second=await service.organize(f.actor,{...cmd(),...body});
+ assert.equal(second.organized,1);assert.equal(second.routes[0].id,routeId);assert.equal(second.routes[0].orders,2);
+ assert.equal((await f.db.one('SELECT COUNT(*) AS n FROM routes'))!.n,1);
+ assert.equal((await f.d.route(routeId,f.actor)).state,'DRAFT');
+ assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.orders[0]))!.status,'LOADED');
+ assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.orders[1]))!.status,'RESERVED');
+ for(const id of loaded)assert.equal((await f.db.one('SELECT custody_id FROM parcels WHERE id=?',id))!.custody_id,f.vehicle);
+ assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
+});
+test('automatic organization rolls back every depot if a later assignment fails',async t=>{
+ const f=await fixture(t),location=(await f.inv.createLocation(f.actor,{...cmd(),code:'SECOND',name:'Segundo depósito'})).id;
+ await f.routing.point(f.actor,{...cmd(),kind:'LOCATION',id:location,latitude:-25.32,longitude:-57.62});
+ await f.inv.receive(f.actor,{...cmd(),clientId:f.client,productId:f.product,locationId:location,quantity:2});
+ await f.inv.reserveOrder(f.actor,f.orders[0],{...cmd(),locationId:f.location});
+ await f.inv.reserveOrder(f.actor,f.orders[1],{...cmd(),locationId:location});
+ await f.d.createVehicle(f.actor,{...cmd(),plate:'SECOND',capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0});
+ await f.d.createDriver(f.actor,{...cmd(),name:'Segundo chofer',username:'second-routing',password:'Driver-QA-2026!'});
+ const original=f.db.run.bind(f.db);let assignments=0;
+ f.db.run=async(sql,...params)=>{if(sql.startsWith('INSERT INTO route_assignments')&&++assignments===3)throw new Error('QA_LATE_DEPOT');return original(sql,...params);};
+ await assert.rejects(automatic(f).organize(f.actor,{...cmd(),...departure}),/QA_LATE_DEPOT/);
+ f.db.run=original;
+ assert.equal((await f.db.one('SELECT COUNT(*) AS n FROM routes'))!.n,0);
+ assert.equal((await f.db.one('SELECT COUNT(*) AS n FROM route_assignments'))!.n,0);
+ assert.equal((await f.db.one("SELECT COUNT(*) AS n FROM inventory_orders WHERE status='RESERVED'"))!.n,2);
+ assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
+});
+test('future reservations and external circuits are never silently dispatched in the internal circuit',async t=>{
+ const f=await fixture(t);await f.inv.receive(f.actor,{...cmd(),clientId:f.client,productId:f.product,locationId:f.location,quantity:1});
+ for(const id of f.orders)await f.inv.reserveOrder(f.actor,id,cmd());
+ await f.db.run('UPDATE inventory_orders SET order_date=? WHERE id=?','2026-10-31',f.orders[1]);
+ await f.db.run("UPDATE client_delivery_policies SET delivery_provider='QUADMINDS' WHERE client_id=?",f.client);
+ const result=await automatic(f).organize(f.actor,{...cmd(),...departure});
+ assert.equal(result.organized,0);assert.equal(result.pending.length,1);assert.match(result.pending[0].reason,/externo/);
+ assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
+});
+test('concurrent organizers cannot assign the same reservation twice',async t=>{
+ const f=await fixture(t);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());
+ const results=await Promise.allSettled([automatic(f).organize(f.actor,{...cmd(),...departure}),automatic(f).organize(f.actor,{...cmd(),...departure})]);
+ assert.ok(results.some(r=>r.status==='fulfilled'));
+ assert.equal((await f.db.one('SELECT COUNT(*) AS n FROM routes'))!.n,1);
+ assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
+});
+
 test('company depot coordinates are shared, survive renaming and require administration to change',async t=>{
  const f=await fixture(t);
  await f.routing.point(f.actor,{...cmd(),kind:'LOCATION',id:f.location,address:'Av. España 123, Asunción',latitude:-25.3,longitude:-57.6});
@@ -135,8 +228,8 @@ test('a failed application rolls back every route and reservation in the batch',
  assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
 });
 test('planned routes continue through load, confirmation, departure and delivery without a second load',async t=>{
- const f=await fixture(t),proposal=await f.routing.preview(f.actor,f.input),applied=await f.routing.apply(f.actor,{...cmd(),planId:proposal.id});
- const selectedOrder=proposal.routes[0].stops[0].orderId;
+ const f=await fixture(t);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());const applied=await automatic(f).organize(f.actor,{...cmd(),...departure});
+ const selectedOrder=f.orders[0];
  const id=applied.routes[0].id,version=async()=>(await f.d.route(id,f.actor)).version;
  const parcels=(await f.db.all('SELECT parcel_id FROM route_assignments WHERE route_id=?',id)).map(p=>p.parcel_id);
  await f.d.loadSelected(f.actor,id,{...cmd(),expectedVersion:await version(),parcelIds:parcels});

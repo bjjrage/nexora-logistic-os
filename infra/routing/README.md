@@ -1,6 +1,6 @@
 # Ruteo propio de Nexora
 
-Pedidos → botón Organizar pedidos, dentro de la lista → revisar sugerencias → Confirmar reparto → Abrir carga. La reserva individual muestra el mismo cálculo y permite Reservar y asignar. No existe una pestaña adicional de planificación. El cálculo usa OR-Tools real, matriz vial de OSRM y ubicaciones confirmadas. Traccar mantiene el seguimiento real.
+Pedidos → Reservar stock → Rutas → Organizar todos los reservados → Cargar este camión → Confirmar ruta → Control de salida → Despachar ahora. La reserva no pide ubicaciones, ruta, vehículo ni chofer. El sistema distribuye las reservas completas entre recursos disponibles y deja pendientes explícitos cuando falta información o capacidad. OR-Tools calcula con tiempos de calle OSRM y búsqueda Nominatim sobre datos OSM propios; Traccar conserva el seguimiento GPS.
 
 El depósito y la flota se recuperan del último cálculo; el chofer del camión se recupera de sus rutas, validando acceso y disponibilidad. Si solo existe un camión y un chofer disponibles se propone esa pareja. La pantalla permite cambiar la selección sin salir. El servidor excluye camiones/choferes comprometidos y vehículos con bultos a bordo. Se pueden seleccionar pedidos de todas las páginas de la fecha y cliente elegidos; aplicar afecta solo a esa selección. El límite sigue siendo 80 pedidos por cálculo.
 
@@ -12,13 +12,15 @@ Las direcciones exactas ya confirmadas se reutilizan dentro de la empresa. La b�
 
 ## Operación
 
-1. Administración registra dirección y punto geográfico de cada depósito en Empresa y equipo → Mi empresa → Depósitos y salida de repartos. Es un registro compartido por empresa: renombrar un depósito conserva sus coordenadas. Pedidos consume ese registro y solo permite elegir el depósito de salida; no permite configurar allí su ubicación. En esta versión el stock se toma de un solo sector: no se presume que dos sectores representen un mismo lugar físico.
-2. Seleccionar vehículos y su chofer. Los compromisos y bultos a bordo se validan nuevamente al aplicar.
-3. Buscar y confirmar ubicaciones de destinatarios. Se pueden ingresar coordenadas directamente si no hay una coincidencia clara. La dirección guardada queda vinculada al texto del pedido: editarlo invalida la ubicación anterior para planificar.
-4. Calcular. Se incluyen únicamente pedidos completos del circuito NEXORA, sin asignación activa y con stock suficiente en el sector elegido. Se consideran conjuntamente los pedidos que compiten por el mismo SKU; no se resta inventario en la propuesta. Reservas existentes se conservan y solo se incluyen si están completas en ese sector.
-5. Revisar orden de entrega, vehículo, artículos/SKU y pendientes. Permitir capacidad desconocida requiere marcar explícitamente que se revisó el espacio. Peso/volumen desconocidos nunca se presentan como capacidad certificada.
-6. Aplicar crea rutas DRAFT, reserva stock y asigna bultos en una transacción. El orden de inserción conserva el orden de paradas calculado. Un fallo revierte el lote completo. El servidor revalida la propuesta, que vence después de 30 minutos; reintentar un plan aplicado devuelve las mismas rutas.
-7. Abrir carga usa la ruta operativa actual: carga física → confirmar ruta → control de salida → despachar → resultado de entrega. No se vuelve a confirmar la carga en Pedidos. Para corregir, bajar artículos, quitar asignación o desreservar mediante las acciones existentes.
+1. Administración registra la ubicación de cada depósito en Empresa y equipo → Mi empresa → Depósitos y salida de repartos. Es compartida por toda la operación. Una reserva repartida entre sectores queda pendiente de consolidación; no se supone que dos sectores sean un mismo lugar físico.
+2. En Pedidos se reserva únicamente el pedido completo. No se configura transporte ni se pide GPS para apartar stock. Recibir mercadería y reservar son operaciones distintas.
+3. En Rutas, Organizar todos los reservados toma las reservas sin asignación de hoy y días anteriores, de todos los clientes. Excluye futuros y circuitos externos. Busca destinos automáticamente y acepta solo direcciones confiables; los dudosos tienen Revisar dirección con buscador y mapa.
+4. Elige vehículos y choferes disponibles, priorizando la pareja registrada o histórica. Valida compromisos solapados, carga a bordo, capacidad y ventanas horarias. Peso o volumen ausentes se muestran como capacidad sin verificar; un exceso conocido no se acepta.
+5. Puede agregar nuevas reservas a un camión en preparación compatible, respetando la secuencia anterior y la carga ya subida. Agregar carga deja la ruta pendiente de confirmación. Nunca reorganiza rutas despachadas. Los demás pedidos reciben rutas nuevas con paradas ordenadas.
+6. La aplicación del lote es atómica: se revalidan reservas, recursos y versiones; si algo cambió, no queda una distribución parcial. La clave de comando permite reintentos sin duplicación, incluso tras perder la respuesta. No se reserva ni se descuenta stock una segunda vez.
+7. Cargar este camión abre la carga operativa agrupada: seleccionar bultos físicamente subidos → Confirmar carga → Confirmar ruta → Control de salida → Despachar ahora → registrar resultado. No hay segunda carga en Pedidos. Para corregir, bajar, quitar asignación o desreservar con las acciones existentes.
+
+Límites actuales: hasta 1000 reservas en la cola, lotes de cálculo de 80 pedidos y hasta 8 vehículos por cálculo. Los pedidos sin recursos, con restricciones no interpretables o sectores múltiples quedan pendientes con motivo explícito. No se inventan coordenadas ni se certifica capacidad de carga desconocida. El organizador aplica la distribución al pulsar el botón; no exige una segunda pantalla de confirmación.
 
 ## Instalación local de mapas propios
 
