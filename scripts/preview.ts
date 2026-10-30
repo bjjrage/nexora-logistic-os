@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -40,13 +40,16 @@ if(mode==='status'){
   if(provider==='postgres'&&!process.env.DATABASE_URL)throw new Error('Falta la conexión privada DATABASE_URL.');
   const instanceId=randomUUID();
   const output=openSync(resolve(local,'preview.log'),'a'),errors=openSync(resolve(local,'preview-error.log'),'a');
-  const child=spawn(process.execPath,[resolve(root,'server/index.ts')],{cwd:root,detached:true,windowsHide:true,stdio:['ignore',output,errors],env:{...process.env,PORT:String(port),DATABASE_PROVIDER:provider,DATABASE_PATH:databasePath,PREVIEW_INSTANCE_ID:instanceId}});
+  let release=process.env.RELEASE_SHA??'local';
+  try{release=execFileSync('git',['-c',`safe.directory=${root.replaceAll('\\','/')}`,'rev-parse','HEAD'],{cwd:root,encoding:'utf8',windowsHide:true}).trim();}catch{}
+  const child=spawn(process.execPath,[resolve(root,'server/index.ts')],{cwd:root,detached:true,windowsHide:true,stdio:['ignore',output,errors],env:{...process.env,RELEASE_SHA:release,PORT:String(port),DATABASE_PROVIDER:provider,DATABASE_PATH:databasePath,PREVIEW_INSTANCE_ID:instanceId}});
   child.on('error',error=>{console.error(error.message);process.exitCode=1;});
   child.unref();closeSync(output);closeSync(errors);
   if(!child.pid)throw new Error('No se pudo iniciar el servidor local.');
   writeFileSync(statePath,JSON.stringify({pid:child.pid,port,instanceId,databasePath,root},null,2));
   let ready=false;
-  for(let i=0;i<40;i++){const result=await health(port);if(result?.previewInstanceId===instanceId){ready=true;break;}await delay(150);}
+  const deadline=Date.now()+30000;
+  while(Date.now()<deadline){const result=await health(port);if(result?.previewInstanceId===instanceId){ready=true;break;}await delay(150);}
   if(!ready)throw new Error('El servidor no confirmó el arranque. Revisá .local/preview-error.log.');
   console.log(`Aplicación activa: http://127.0.0.1:${port} · ${demo?'DEMO SQLite aislada':provider==='postgres'?'Supabase PostgreSQL':'SQLite local'}`);
   console.log('Permanece iniciada hasta npm run preview:stop.');
