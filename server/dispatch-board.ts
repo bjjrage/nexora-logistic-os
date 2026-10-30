@@ -25,6 +25,9 @@ export async function dispatchBoard(db:Database,actor:Actor,queue:Row){
  for(const entry of confirmations)for(const location of JSON.parse(entry.response).locations??[]){const point=points.find(p=>p.entity_kind==='ORDER'&&p.entity_id===location.id);if(point&&point.updated_at===location.updatedAt&&!approximate.has(location.id))approximate.set(location.id,location);}
  const orderPoint=(id:string,address:string)=>{const point=points.find(p=>p.entity_kind==='ORDER'&&p.entity_id===id&&p.address===address);const quality=approximate.get(id);return point?{...point,...(quality?{approximate:true,precision:quality.precision,name:quality.label}:{})}:null;};
  for(const route of routes.values())for(const order of route.orders)order.point=orderPoint(order.id,order.destination);
+ const inventoryIds=[...new Set(rows.filter(r=>r.order_status).map(r=>r.order_id))];
+ const totals=inventoryIds.length?await db.all(`SELECT op.order_id,COUNT(*) AS units,SUM(CASE WHEN p.state='LOADED' THEN 1 ELSE 0 END) AS loaded FROM inventory_order_parcels op JOIN parcels p ON p.id=op.parcel_id AND p.org_id=op.org_id WHERE op.org_id=? AND op.order_id IN(${inventoryIds.map(()=>'?').join(',')}) AND op.state IN('RESERVED','VEHICLE') GROUP BY op.order_id`,actor.orgId,...inventoryIds):[];
+ for(const route of routes.values())for(const order of route.orders){const total=totals.find(t=>t.order_id===order.id);if(total){order.orderUnits=total.units;order.orderLoaded=total.loaded;}}
  const last=await db.one("SELECT i.response FROM idempotency i JOIN audit a ON a.org_id=i.org_id AND a.command_id=i.command_id WHERE i.org_id=? AND i.operation='routing.organizeReserved' ORDER BY a.created_at DESC,a.id DESC LIMIT 1",actor.orgId);
  const previous:Row[]=last?JSON.parse(last.response).pending??[]:[];
  return {...queue,features:{batchCorrections:true,bulkLocationReview:true},orders:queue.orders.map((order:Row)=>{

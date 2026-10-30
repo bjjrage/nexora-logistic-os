@@ -52,6 +52,9 @@ test('loaded orders need physical confirmation, then can return to planning and 
  const requeued=await correctDispatchOrders(f.db,f.actor,{...cmd(),orderIds:[f.orders[0]],mode:'REQUEUE',confirmUnloaded:true});assert.equal(requeued.unloaded,2);assert.equal((await automatic(f).board(f.actor,departure.date)).orders.length,1);
  assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.orders[0]))!.status,'RESERVED');assert.equal((await f.db.one('SELECT COUNT(*) AS n FROM route_assignments WHERE active=1'))!.n,0);
  const organized=await automatic(f).organize(f.actor,{...cmd(),...departure});assert.equal(organized.organized,1);
+ const assigned=(await f.db.one('SELECT parcel_id FROM route_assignments WHERE route_id=? AND active=1',organized.routes[0].id))!;
+ await f.d.unassign(f.actor,organized.routes[0].id,{...cmd(),expectedVersion:(await f.d.route(organized.routes[0].id,f.actor)).version,parcelId:assigned.parcel_id});
+ const partial=(await automatic(f).board(f.actor,departure.date)).routes[0].orders[0];assert.equal(partial.units,1);assert.equal(partial.orderUnits,2);
  const released=await correctDispatchOrders(f.db,f.actor,{...cmd(),orderIds:[f.orders[0]],mode:'RELEASE'});assert.equal(released.released,2);assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
 });
 test('a late invalid order rolls back the whole reservation correction and rejects other tenants or roles',async t=>{
