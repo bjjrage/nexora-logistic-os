@@ -13,7 +13,7 @@ const inputSchema=z.object({date:z.iso.date(),locationId:z.uuid(),clientId:z.uui
  if(new Set(v.fleet.map(f=>f.vehicleId)).size!==v.fleet.length||new Set(v.fleet.map(f=>f.driverId)).size!==v.fleet.length)c.addIssue({code:'custom',message:'Cada vehículo y chofer debe aparecer una sola vez.'});
  const duration=Date.parse(v.endAt)-Date.parse(v.startAt);if(duration<=0||duration>16*3600000)c.addIssue({code:'custom',message:'La jornada debe durar entre 1 minuto y 16 horas.'});
 });
-const pointSchema=z.object({commandId:z.uuid(),kind:z.enum(['ORDER','LOCATION']),id:z.uuid(),latitude:z.number().finite().min(-90).max(90),longitude:z.number().finite().min(-180).max(180)});
+const pointSchema=z.object({commandId:z.uuid(),kind:z.enum(['ORDER','LOCATION']),id:z.uuid(),address:z.string().trim().max(500).optional(),latitude:z.number().finite().min(-90).max(90),longitude:z.number().finite().min(-180).max(180)});
 const outputSchema=z.object({routes:z.array(z.object({vehicleId:z.uuid(),driverId:z.uuid(),durationSeconds:z.number().int().nonnegative(),stops:z.array(z.object({orderId:z.uuid(),arrivalSeconds:z.number().int().nonnegative()})).min(1)})),unassigned:z.array(z.uuid())});
 export class Routing {
  private store:Database;
@@ -37,10 +37,11 @@ export class Routing {
  }
  async point(actor:Actor,input:unknown){
   authorize(actor,roles);const b=pointSchema.parse(input),domain=new Logistics(this.store);
+  if(b.kind==='LOCATION')authorize(actor,['ADMIN']);
   return domain.command(actor,'routing.point',b,roles,async()=>{
    const row=await domain.record(b.kind==='ORDER'?'inventory_orders':'inventory_locations',b.id,actor);
    if(b.kind==='ORDER')ensure(['DRAFT','RESERVED'].includes(row.status),'INVALID_TRANSITION','El pedido ya fue cargado o despachado.');
-   const address=b.kind==='ORDER'?row.destination:row.code+' · '+row.name;
+   const address=b.kind==='ORDER'?row.destination:(b.address||row.code+' · '+row.name);
    await this.store.run('INSERT INTO routing_points VALUES(?,?,?,?,?,?,?) ON CONFLICT(org_id,entity_kind,entity_id) DO UPDATE SET address=excluded.address,latitude=excluded.latitude,longitude=excluded.longitude,updated_at=excluded.updated_at',actor.orgId,b.kind,b.id,address,b.latitude,b.longitude,timestamp());
    return {id:b.id};
   });
@@ -82,7 +83,7 @@ export class Routing {
  async model(actor:Actor,input:unknown){
   authorize(actor,roles);const b=inputSchema.parse(input),domain=new Logistics(this.store);
   const location=await domain.record('inventory_locations',b.locationId,actor);ensure(location.active&&location.kind!=='QUARANTINE','VALIDATION_ERROR','Elegí un depósito o sector activo.');
-  const point=await this.store.one("SELECT * FROM routing_points WHERE org_id=? AND entity_kind='LOCATION' AND entity_id=?",actor.orgId,b.locationId);ensure(point&&point.address===location.code+' · '+location.name,'MISSING_DEPOT_POINT','Ubicá el depósito antes de organizar el reparto.');
+  const point=await this.store.one("SELECT * FROM routing_points WHERE org_id=? AND entity_kind='LOCATION' AND entity_id=?",actor.orgId,b.locationId);ensure(point,'MISSING_DEPOT_POINT','Administración debe configurar la ubicación del depósito en Empresa y equipo → Mi empresa.');
   const organization=await this.store.one('SELECT * FROM organizations WHERE id=?',actor.orgId);
   const local=new Intl.DateTimeFormat('en-CA',{timeZone:organization!.timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date(b.startAt));
   const part=(name:string)=>local.find(p=>p.type===name)!.value;

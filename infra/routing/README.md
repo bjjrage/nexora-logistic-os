@@ -8,7 +8,7 @@ Las direcciones exactas ya confirmadas se reutilizan dentro de la empresa. La b�
 
 ## Operación
 
-1. Elegir día, cliente opcional, depósito/sector y su punto geográfico. En esta versión el stock se toma de un solo sector: no se presume que dos sectores representen un mismo lugar físico.
+1. Administración registra dirección y punto geográfico de cada depósito en Empresa y equipo → Mi empresa → Depósitos y salida de repartos. Es un registro compartido por empresa: renombrar un depósito conserva sus coordenadas. Pedidos consume ese registro y solo permite elegir el depósito de salida; no permite configurar allí su ubicación. En esta versión el stock se toma de un solo sector: no se presume que dos sectores representen un mismo lugar físico.
 2. Seleccionar vehículos y su chofer. Los compromisos y bultos a bordo se validan nuevamente al aplicar.
 3. Buscar y confirmar ubicaciones de destinatarios. Se pueden ingresar coordenadas directamente si no hay una coincidencia clara. La dirección guardada queda vinculada al texto del pedido: editarlo invalida la ubicación anterior para planificar.
 4. Calcular. Se incluyen únicamente pedidos completos del circuito NEXORA, sin asignación activa y con stock suficiente en el sector elegido. Se consideran conjuntamente los pedidos que compiten por el mismo SKU; no se resta inventario en la propuesta. Reservas existentes se conservan y solo se incluyen si están completas en ese sector.

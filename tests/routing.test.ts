@@ -33,6 +33,18 @@ async function fixture(t:any,real=false){
  const input={date:'2026-10-29',locationId:location,startAt:'2026-10-29T08:00:00.000Z',endAt:'2026-10-29T18:00:00.000Z',fleet:[{vehicleId:vehicle,driverId:driver}]};
  return {db,actor,d,inv,routing,orders,input,client,product,location,vehicle,driver,providers};
 }
+test('company depot coordinates are shared, survive renaming and require administration to change',async t=>{
+ const f=await fixture(t);
+ await f.routing.point(f.actor,{...cmd(),kind:'LOCATION',id:f.location,address:'Av. España 123, Asunción',latitude:-25.3,longitude:-57.6});
+ const point=(await f.routing.context(f.actor)).points.find(p=>p.kind==='LOCATION'&&p.id===f.location)!;
+ assert.equal(point.address,'Av. España 123, Asunción');
+ await f.db.run('UPDATE inventory_locations SET name=? WHERE id=?','Central renombrado',f.location);
+ assert.ok((await f.routing.preview(f.actor,f.input)).routes.length);
+ await assert.rejects(f.routing.point({...f.actor,role:'OPERATIONS'},{...cmd(),kind:'LOCATION',id:f.location,latitude:0,longitude:0}),{code:'FORBIDDEN'});
+ assert.equal((await f.routing.context(f.actor)).points.find(p=>p.id===f.location)!.latitude,-25.3);
+ await assert.rejects(f.routing.point({...f.actor,orgId:randomUUID()},{...cmd(),kind:'LOCATION',id:f.location,latitude:0,longitude:0}),{code:'NOT_FOUND'});
+});
+
 test('inline suggestions remember fleet, restrict selected orders and never reserve unselected stock',async t=>{
  const f=await fixture(t);
  const defaults=(await f.routing.context(f.actor)).defaults;
