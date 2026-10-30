@@ -34,7 +34,7 @@ try{
  const context=await api('/api/routing/context');
  if(!context.configured.roads||!context.configured.addresses)throw new Error('Faltan servicios de mapas en el servidor publicado.');
  if(context.locations.length||context.vehicles.length||context.drivers.length)throw new Error('La organización QA no está aislada.');
- const places=[];
+ const places:Array<{name:string;latitude:number;longitude:number}>=[];
  for(const address of ['Avenida España, Asunción, Paraguay','Avenida Brasilia, Asunción, Paraguay','Avenida Mariscal López, Asunción, Paraguay']){
   const matches=await api('/api/routing/search',{address});if(!matches.length)throw new Error('No se encontró la dirección QA: '+address);
   places.push(matches[0]);
