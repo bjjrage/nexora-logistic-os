@@ -6,6 +6,8 @@ import { CatalogImport } from './catalog-import.ts';
 import {parseOrdersXlsx} from './order-xlsx.ts';
 import {authorize} from './auth.ts';
 import {StockReceipts} from './stock-receipts.ts';
+import {Routing} from './routing.ts';
+import {relayRouting} from './routing-relay.ts';
 
 export type InventoryAuth = (req: Request) => Promise<Actor | InventoryActor>;
 const actorForInventory = async (auth: InventoryAuth, req: Request) => await auth(req) as InventoryActor;
@@ -16,6 +18,13 @@ export function installInventoryRoutes(app: Express, store: Database, auth: Inve
   const inventory = new Inventory(store);
   const catalog = new CatalogImport(store);
   const receipts = new StockReceipts(store);
+  const routing = new Routing(store);
+  app.get('/api/routing/context',async(req,res)=>{const actor=await auth(req) as Actor;res.json(await relayRouting(req,actor,store.kind,'/context')??await routing.context(actor));});
+  app.get('/api/routing/orders',async(req,res)=>res.json(await routing.orders(await auth(req) as Actor,String(req.query.date??''),queryString(req.query.clientId))));
+  app.post('/api/routing/points',async(req,res)=>res.json(await routing.point(await auth(req) as Actor,req.body)));
+  app.post('/api/routing/search',async(req,res)=>{const actor=await auth(req) as Actor;res.json(await relayRouting(req,actor,store.kind,'/search')??await routing.search(actor,req.body));});
+  app.post('/api/routing/preview',async(req,res)=>{const actor=await auth(req) as Actor;res.json(await relayRouting(req,actor,store.kind,'/preview')??await routing.preview(actor,req.body));});
+  app.post('/api/routing/apply',async(req,res)=>res.json(await routing.apply(await auth(req) as Actor,req.body)));
   app.get('/api/inventory/receipts/template.xlsx',async(req,res)=>{
     const file=receipts.template(await actorForInventory(auth,req));
     res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':'attachment; filename="nexora-stock-template.xlsx"'}).send(file);

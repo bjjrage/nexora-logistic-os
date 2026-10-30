@@ -20,6 +20,8 @@ docs/evidencias/
 artifacts/
 backups/
 *.log
+infra/routing/data/
+__pycache__/
 *.pem
 *.key
 *.p12

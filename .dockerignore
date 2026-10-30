@@ -24,6 +24,12 @@
 !supabase/
 !supabase/migrations/
 !supabase/migrations/**
+!infra/
+!infra/routing/
+!infra/routing/requirements.txt
+!infra/routing/osrm.Dockerfile
+!infra/routing/nominatim.Dockerfile
+!infra/routing/start-osrm.sh
 **/.env*
 **/*.sqlite*
 **/*.log

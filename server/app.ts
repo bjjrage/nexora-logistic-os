@@ -31,7 +31,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     if(!Number.isInteger(proxyHops)||proxyHops<0||proxyHops>5)throw new Error('TRUST_PROXY_HOPS inválido.');
     if(proxyHops)app.set('trust proxy',proxyHops);
     app.use(diagnostics.middleware);
-    app.use((_req,res,next)=>{if(process.env.NODE_ENV==='production')res.set({'Strict-Transport-Security':'max-age=31536000; includeSubDomains','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-src https://www.openstreetmap.org; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"});next();});
+    app.use((_req,res,next)=>{if(process.env.NODE_ENV==='production')res.set({'Strict-Transport-Security':'max-age=31536000; includeSubDomains','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org; font-src 'self'; connect-src 'self'; frame-src https://www.openstreetmap.org; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"});next();});
     app.use((_req, res, next) => { res.set({ 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer', 'Permissions-Policy': 'geolocation=()', 'Cache-Control': 'no-store' }); next(); });
     app.post('/api/quadminds/webhook',express.raw({type:'application/json',limit:'512kb'}),async(req,res)=>{ensure(Buffer.isBuffer(req.body),'VALIDATION_ERROR','Se requiere un evento JSON.',400);res.json(await quad.webhook(req.body,req.headers['quadminds-signature']));});
     app.get('/api/jobs/quadminds-sync',async(req,res)=>{
