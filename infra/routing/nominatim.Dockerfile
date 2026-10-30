@@ -3,7 +3,8 @@ FROM mediagis/nominatim@sha256:168c30e20fbba0c2e8199fca7a8aa2640e8cc1a62f8b05b19
 RUN sed -i 's/--bind :8080/--bind [::]:8080/' /app/start.sh \
     && sed -i 's|/var/lib/postgresql/16/main|/var/lib/postgresql/16/main/pgdata|g' /app/start.sh /app/init.sh /etc/postgresql/16/main/postgresql.conf \
     && sed -i '1s/-ex/-e/' /app/start.sh /app/init.sh
-ENV PBF_URL=https://download.geofabrik.de/south-america/paraguay-latest.osm.pbf \
+ENV GUNICORN_CMD_ARGS=--no-control-socket \
+    PBF_URL=https://download.geofabrik.de/south-america/paraguay-latest.osm.pbf \
     IMPORT_STYLE=address THREADS=2 GUNICORN_WORKERS=2 \
     POSTGRES_SHARED_BUFFERS=256MB POSTGRES_MAINTENANCE_WORK_MEM=512MB \
     POSTGRES_AUTOVACUUM_WORK_MEM=128MB POSTGRES_WORK_MEM=16MB \
