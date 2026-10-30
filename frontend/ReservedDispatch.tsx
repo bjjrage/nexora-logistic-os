@@ -1,4 +1,4 @@
-import {useEffect,useRef,useState} from 'react';
+﻿import {useEffect,useRef,useState} from 'react';
 import {api} from './api';
 import {PointEditor} from './RoutingPanel';
 import './routing.css';
@@ -16,7 +16,7 @@ export default function ReservedDispatch({onRefresh,onOpen,onConfigureDepot,revi
  const routes=(board?.routes??[]).map((r:Row)=>({...r,visibleOrders:r.orders.filter((o:Row)=>matches(o,query)||`${r.name} ${r.plate} ${r.driverName}`.toLocaleLowerCase().includes(query))})).filter((r:Row)=>r.visibleOrders.length);
  const assigned=new Set((board?.routes??[]).flatMap((r:Row)=>r.orders.map((o:Row)=>o.id))).size;
  return <section className="card reserved-dispatch" aria-label="Reservados por organizar">
-  <div className="card-header"><div><h2>Reservados por organizar</h2><p>{board?`Por organizar: ${board.orders.length} (incluye atrasados) · Organizados: ${assigned} · Repartos activos: ${board.routes.length}`:'Consultando pedidos y camiones…'}</p></div><button type="button" className="button button-primary" disabled={busy||!board?.orders.length} onClick={()=>void organize()}>{busy?'Organizando…':'Organizar todos los reservados'}</button></div>
+  <div className="card-header"><div><h2>Reservados por organizar</h2><p>{board?`Por organizar: ${board.orders.length} (incluye atrasados) · Organizados: ${assigned} · Repartos activos: ${(board.routes??[]).length}`:'Consultando pedidos y camiones…'}</p></div><button type="button" className="button button-primary" disabled={busy||!board?.orders.length} onClick={()=>void organize()}>{busy?'Organizando…':'Organizar todos los reservados'}</button></div>
   {error&&<p className="notice error" role="alert">{error}</p>}
   {result&&<p className="dispatch-result" role="status">Organizados en esta operación: {result.organized} · Pendientes: {result.pending.length}. La distribución actual se muestra abajo.</p>}
   {board&&<><label className="field dispatch-search"><span>Buscar pedido, cliente, destinatario o camión</span><input type="search" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Referencia, nombre, SKU o matrícula"/></label>
@@ -26,7 +26,7 @@ export default function ReservedDispatch({onRefresh,onOpen,onConfigureDepot,revi
      <div><strong>{order.external_id}</strong><small>{order.client_name}</small><span className="dispatch-count">{total(order)} bultos reservados</span></div>
      <div><strong>{order.recipient_name}</strong><small>{order.destination}</small></div>
      <Articles order={order}/>
-     <div className="dispatch-order-action"><span className={'dispatch-reason '+(order.point?'':'dispatch-reason--review')}>{order.reason}</span><button type="button" className="button button-secondary" disabled={busy} onClick={()=>setReview(order)}>Revisar dirección</button>{onConfigureDepot&&order.reason.includes('ubicación del depósito')&&<button className="text-button" type="button" onClick={onConfigureDepot}>Configurar depósito</button>}</div>
+     <div className="dispatch-order-action"><span className={'dispatch-reason '+(order.point?'':'dispatch-reason--review')}>{order.reason??"Por organizar"}</span><button type="button" className="button button-secondary" disabled={busy} onClick={()=>setReview(order)}>Revisar dirección</button>{onConfigureDepot&&(order.reason??'').includes('ubicación del depósito')&&<button className="text-button" type="button" onClick={onConfigureDepot}>Configurar depósito</button>}</div>
     </article>)}
     {!pending.length&&<p className="muted">{query?'No hay pedidos pendientes que coincidan con la búsqueda.':board.orders.length?'Ajustá la búsqueda para ver los pedidos.':'No quedan reservas sin camión. Las nuevas reservas aparecerán aquí.'}</p>}
    </section>
@@ -43,3 +43,4 @@ export default function ReservedDispatch({onRefresh,onOpen,onConfigureDepot,revi
   </>}
  </section>;
 }
+
