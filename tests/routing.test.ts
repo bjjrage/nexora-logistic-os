@@ -66,6 +66,33 @@ test('a missing destination stays reserved while complete destinations are organ
  assert.equal(result.organized,1);assert.equal(result.pending.length,1);assert.match(result.pending[0].reason,/ubicación/);
  assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.orders[1]))!.status,'RESERVED');
  assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
+ const board=await new ReservedDispatch(f.db,f.providers).board(f.actor,departure.date);
+ assert.equal(board.routes.length,1);assert.equal(board.orders.length,1);assert.match(board.orders[0].reason,/ubicación/);
+ await f.routing.point(f.actor,{...cmd(),kind:'ORDER',id:f.orders[1],latitude:-25.32,longitude:-57.62});
+ assert.equal((await new ReservedDispatch(f.db,f.providers).board(f.actor,departure.date)).orders[0].reason,'Listo para organizar');
+});
+
+test('dispatch board persists every assignment with route, truck, driver, SKU and real load counts',async t=>{
+ const f=await fixture(t);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());const service=automatic(f);
+ let board=await service.board(f.actor,departure.date);assert.equal(board.orders[0].external_id,'PLAN-0');assert.equal(board.orders[0].lines[0].sku,'QTY');assert.equal(board.routes.length,0);
+ const applied=await service.organize(f.actor,{...cmd(),...departure}),routeId=applied.routes[0].id;
+ board=await new ReservedDispatch(f.db,f.providers).board(f.actor,departure.date);
+ assert.equal(board.orders.length,0);assert.equal(board.routes[0].id,routeId);assert.equal(board.routes[0].plate,'ROUTING');assert.equal(board.routes[0].driverName,'Chofer');
+ const order=board.routes[0].orders[0];assert.equal(order.reference,'PLAN-0');assert.equal(order.lines[0].sku,'QTY');assert.equal(order.sequence,1);assert.equal(order.pendingLoad,2);assert.equal(order.units,2);
+ const parcel=(await f.db.one('SELECT parcel_id FROM route_assignments WHERE route_id=?',routeId))!.parcel_id;
+ await f.d.loadSelected(f.actor,routeId,{...cmd(),expectedVersion:(await f.d.route(routeId,f.actor)).version,parcelIds:[parcel]});
+ board=await service.board(f.actor,departure.date);assert.equal(board.routes[0].orders[0].pendingLoad,1);assert.equal(board.routes[0].orders[0].loaded,1);
+ const otherOrg=randomUUID();await f.db.run('INSERT INTO organizations VALUES(?,?,?)',otherOrg,'Other','UTC');
+ const isolated=await service.board({...f.actor,orgId:otherOrg},departure.date);assert.equal(isolated.orders.length,0);assert.equal(isolated.routes.length,0);
+});
+
+test('an approximate building match remains unconfirmed and cannot silently become a routing destination',async t=>{
+ const f=await fixture(t);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());await f.db.run("DELETE FROM routing_points WHERE entity_kind='ORDER'");
+ const providers={...f.providers,search:async(query:string)=>query==='Destino 0'?[]:[{name:'Nearby building',latitude:-25.31,longitude:-57.61,addressRank:30}]};
+ await f.db.run('UPDATE inventory_orders SET destination=? WHERE id=?','Palma 145, Centro, Asunción, Paraguay',f.orders[0]);
+ providers.search=async(query:string)=>query.includes('Centro')?[]:[{name:'Nearby building',latitude:-25.31,longitude:-57.61,addressRank:30}];
+ const result=await new ReservedDispatch(f.db,providers).organize(f.actor,{...cmd(),...departure});assert.equal(result.organized,0);assert.match(result.pending[0].reason,/ubicación/);
+ assert.equal((await f.db.one("SELECT COUNT(*) AS n FROM routing_points WHERE entity_kind='ORDER'"))!.n,0);
 });
 test('availability automatically replaces an occupied truck/driver and leaves future orders pending',async t=>{
  const f=await fixture(t);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());

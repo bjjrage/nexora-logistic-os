@@ -6,6 +6,7 @@ import {ensure} from './errors.ts';
 import {Logistics} from './domain.ts';
 import {Routing} from './routing.ts';
 import type {RoutingProviders} from './routing-providers.ts';
+import {dispatchBoard,orderLines} from './dispatch-board.ts';
 import {prepareAppend,applyAppend} from './dispatch-append.ts';
 const roles:Actor['role'][]=['ADMIN','OPERATIONS'];
 const inputSchema=z.object({commandId:z.uuid(),date:z.iso.date().optional(),startAt:z.iso.datetime({offset:true}).optional(),endAt:z.iso.datetime({offset:true}).optional()}).strict();
@@ -26,13 +27,12 @@ export class ReservedDispatch{
   date=z.iso.date().parse(date??today);
   const orders=await this.db.all(`SELECT o.id,o.client_id,o.external_id,o.recipient_name,o.destination,o.order_date,o.updated_at,c.name AS client_name,p.delivery_provider FROM inventory_orders o JOIN clients c ON c.id=o.client_id AND c.org_id=o.org_id LEFT JOIN client_delivery_policies p ON p.client_id=o.client_id AND p.org_id=o.org_id WHERE o.org_id=? AND o.status='RESERVED' AND o.order_date<=? AND NOT EXISTS(SELECT 1 FROM route_assignments a JOIN parcels q ON q.id=a.parcel_id AND q.org_id=a.org_id WHERE a.org_id=o.org_id AND q.shipment_id=o.shipment_id AND a.active=1) ORDER BY o.created_at,o.rowid LIMIT 1001`,actor.orgId,date);
   ensure(orders.length<=1000,'PLAN_LIMIT','Hay más de 1000 reservas pendientes. Organizá por jornadas para reducir el lote.');
-  for(const order of orders){
-   const locations=await this.db.all("SELECT DISTINCT location_id FROM inventory_order_parcels WHERE org_id=? AND order_id=? AND state='RESERVED' ORDER BY location_id",actor.orgId,order.id);
-   order.locationId=locations.length===1?locations[0].location_id:null;
-   order.lines=await this.db.all('SELECT p.name,p.sku,l.quantity FROM inventory_order_lines l JOIN inventory_products p ON p.id=l.product_id AND p.org_id=l.org_id WHERE l.org_id=? AND l.order_id=? ORDER BY l.id',actor.orgId,order.id);
-  }
+  const ids=orders.map(o=>o.id),lines=await orderLines(this.db,actor,ids);
+  const locations=ids.length?await this.db.all(`SELECT DISTINCT order_id,location_id FROM inventory_order_parcels WHERE org_id=? AND state='RESERVED' AND order_id IN(${ids.map(()=>'?').join(',')}) ORDER BY order_id,location_id`,actor.orgId,...ids):[];
+  for(const order of orders){const places=locations.filter(l=>l.order_id===order.id);order.locationId=places.length===1?places[0].location_id:null;order.lines=lines.filter(l=>l.order_id===order.id);}
   return {date,today,timezone:org!.timezone,orders};
  }
+ async board(actor:Actor,date?:string){return dispatchBoard(this.db,actor,await this.queue(actor,date));}
  private async free(actor:Actor,field:'vehicle_id'|'driver_id',id:string,start:string,end:string){
   const route=await this.db.one(`SELECT r.id FROM routes r WHERE r.org_id=? AND r.${field}=? AND r.state<>'OPERATIONALLY_CLOSED' AND (r.state='IN_PROGRESS' OR(r.start_at<? AND r.end_at>?)) AND (r.state<>'DRAFT' OR EXISTS(SELECT 1 FROM route_assignments a WHERE a.org_id=r.org_id AND a.route_id=r.id AND a.active=1)) LIMIT 1`,actor.orgId,id,end,start);
   if(route)return false;
@@ -57,7 +57,7 @@ export class ReservedDispatch{
    const orders:Row[]=[],deadline=Date.now()+15000;
    for(const order of group){
     let point=await this.db.one("SELECT latitude,longitude FROM routing_points WHERE org_id=? AND entity_kind='ORDER' AND entity_id=? AND address=?",actor.orgId,order.id,order.destination);
-    if(!point&&Date.now()<deadline){try{const matches=await this.routing.search(actor,{address:order.destination});if(matches.length===1&&matches[0].addressRank>=30){point=matches[0];await this.routing.point(actor,{commandId:randomUUID(),kind:'ORDER',id:order.id,latitude:matches[0].latitude,longitude:matches[0].longitude});}}catch{/* Leave uncertain destinations pending. */}}
+    if(!point&&Date.now()<deadline){try{const matches=await this.routing.search(actor,{address:order.destination});if(matches.length===1&&matches[0].addressRank>=30&&!matches[0].approximate){point=matches[0];await this.routing.point(actor,{commandId:randomUUID(),kind:'ORDER',id:order.id,latitude:matches[0].latitude,longitude:matches[0].longitude});}}catch{/* Leave uncertain destinations pending. */}}
     if(point)orders.push(order);else pending.push({...order,reason:'Confirmar ubicación del destinatario'});
    }
    const candidates=await this.db.all("SELECT id,vehicle_id,driver_id FROM routes WHERE org_id=? AND state IN('DRAFT','READY') AND start_at<? AND end_at>? ORDER BY start_at,id",actor.orgId,end,start);

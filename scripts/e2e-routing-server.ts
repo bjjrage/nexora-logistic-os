@@ -7,7 +7,7 @@ process.env.TRACCAR_ENABLED='false';process.env.QUADMINDS_ENABLED='false';
 // Deterministic service doubles. OR-Tools and all operational APIs remain real.
 const maps=createServer((req,res)=>{
  res.setHeader('Content-Type','application/json');
- if(req.url?.startsWith('/search'))res.end(JSON.stringify(new URL(req.url,'http://127.0.0.1').searchParams.get('q')?.startsWith('Lambar')?[{display_name:'Lambar\u00e9, Central, Paraguay',place_rank:16,lat:-25.3455354,lon:-57.6261456}]:[{display_name:'Destino QA, Paraguay',lat:-25.31,lon:-57.61}]));
+ if(req.url?.startsWith('/search')){const q=new URL(req.url,'http://127.0.0.1').searchParams.get('q')??'';res.end(JSON.stringify(q.startsWith('Lambar')?[{display_name:'Lambaré, Central, Paraguay',place_rank:16,lat:-25.3455354,lon:-57.6261456}]:q.includes('Centro')?[]:[{display_name:'Avenida Mariscal Estigarribia, San Lorenzo, Paraguay',place_rank:26,lat:-25.3443204,lon:-57.5145034,boundingbox:[-25.35,-25.34,-57.52,-57.51]}]));}
  else{const n=(req.url?.split('/driving/')[1]?.split('?')[0]??'').split(';').length;res.end(JSON.stringify({code:'Ok',durations:Array.from({length:n},(_,i)=>Array.from({length:n},(_,j)=>i===j?0:60))}));}
 }).listen(35099,'127.0.0.1');
 process.env.ROUTING_OSRM_URL='http://127.0.0.1:35099';process.env.ROUTING_NOMINATIM_URL='http://127.0.0.1:35099';

@@ -1,5 +1,6 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {z} from 'zod';
+import {searchAddress} from './address-search.ts';
 import type {Database,Row} from './database.ts';
 import {authorize,type Actor} from './auth.ts';
 import {ensure} from './errors.ts';
@@ -48,7 +49,7 @@ export class Routing {
    return {id:b.id};
   });
  }
- async search(actor:Actor,input:unknown){authorize(actor,roles);const b=z.object({address:z.string().trim().min(3).max(2048)}).parse(input);if(/^https?:\/\//i.test(b.address))return resolveMapsLink(b.address);ensure(b.address.length<=500,'VALIDATION_ERROR','La dirección es demasiado larga.');return await resolvePlusCode(b.address,query=>this.providers.search(query))??this.providers.search(b.address);}
+ async search(actor:Actor,input:unknown):Promise<Row[]>{authorize(actor,roles);const b=z.object({address:z.string().trim().min(3).max(2048)}).parse(input);if(/^https?:\/\//i.test(b.address))return resolveMapsLink(b.address);ensure(b.address.length<=500,'VALIDATION_ERROR','La dirección es demasiado larga.');return await resolvePlusCode(b.address,query=>this.providers.search(query))??searchAddress(b.address,query=>this.providers.search(query));}
  async suggest(actor:Actor,input:unknown){
   authorize(actor,roles);const b=inputSchema.parse(input);
   const fleet=[];
@@ -66,7 +67,7 @@ export class Routing {
    if(saved)continue;
    const reused=await this.store.one("SELECT latitude,longitude FROM routing_points WHERE org_id=? AND entity_kind='ORDER' AND address=? LIMIT 1",actor.orgId,order.destination);
    let match=reused;
-   if(!match){try{const matches=await this.search(actor,{address:order.destination});if(matches.length===1&&matches[0].addressRank>=30)match=matches[0];}catch{/* Keep the order pending for location review. */}}
+   if(!match){try{const matches=await this.search(actor,{address:order.destination});if(matches.length===1&&matches[0].addressRank>=30&&!matches[0].approximate)match=matches[0];}catch{/* Keep the order pending for location review. */}}
    if(match)await this.point(actor,{commandId:randomUUID(),kind:'ORDER',id:order.id,latitude:match.latitude,longitude:match.longitude});
   }
   return this.preview(actor,{...b,fleet});

@@ -41,6 +41,8 @@ test('private routing schema on PostgreSQL runtime role applies once and reconci
   await inv.reserveOrder(actor,extra,cmd());
   const appended=await dispatch.organize(actor,{...request,commandId:randomUUID()});assert.equal(appended.organized,1);assert.equal(appended.routes[0].id,routeId);
   assert.equal((await db.one('SELECT status FROM inventory_orders WHERE id=?',order))!.status,'LOADED');
+  const board=await dispatch.board(actor,request.date);assert.equal(board.orders.length,0);assert.equal(board.routes.length,1);assert.equal(board.routes[0].orders.length,2);
+  assert.equal(board.routes[0].orders.find((o:any)=>o.id===order).loaded,2);assert.equal(board.routes[0].orders.find((o:any)=>o.id===extra).pendingLoad,1);assert.equal(board.routes[0].orders[0].lines[0].sku,'PG');
 
   assert.equal((await db.one('SELECT COUNT(*) AS n FROM routes WHERE org_id=?',actor.orgId))!.n,1);
   assert.equal((await reconcileInventory(db,actor)).ok,true);

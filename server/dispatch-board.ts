@@ -1,0 +1,30 @@
+import type {Database,Row} from './database.ts';
+import type {Actor} from './auth.ts';
+import {ensure} from './errors.ts';
+export async function orderLines(db:Database,actor:Actor,ids:string[]){
+ if(!ids.length)return [];
+ return db.all(`SELECT l.order_id,p.name,p.sku,l.quantity FROM inventory_order_lines l JOIN inventory_products p ON p.id=l.product_id AND p.org_id=l.org_id WHERE l.org_id=? AND l.order_id IN(${ids.map(()=>'?').join(',')}) ORDER BY l.order_id,l.id`,actor.orgId,...ids);
+}
+/** Read the actual assignments, rather than relying on a previous browser response. */
+export async function dispatchBoard(db:Database,actor:Actor,queue:Row){
+ const rows=await db.all(`SELECT r.id AS route_id,r.name AS route_name,r.state AS route_state,r.start_at,r.end_at,v.plate,d.name AS driver_name,sh.id AS shipment_id,COALESCE(o.id,sh.id) AS order_id,COALESCE(o.external_id,sh.reference) AS reference,sh.recipient_name,sh.destination_text AS destination,c.name AS client_name,s.sequence,s.kind,o.status AS order_status,p.state AS parcel_state,p.weight_grams,p.volume_cm3,pr.sku AS product_sku,pr.name AS product_name
+ FROM routes r JOIN vehicles v ON v.id=r.vehicle_id AND v.org_id=r.org_id JOIN drivers d ON d.id=r.driver_id AND d.org_id=r.org_id JOIN route_assignments a ON a.route_id=r.id AND a.org_id=r.org_id AND a.active=1 JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id JOIN shipments sh ON sh.id=p.shipment_id AND sh.org_id=p.org_id JOIN clients c ON c.id=sh.client_id AND c.org_id=sh.org_id LEFT JOIN inventory_orders o ON o.shipment_id=sh.id AND o.org_id=sh.org_id LEFT JOIN inventory_order_parcels op ON op.parcel_id=p.id AND op.org_id=p.org_id LEFT JOIN inventory_products pr ON pr.id=op.product_id AND pr.org_id=op.org_id LEFT JOIN stops s ON s.route_id=r.id AND s.org_id=r.org_id AND s.shipment_id=sh.id AND s.kind=CASE WHEN a.pickup=1 THEN 'PICKUP' ELSE 'DELIVERY' END
+ WHERE r.org_id=? AND r.state IN('DRAFT','READY','IN_PROGRESS') ORDER BY r.start_at DESC,r.id,s.sequence,p.id LIMIT 10001`,actor.orgId);
+ ensure(rows.length<=10000,'BOARD_LIMIT','Hay demasiados bultos en rutas activas. Cerrá los repartos terminados para consultar la organización.');
+ const routes=new Map<string,Row>(),orders=new Map<string,Row>();
+ for(const row of rows){
+  if(!routes.has(row.route_id))routes.set(row.route_id,{id:row.route_id,name:row.route_name,state:row.route_state,plate:row.plate,driverName:row.driver_name,startAt:row.start_at,endAt:row.end_at,capacityUnverified:false,orders:[]});
+  if(row.weight_grams==null||row.volume_cm3==null)routes.get(row.route_id)!.capacityUnverified=true;
+  const key=`${row.route_id}:${row.shipment_id}:${row.kind}`;
+  if(!orders.has(key)){const order={id:row.order_id,reference:row.reference,recipientName:row.recipient_name,destination:row.destination,clientName:row.client_name,sequence:row.sequence,kind:row.kind,status:row.order_status,lines:[],units:0,pendingLoad:0,loaded:0,delivered:0};orders.set(key,order);routes.get(row.route_id)!.orders.push(order);}
+  const order=orders.get(key)!;order.units++;if(['EXPECTED','RECEIVED'].includes(row.parcel_state))order.pendingLoad++;if(['LOADED','IN_TRANSIT','RETURN_PENDING'].includes(row.parcel_state))order.loaded++;if(row.parcel_state==='DELIVERED')order.delivered++;
+  if(row.product_sku){const line=order.lines.find((l:Row)=>l.sku===row.product_sku);if(line)line.quantity++;else order.lines.push({name:row.product_name,sku:row.product_sku,quantity:1});}
+ }
+ const points=await db.all("SELECT entity_kind,entity_id,address,latitude,longitude FROM routing_points WHERE org_id=?",actor.orgId);
+ const last=await db.one("SELECT i.response FROM idempotency i JOIN audit a ON a.org_id=i.org_id AND a.command_id=i.command_id WHERE i.org_id=? AND i.operation='routing.organizeReserved' ORDER BY a.created_at DESC,a.id DESC LIMIT 1",actor.orgId);
+ const previous:Row[]=last?JSON.parse(last.response).pending??[]:[];
+ return {...queue,orders:queue.orders.map((order:Row)=>{
+  const point=points.find(p=>p.entity_kind==='ORDER'&&p.entity_id===order.id&&p.address===order.destination),oldReason=previous.find(p=>p.id===order.id)?.reason;
+  return {...order,point:point??null,reason:oldReason&&!(point&&oldReason.includes('ubicación del destinatario'))?oldReason:point?'Listo para organizar':'Ubicación por confirmar'};
+ }),routes:[...routes.values()]};
+}
