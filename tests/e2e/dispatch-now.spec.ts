@@ -1,7 +1,7 @@
 import {test,expect} from '@playwright/test';
 import {randomUUID} from 'node:crypto';
 
-test('loaded draft dispatches now from its own screen, saves inspection there and ignores the future schedule',async({page})=>{
+test('loaded route must be confirmed before it can dispatch now, with checklist and future schedule',async({page})=>{
  const send=async(path:string,data:Record<string,unknown>)=>{const response=await page.request.post(path,{headers:{'X-Requested-With':'logistics-os'},data:{commandId:randomUUID(),...data}});expect(response.ok(),await response.text()).toBeTruthy();return response.json();};
  const session=await(await page.request.get('/api/session')).json();
  if(session.setupRequired)await send('/api/setup',{organizationName:'QA salida inmediata',timezone:'America/Asuncion',username:'qa-browser',password:'QA-Browser-Isolated-2026!'});else await send('/api/login',{username:'qa-browser',password:'QA-Browser-Isolated-2026!'});
@@ -28,7 +28,11 @@ test('loaded draft dispatches now from its own screen, saves inspection there an
  await page.goto('/');await page.getByRole('button',{name:'Rutas',exact:true}).click();
  await page.getByRole('searchbox',{name:'Buscar ruta',exact:true}).fill(suffix);
  await page.getByRole('button',{name:new RegExp(routeName)}).click();
+ await expect(page.getByRole('button',{name:'Despachar ahora',exact:true})).toHaveCount(0);
+ await page.getByRole('button',{name:'Confirmar ruta',exact:true}).click();
+ await expect.poll(async()=> (await routeDetail()).state).toBe('READY');
  const departure=page.getByRole('button',{name:'Despachar ahora',exact:true});
+ await expect(page.getByRole('region',{name:'Próximo paso de la ruta'}).getByRole('button',{name:'Despachar ahora',exact:true})).toBeVisible();
  await expect(departure).toBeVisible();await expect(departure).toBeEnabled();
  await page.screenshot({path:'.local/dispatch-now-loaded-desktop.png',fullPage:true});
  await page.setViewportSize({width:390,height:844});
@@ -38,7 +42,7 @@ test('loaded draft dispatches now from its own screen, saves inspection there an
  await departure.click();
  await expect(page.getByRole('alert')).toContainText('checklist');
  await expect(page.getByRole('button',{name:'Control de salida',exact:true})).toHaveAttribute('aria-pressed','true');
- expect((await routeDetail()).state).toBe('DRAFT');expect((await routeDetail()).startAt).toBe(scheduledStart);
+ expect((await routeDetail()).state).toBe('READY');expect((await routeDetail()).startAt).toBe(scheduledStart);
  expect((await detail()).status).toBe('LOADED');
  await page.getByRole('spinbutton',{name:'Odómetro observado',exact:true}).fill('0');
  await page.getByRole('spinbutton',{name:'Combustible (%)',exact:true}).fill('75');
@@ -51,7 +55,7 @@ test('loaded draft dispatches now from its own screen, saves inspection there an
  expect(Date.parse(departed.startAt)).toBeGreaterThanOrEqual(before);
  expect(Date.parse(departed.startAt)).toBeLessThanOrEqual(Date.now());
  expect(Date.parse(departed.endAt)-Date.parse(departed.startAt)).toBe(7200000);
- expect((await detail()).status).toBe('IN_TRANSIT');expect(readyRequests).toEqual([]);
+ expect((await detail()).status).toBe('IN_TRANSIT');expect(readyRequests).toHaveLength(1);
  await page.getByRole('button',{name:'Registrar resultado de entrega',exact:true}).click();
  await page.getByRole('checkbox',{name:'Entregado',exact:true}).check();
  await page.getByRole('textbox',{name:'Nombre de quien recibe',exact:true}).fill('Receptor QA');

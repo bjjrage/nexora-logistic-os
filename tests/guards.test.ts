@@ -124,31 +124,31 @@ test('Despachar ahora rechaza un checklist antiguo y conserva la ventana program
     await assert.rejects(f.d.dispatch(f.actor,r,{...f.cmd(),expectedVersion:await f.version(r),dispatchNow:true}),(e:any)=>e.code==='INVALID_TRANSITION'&&e.message.includes('24 horas'));
     const saved=await f.d.route(r,f.actor);assert.equal(saved.state,'READY');assert.equal(saved.start_at,start);assert.equal(saved.end_at,end);
 });
-test('Despachar ahora confirma una ruta cargada en una sola operación y conserva el borrador si falla un control',async t=>{
+test('Despachar ahora exige confirmar la ruta y conserva el borrador y la carga',async t=>{
     const f=await fixture(t),{r,s}=await f.loaded();
     const start=new Date(Date.now()+7200000).toISOString(),end=new Date(Date.now()+10800000).toISOString();
     await f.store.run("UPDATE routes SET state='DRAFT',start_at=?,end_at=? WHERE id=?",start,end,r);
     await f.store.run('UPDATE inspections SET created_at=? WHERE vehicle_id=?',new Date(Date.now()-90000000).toISOString(),f.vehicle);
     const version=await f.version(r);
-    await assert.rejects(f.d.dispatch(f.actor,r,{...f.cmd(),expectedVersion:version,dispatchNow:true}),(e:any)=>e.message.includes('24 horas'));
+    await assert.rejects(f.d.dispatch(f.actor,r,{...f.cmd(),expectedVersion:version,dispatchNow:true}),(e:any)=>e.message.includes('confirmá la ruta'));
     const unchanged=await f.d.route(r,f.actor);
     assert.equal(unchanged.state,'DRAFT');assert.equal(unchanged.start_at,start);assert.equal(unchanged.version,version);
     assert.equal((await f.store.one('SELECT state FROM parcels WHERE id=?',s.parcels[0].id))!.state,'LOADED');
-    await f.inspect();
-    const input={...f.cmd(),expectedVersion:version,dispatchNow:true};
+    await f.inspect();await f.d.ready(f.actor,r,{...f.cmd(),expectedVersion:version});
+    const input={...f.cmd(),expectedVersion:await f.version(r),dispatchNow:true};
     const result=await f.d.dispatch(f.actor,r,input);
     assert.deepEqual(await f.d.dispatch(f.actor,r,input),result);
-    assert.equal(result.state,'IN_PROGRESS');assert.equal(result.version,version+1);
+    assert.equal(result.state,'IN_PROGRESS');assert.equal(result.version,version+2);
     assert.equal(result.previousStartAt,start);
     assert.equal((await f.store.one('SELECT state FROM parcels WHERE id=?',s.parcels[0].id))!.state,'IN_TRANSIT');
 });
-test('un chofer no confirma un borrador al despachar y la carga pendiente sigue bloqueando la salida inmediata',async t=>{
+test('ningún usuario despacha una ruta en borrador, incluida una con carga pendiente',async t=>{
     const f=await fixture(t),{r,s}=await f.loaded();
     await f.store.run("UPDATE routes SET state='DRAFT' WHERE id=?",r);
     const driver={...f.actor,role:'DRIVER' as const,driverId:f.driver};
-    await assert.rejects(f.d.dispatch(driver,r,{...f.cmd(),expectedVersion:await f.version(r),dispatchNow:true}),{code:'FORBIDDEN'});
+    await assert.rejects(f.d.dispatch(driver,r,{...f.cmd(),expectedVersion:await f.version(r),dispatchNow:true}),{code:'INVALID_TRANSITION'});
     await f.d.unload(f.actor,r,{...f.cmd(),expectedVersion:await f.version(r),parcelId:s.parcels[0].id});
-    await assert.rejects(f.d.dispatch(f.actor,r,{...f.cmd(),expectedVersion:await f.version(r),dispatchNow:true}),(e:any)=>e.message.includes('faltan bultos por cargar'));
+    await assert.rejects(f.d.dispatch(f.actor,r,{...f.cmd(),expectedVersion:await f.version(r),dispatchNow:true}),(e:any)=>e.message.includes('confirmá la ruta'));
     assert.equal((await f.d.route(r,f.actor)).state,'DRAFT');
 });
 test('Despachar ahora rechaza un vehículo ocupado y conserva el horario de la ruta futura',async t=>{

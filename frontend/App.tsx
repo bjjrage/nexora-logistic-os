@@ -995,13 +995,13 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
           {selectedRoute.state === 'READY' && (new Date(selectedRoute.startAt).getTime() > Date.now()||new Date(selectedRoute.endAt).getTime() < Date.now()) && <p className="muted">Al despachar ahora, el horario se actualizará automáticamente. Necesitás un checklist registrado en las últimas 24 horas.</p>}
           <div className="button-row">
             {capacityIncomplete && <p className="muted">Hay bultos sin peso o volumen. Podés continuar; la capacidad total no está verificada.</p>}
-            {canOperateRoad && (selectedRoute.state === "READY"||selectedRoute.state==='DRAFT'&&canPlan) && <button className="button button-primary" disabled={busy||pendingLoadCount>0||!routeParcels.length} onClick={() => simpleRouteAction("dispatch", "Salida de ruta registrada.")}>Despachar ahora</button>}
             {canOperateRoad && selectedRoute.state === "IN_PROGRESS" && <button className="button button-secondary" disabled={busy} onClick={() => simpleRouteAction("close", "Cierre de ruta solicitado.")}>Cerrar ruta</button>}
           </div>
           {['DRAFT','READY'].includes(selectedRoute.state)&&<section className="route-next-step" aria-label="Próximo paso de la ruta">
-            <p className="muted">Reservar pedido → Cargar vehículo → Control de salida → Despachar ahora</p>
-            <p role="status">{!routeParcels.length?'Agregá los artículos reservados que vas a llevar en esta ruta.':pendingLoadCount>0?`Falta cargar ${pendingLoadCount} bulto(s). La ruta se confirma después de cargar el vehículo.`:selectedRoute.state==='DRAFT'?canPlan?'Podés despachar ahora: la ruta se confirma al registrar la salida. Revisá Paradas y el control de salida.':'Carga lista. Coordinación logística debe confirmar la ruta.':'Ruta confirmada. Completá el control de salida y despachá.'}</p>
-            {canPlan&&selectedRoute.state==='DRAFT'&&<button type="button" className="button button-secondary" disabled={busy||pendingLoadCount>0||!routeParcels.length} onClick={()=>void simpleRouteAction('ready','Ruta confirmada. Continuá con el control de salida.')}>Confirmar ruta</button>}
+            <p className="muted">Reservar pedido → Cargar vehículo → Confirmar ruta → Control de salida → Despachar ahora</p>
+            <p role="status">{!routeParcels.length?'Agregá los artículos reservados que vas a llevar en esta ruta.':pendingLoadCount>0?`Falta cargar ${pendingLoadCount} bulto(s). La ruta se confirma después de cargar el vehículo.`:selectedRoute.state==='DRAFT'?canPlan?'Carga completa. Revisá las paradas y confirmá la ruta.':'Carga lista. Coordinación logística debe confirmar la ruta.':'Ruta confirmada. Completá el control de salida y despachá.'}</p>
+            {canPlan&&selectedRoute.state==='DRAFT'&&<button type="button" className="button button-primary" disabled={busy||pendingLoadCount>0||!routeParcels.length} onClick={()=>void simpleRouteAction('ready','Ruta confirmada. Continuá con el control de salida.')}>Confirmar ruta</button>}
+            {canOperateRoad&&selectedRoute.state==='READY'&&<button type="button" className="button button-primary" disabled={busy||pendingLoadCount>0||!routeParcels.length} onClick={()=>void simpleRouteAction('dispatch','Salida de ruta registrada.')}>Despachar ahora</button>}
             {!canPlan&&selectedRoute.state==='DRAFT'&&routeParcels.length>0&&pendingLoadCount===0&&<p className="muted">La carga está lista. Coordinación logística debe confirmar la ruta.</p>}
           </section>}
           <nav className="workspace-tabs route-task-tabs" aria-label="Tareas de la ruta">
@@ -1041,7 +1041,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
                 </div>
               </fieldset>
               <div className="button-row"><button className="button button-secondary" disabled={busy || !driverInspectionOdometer || !driverFuelPercent || driverInspectionItems.every((item) => !item.label.trim())}>Guardar checklist</button>
-              {['DRAFT','READY'].includes(selectedRoute.state)&&<button className="button button-primary" type="submit" name="departureAction" value="dispatch-now" disabled={busy||pendingLoadCount>0||!routeParcels.length||!driverInspectionOdometer||!driverFuelPercent||driverInspectionItems.every(item=>!item.label.trim())}>Guardar checklist y despachar ahora</button>}</div>
+              {selectedRoute.state==='READY'&&<button className="button button-primary" type="submit" name="departureAction" value="dispatch-now" disabled={busy||pendingLoadCount>0||!routeParcels.length||!driverInspectionOdometer||!driverFuelPercent||driverInspectionItems.every(item=>!item.label.trim())}>Guardar checklist y despachar ahora</button>}</div>
             </form>}
           </Panel>}
           {canPlan && selectedRoute.state === "DRAFT" && routeTab === "stops" && stops.length > 1 && <TaskDisclosure label="Cambiar orden de paradas"><StopOrderEditor key={selectedRoute.id} stops={stops} route={selectedRoute} action={action} busy={busy} shipmentLabel={id=>data.shipments.find(shipment=>shipment.id===id)?.reference??"Envío"} /></TaskDisclosure>}

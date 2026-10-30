@@ -49,7 +49,7 @@ test('PostgreSQL: agregar un segundo pedido a una ruta confirmada conserva la ca
   const location=(await inv.createLocation(actor,{...cmd(),code:'DEP',name:'Depósito'})).id;
   const product=(await inv.createProduct(actor,{...cmd(),clientId:client,sku:'MULTI',name:'Artículo',tracking:'QUANTITY',weightGrams:100,volumeCm3:100})).id;
   await inv.receive(actor,{...cmd(),clientId:client,productId:product,locationId:location,quantity:2});
-  const parcels=[];
+  const parcels:string[]=[];
   for(let i=0;i<2;i++){
    const order=(await inv.createOrder(actor,{...cmd(),clientId:client,externalId:'QA-'+i,orderDate:'2026-10-28',destination:'Destino',recipientName:'Receptor',lines:[{productId:product,quantity:1}]})).id;
    parcels.push((await inv.reserveOrder(actor,order,cmd())).parcels[0].id);
@@ -70,6 +70,8 @@ test('PostgreSQL: agregar un segundo pedido a una ruta confirmada conserva la ca
   await domain.inspect(actor,vehicle,{...cmd(),odometer:0,fuelPercent:90,items:[{label:'Control QA',severity:'OK',note:''}]});
   const futureStart=new Date(Date.now()+7200000).toISOString(),futureEnd=new Date(Date.now()+10800000).toISOString();
   await db.run('UPDATE routes SET start_at=?,end_at=? WHERE id=?',futureStart,futureEnd,route);
+  await assert.rejects(domain.dispatch(actor,route,{...cmd(),expectedVersion:await version(),dispatchNow:true}),{code:'INVALID_TRANSITION'});
+  await domain.ready(actor,route,{...cmd(),expectedVersion:await version()});
   const departure=await domain.dispatch(actor,route,{...cmd(),expectedVersion:await version(),dispatchNow:true});
   assert.equal(departure.previousStartAt,futureStart);assert.equal((await domain.route(route,actor)).state,'IN_PROGRESS');
   const stop=(await db.one('SELECT id FROM stops WHERE route_id=? ORDER BY sequence',route))!;

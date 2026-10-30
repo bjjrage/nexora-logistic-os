@@ -357,9 +357,7 @@ export class Logistics {
     async dispatch(actor: Actor, id: string, b: Row) {
         return await this.command(actor, `routes.${id}.dispatch`, b, ROAD, async () => {
             const r = await this.route(id, actor, b.expectedVersion);
-            const confirmOnDeparture=r.state==='DRAFT'&&b.dispatchNow===true;
-            if(confirmOnDeparture)authorize(actor,OPS);
-            ensure(r.state === 'READY'||confirmOnDeparture, 'INVALID_TRANSITION', 'La ruta debe estar lista.');
+            ensure(r.state === 'READY', 'INVALID_TRANSITION', 'Primero confirmá la ruta antes de despachar.');
             const dispatchAt=now();
             const outsideWindow=dispatchAt<r.start_at||dispatchAt>r.end_at;
             ensure(!outsideWindow||b.dispatchNow===true, 'INVALID_TRANSITION', 'El despacho está fuera de la ventana de trabajo. Usá Despachar ahora.');

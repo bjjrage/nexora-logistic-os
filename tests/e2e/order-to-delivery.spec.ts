@@ -39,7 +39,7 @@ test('reserve → assign → route load → inspection → delivery stays in the
  await expect(page.getByRole('button',{name:/Cargar artículos \(2\)/})).toHaveAttribute('aria-pressed','true');
  await expect(page.getByRole('button',{name:'Preparar ruta',exact:true})).toHaveCount(0);
  await expect(page.getByRole('button',{name:'Confirmar ruta',exact:true})).toBeDisabled();
- await expect(page.getByRole('button',{name:'Despachar ahora',exact:true})).toBeDisabled();
+ await expect(page.getByRole('button',{name:'Despachar ahora',exact:true})).toHaveCount(0);
  expect((await orderDetail()).status).toBe('RESERVED');
  await quantities({'Pedido':2,'Disponible para reservar':1,'Reservado en depósito':2,'Cargado en vehículo':0});
  const load=page.getByRole('region',{name:'Carga del vehículo',exact:true});
