@@ -28,12 +28,16 @@ async function fixture(t:any,real=false){
   const id=(await inv.createOrder(actor,{...cmd(),clientId:client,externalId:'PLAN-'+i,orderDate:'2026-10-29',destination:'Destino '+i,recipientName:'Receptor '+i,lines:[{productId:product,quantity:2}]})).id;orders.push(id);
   await routing.point(actor,{...cmd(),kind:'ORDER',id,latitude:-25.31+i*.01,longitude:-57.61});
  }
+ // Imports may create all orders at the same millisecond. Priority follows insertion order.
+ await db.run('UPDATE inventory_orders SET created_at=? WHERE org_id=?','2026-10-29T00:00:00.000Z',actor.orgId);
  const input={date:'2026-10-29',locationId:location,startAt:'2026-10-29T08:00:00.000Z',endAt:'2026-10-29T18:00:00.000Z',fleet:[{vehicleId:vehicle,driverId:driver}]};
  return {db,actor,d,inv,routing,orders,input,client,product,location,vehicle,driver,providers};
 }
 test('planner allocates shared stock once, applies atomically, preserves physical load and supports unreserve',async t=>{
  const f=await fixture(t),proposal=await f.routing.preview(f.actor,f.input);
  assert.equal(proposal.routes.length,1);assert.equal(proposal.routes[0].stops.length,1);assert.equal(proposal.pending.length,1);
+ assert.equal(proposal.routes[0].stops[0].orderId,f.orders[0]);
+ const selectedOrder=proposal.routes[0].stops[0].orderId;
  assert.equal((await f.db.one("SELECT SUM(quantity) AS n FROM inventory_balances WHERE status='AVAILABLE'"))!.n,3);
  const command={...cmd(),planId:proposal.id},result=await f.routing.apply(f.actor,command);
  assert.deepEqual(await f.routing.apply(f.actor,command),result);assert.deepEqual(await f.routing.apply(f.actor,{...cmd(),planId:proposal.id}),result);
@@ -43,9 +47,9 @@ test('planner allocates shared stock once, applies atomically, preserves physica
  await assert.rejects(f.d.dispatch(f.actor,routeId,{...cmd(),expectedVersion:route.version,dispatchNow:true}),{code:'INVALID_TRANSITION'});
  const parcels=await f.db.all('SELECT parcel_id FROM route_assignments WHERE route_id=? AND active=1',routeId);
  await f.d.loadSelected(f.actor,routeId,{...cmd(),expectedVersion:route.version,parcelIds:parcels.map(p=>p.parcel_id)});
- assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.orders[0]))!.status,'LOADED');
+ assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',selectedOrder))!.status,'LOADED');
  await f.d.unloadSelected(f.actor,routeId,{...cmd(),expectedVersion:(await f.d.route(routeId,f.actor)).version,parcelIds:parcels.map(p=>p.parcel_id)});
- await f.inv.unreserveOrder(f.actor,f.orders[0],cmd());
+ await f.inv.unreserveOrder(f.actor,selectedOrder,cmd());
  assert.equal((await f.db.one('SELECT COUNT(*) AS n FROM route_assignments WHERE active=1'))!.n,0);
  assert.equal((await f.db.one("SELECT SUM(quantity) AS n FROM inventory_balances WHERE status='AVAILABLE'"))!.n,3);
  assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
@@ -106,6 +110,7 @@ test('a failed application rolls back every route and reservation in the batch',
 });
 test('planned routes continue through load, confirmation, departure and delivery without a second load',async t=>{
  const f=await fixture(t),proposal=await f.routing.preview(f.actor,f.input),applied=await f.routing.apply(f.actor,{...cmd(),planId:proposal.id});
+ const selectedOrder=proposal.routes[0].stops[0].orderId;
  const id=applied.routes[0].id,version=async()=>(await f.d.route(id,f.actor)).version;
  const parcels=(await f.db.all('SELECT parcel_id FROM route_assignments WHERE route_id=?',id)).map(p=>p.parcel_id);
  await f.d.loadSelected(f.actor,id,{...cmd(),expectedVersion:await version(),parcelIds:parcels});
@@ -115,7 +120,7 @@ test('planned routes continue through load, confirmation, departure and delivery
  await f.db.run('INSERT INTO organization_test_mode VALUES(?,1)',f.actor.orgId);
  const stop=(await f.db.one('SELECT id FROM stops WHERE route_id=?',id))!;
  await f.d.attempt(f.actor,stop.id,{...cmd(),expectedVersion:await version(),deliveredParcelIds:parcels,failedParcelIds:[],receiverName:'Receptor QA',evidenceIds:[],reasonCode:'',nextAction:''});
- assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.orders[0]))!.status,'DELIVERED');
+ assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',selectedOrder))!.status,'DELIVERED');
  await f.d.closeRoute(f.actor,id,{...cmd(),expectedVersion:await version()});
  assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
 });

@@ -44,7 +44,7 @@ export class Routing {
  }
  async orders(actor:Actor,date:string,clientId?:string){
   authorize(actor,roles);z.iso.date().parse(date);if(clientId)z.uuid().parse(clientId);
-  const rows=await this.store.all(`SELECT o.*,c.name AS client_name,p.delivery_provider FROM inventory_orders o JOIN clients c ON c.id=o.client_id AND c.org_id=o.org_id LEFT JOIN client_delivery_policies p ON p.org_id=o.org_id AND p.client_id=o.client_id WHERE o.org_id=? AND o.order_date=? AND o.status IN('DRAFT','RESERVED') ${clientId?'AND o.client_id=?':''} AND NOT EXISTS(SELECT 1 FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id WHERE a.org_id=o.org_id AND p.shipment_id=o.shipment_id AND a.active=1) ORDER BY o.created_at,o.id LIMIT 81`,...[actor.orgId,date,...(clientId?[clientId]:[])]);
+  const rows=await this.store.all(`SELECT o.*,c.name AS client_name,p.delivery_provider FROM inventory_orders o JOIN clients c ON c.id=o.client_id AND c.org_id=o.org_id LEFT JOIN client_delivery_policies p ON p.org_id=o.org_id AND p.client_id=o.client_id WHERE o.org_id=? AND o.order_date=? AND o.status IN('DRAFT','RESERVED') ${clientId?'AND o.client_id=?':''} AND NOT EXISTS(SELECT 1 FROM route_assignments a JOIN parcels p ON p.id=a.parcel_id AND p.org_id=a.org_id WHERE a.org_id=o.org_id AND p.shipment_id=o.shipment_id AND a.active=1) ORDER BY o.created_at,o.rowid LIMIT 81`,...[actor.orgId,date,...(clientId?[clientId]:[])]);
   ensure(rows.length<=80,'PLAN_LIMIT','Hay más de 80 pedidos pendientes. Filtrá por cliente para planificar este lote.');
   return rows;
  }
