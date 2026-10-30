@@ -15,12 +15,10 @@ test('plan in Orders, locate destination, apply once and open physical loading i
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto('/');await page.getByRole('button',{name:'Empresa y equipo',exact:true}).click();
  const depots=page.getByRole('region',{name:'Depósitos de la empresa'});
- await depots.locator('summary').filter({hasText:'Ubicar en el mapa'}).click();
- await depots.getByLabel('Dirección para buscar').fill('Base QA, Paraguay');
- await depots.getByRole('button',{name:'Buscar dirección',exact:true}).click();
- await depots.getByRole('button',{name:'Destino QA, Paraguay',exact:true}).click();
- await depots.getByRole('button',{name:'Confirmar ubicación',exact:true}).click();
- await expect(depots.locator('summary').filter({hasText:'Revisar ubicación'})).toBeVisible();
+ await depots.getByLabel('Dirección, nombre del lugar o enlace de Google Maps').fill('Base QA, Paraguay');
+ await depots.getByRole('button',{name:'Buscar lugar',exact:true}).click();
+ await depots.getByRole('button',{name:/Destino QA, Paraguay/}).click();
+ await expect(depots.locator('summary').filter({hasText:'Cambiar lugar guardado'})).toBeVisible();
  await page.getByRole('button',{name:'Pedidos',exact:true}).click();
  await page.getByRole('button',{name:'Reservar pedido',exact:true}).click();
  const dialog=page.getByRole('dialog',{name:'Reserva y ruta'});
@@ -34,11 +32,9 @@ test('plan in Orders, locate destination, apply once and open physical loading i
  await expect(panel.locator('.routing-suggestions')).toContainText('PLAN-TEST');
  await expect(panel.locator('.routing-suggestions')).toContainText('Chofer browser');
  await panel.locator('summary').filter({hasText:'Destinatarios por ubicar'}).click();
- await panel.locator('summary').filter({hasText:'Ubicar en el mapa · PLAN-BROWSER'}).click();
- const editor=panel.locator('details').filter({has:page.locator('summary').filter({hasText:'Ubicar en el mapa · PLAN-BROWSER'})}).last();
- await editor.getByRole('button',{name:'Buscar dirección',exact:true}).click();
- await editor.getByRole('button',{name:'Destino QA, Paraguay',exact:true}).click();
- await editor.getByRole('button',{name:'Confirmar ubicación',exact:true}).click();
+ const editor=panel.locator('article').filter({hasText:'Receptor browser'}).locator('.routing-point-body');
+ await editor.getByRole('button',{name:'Buscar lugar',exact:true}).click();
+ await editor.getByRole('button',{name:/Destino QA, Paraguay/}).click();
 
  await expect(panel.getByRole('heading',{name:'Propuesta de reparto'})).toBeVisible({timeout:25000});
  await expect(panel.locator('.routing-route')).toContainText('PLAN-SKU × 2');

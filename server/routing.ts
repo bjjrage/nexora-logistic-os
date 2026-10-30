@@ -6,6 +6,7 @@ import {ensure} from './errors.ts';
 import {Logistics} from './domain.ts';
 import {Inventory} from './inventory.ts';
 import {routingProviders,type RoutingProviders} from './routing-providers.ts';
+import {resolveMapsLink} from './maps-link.ts';
 const roles:Actor['role'][]=['ADMIN','OPERATIONS'];
 const timestamp=()=>new Date().toISOString();
 const digest=(data:unknown)=>createHash('sha256').update(JSON.stringify(data)).digest('hex');
@@ -46,7 +47,7 @@ export class Routing {
    return {id:b.id};
   });
  }
- async search(actor:Actor,input:unknown){authorize(actor,roles);const b=z.object({address:z.string().trim().min(3).max(500)}).parse(input);return this.providers.search(b.address);}
+ async search(actor:Actor,input:unknown){authorize(actor,roles);const b=z.object({address:z.string().trim().min(3).max(2048)}).parse(input);if(/^https?:\/\//i.test(b.address))return resolveMapsLink(b.address);ensure(b.address.length<=500,'VALIDATION_ERROR','La dirección es demasiado larga.');return this.providers.search(b.address);}
  async suggest(actor:Actor,input:unknown){
   authorize(actor,roles);const b=inputSchema.parse(input);
   const fleet=[];

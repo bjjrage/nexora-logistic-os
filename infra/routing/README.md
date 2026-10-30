@@ -4,6 +4,8 @@ Pedidos → botón Organizar pedidos, dentro de la lista → revisar sugerencias
 
 El depósito y la flota se recuperan del último cálculo; el chofer del camión se recupera de sus rutas, validando acceso y disponibilidad. Si solo existe un camión y un chofer disponibles se propone esa pareja. La pantalla permite cambiar la selección sin salir. El servidor excluye camiones/choferes comprometidos y vehículos con bultos a bordo. Se pueden seleccionar pedidos de todas las páginas de la fecha y cliente elegidos; aplicar afecta solo a esa selección. El límite sigue siendo 80 pedidos por cálculo.
 
+El registro de ubicaciones abre directamente el buscador por dirección/nombre y ciudad. Seleccionar un resultado guarda el punto sin pedir coordenadas ni arrastrar el mapa. Para etiquetas exclusivas de Google Maps hay un enlace de búsqueda y se puede pegar el enlace Compartir: se acepta el punto explícito del lugar o una búsqueda con coordenadas, expandiendo enlaces cortos únicamente dentro de dominios de Maps permitidos. Los enlaces que contienen solo un Place ID o el centro de la cámara no se convierten en coordenadas inventadas. El catálogo de Google Places no se replica en Nominatim. El mapa manual queda como ajuste opcional.
+
 Las direcciones exactas ya confirmadas se reutilizan dentro de la empresa. La búsqueda automática únicamente acepta una coincidencia de dirección con rango Nominatim de edificio; calles o localidades ambiguas quedan para revisión. La carga cartográfica usa Referer de origen, conforme a la política del proveedor de imágenes; OSRM/Nominatim privados no suministran esas imágenes.
 
 ## Operación
