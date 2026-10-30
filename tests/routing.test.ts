@@ -33,6 +33,20 @@ async function fixture(t:any,real=false){
  const input={date:'2026-10-29',locationId:location,startAt:'2026-10-29T08:00:00.000Z',endAt:'2026-10-29T18:00:00.000Z',fleet:[{vehicleId:vehicle,driverId:driver}]};
  return {db,actor,d,inv,routing,orders,input,client,product,location,vehicle,driver,providers};
 }
+test('inline suggestions remember fleet, restrict selected orders and never reserve unselected stock',async t=>{
+ const f=await fixture(t);
+ const defaults=(await f.routing.context(f.actor)).defaults;
+ assert.equal(defaults.locationId,f.location);assert.deepEqual(defaults.fleet,f.input.fleet);
+ const proposal=await f.routing.suggest(f.actor,{...f.input,orderIds:[f.orders[1]]});
+ assert.deepEqual(proposal.routes.flatMap((r:any)=>r.stops.map((s:any)=>s.orderId)),[f.orders[1]]);
+ const result=await f.routing.apply(f.actor,{...cmd(),planId:proposal.id});
+ assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.orders[0]))!.status,'DRAFT');
+ assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.orders[1]))!.status,'RESERVED');
+ assert.deepEqual((await f.routing.context(f.actor)).defaults.fleet,f.input.fleet);
+ await assert.rejects(f.routing.suggest(f.actor,{...f.input,orderIds:[f.orders[0]]}),{code:'VEHICLE_BUSY'});
+ assert.equal((await f.db.one('SELECT COUNT(*) AS n FROM routes'))!.n,result.routes.length);
+});
+
 test('planner allocates shared stock once, applies atomically, preserves physical load and supports unreserve',async t=>{
  const f=await fixture(t),proposal=await f.routing.preview(f.actor,f.input);
  assert.equal(proposal.routes.length,1);assert.equal(proposal.routes[0].stops.length,1);assert.equal(proposal.pending.length,1);

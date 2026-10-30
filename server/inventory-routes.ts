@@ -19,6 +19,7 @@ export function installInventoryRoutes(app: Express, store: Database, auth: Inve
   const catalog = new CatalogImport(store);
   const receipts = new StockReceipts(store);
   const routing = new Routing(store);
+  app.post('/api/routing/suggest',async(req,res)=>{const actor=await auth(req) as Actor;res.json(await relayRouting(req,actor,store.kind,'/suggest')??await routing.suggest(actor,req.body));});
   app.get('/api/routing/context',async(req,res)=>{const actor=await auth(req) as Actor;res.json(await relayRouting(req,actor,store.kind,'/context')??await routing.context(actor));});
   app.get('/api/routing/orders',async(req,res)=>res.json(await routing.orders(await auth(req) as Actor,String(req.query.date??''),queryString(req.query.clientId))));
   app.post('/api/routing/points',async(req,res)=>res.json(await routing.point(await auth(req) as Actor,req.body)));

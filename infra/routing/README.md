@@ -1,6 +1,10 @@
 # Ruteo propio de Nexora
 
-Primera versión asistida: Pedidos → Organizar reparto → Calcular reparto → Aplicar reparto → Abrir carga. El cálculo usa OR-Tools real, matriz vial de OSRM y ubicaciones confirmadas. No existe una dependencia de Geoapify ni una clave comercial. Traccar mantiene el seguimiento real.
+Pedidos → botón Organizar pedidos, dentro de la lista → revisar sugerencias → Confirmar reparto → Abrir carga. La reserva individual muestra el mismo cálculo y permite Reservar y asignar. No existe una pestaña adicional de planificación. El cálculo usa OR-Tools real, matriz vial de OSRM y ubicaciones confirmadas. Traccar mantiene el seguimiento real.
+
+El depósito y la flota se recuperan del último cálculo; el chofer del camión se recupera de sus rutas, validando acceso y disponibilidad. Si solo existe un camión y un chofer disponibles se propone esa pareja. La pantalla permite cambiar la selección sin salir. El servidor excluye camiones/choferes comprometidos y vehículos con bultos a bordo. Se pueden seleccionar pedidos de todas las páginas de la fecha y cliente elegidos; aplicar afecta solo a esa selección. El límite sigue siendo 80 pedidos por cálculo.
+
+Las direcciones exactas ya confirmadas se reutilizan dentro de la empresa. La búsqueda automática únicamente acepta una coincidencia de dirección con rango Nominatim de edificio; calles o localidades ambiguas quedan para revisión. La carga cartográfica usa Referer de origen, conforme a la política del proveedor de imágenes; OSRM/Nominatim privados no suministran esas imágenes.
 
 ## Operación
 

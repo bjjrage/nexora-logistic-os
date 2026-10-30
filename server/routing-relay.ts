@@ -2,7 +2,7 @@ import type {Request} from 'express';
 import {authorize,type Actor} from './auth.ts';
 import {DomainError,ensure} from './errors.ts';
 /** Local OS shares the operational DB/session store but cannot resolve Railway private DNS. */
-export async function relayRouting(req:Pick<Request,'headers'|'method'|'body'>,actor:Actor,kind:string,path:'/context'|'/search'|'/preview',destination=process.env.ROUTING_REMOTE_OS_URL,fetcher:typeof fetch=fetch){
+export async function relayRouting(req:Pick<Request,'headers'|'method'|'body'>,actor:Actor,kind:string,path:'/context'|'/search'|'/preview'|'/suggest',destination=process.env.ROUTING_REMOTE_OS_URL,fetcher:typeof fetch=fetch){
  if(!destination)return undefined;
  authorize(actor,['ADMIN','OPERATIONS']);
  ensure(kind==='postgres'&&process.env.NODE_ENV!=='production','ROUTING_CONFIGURATION','El enlace remoto de mapas es exclusivo del OS local con PostgreSQL.',503);

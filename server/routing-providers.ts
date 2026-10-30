@@ -27,6 +27,6 @@ export const routingProviders:RoutingProviders={
  async search(address){
   const url=service('ROUTING_NOMINATIM_URL');url.pathname=url.pathname.replace(/\/$/,'')+'/search';url.search=new URLSearchParams({q:address,format:'jsonv2',limit:'5',countrycodes:'py','accept-language':'es'}).toString();
   const rows=await json(url);ensure(Array.isArray(rows),'ROUTING_UNAVAILABLE','Respuesta inválida del buscador de direcciones.',503);
-  return rows.map((p:any)=>({name:p.display_name,latitude:Number(p.lat),longitude:Number(p.lon)})).filter((p:Point)=>Number.isFinite(p.latitude)&&Number.isFinite(p.longitude));
+  return rows.map((p:any)=>({name:p.display_name,latitude:Number(p.lat),longitude:Number(p.lon),addressRank:Number(p.place_rank??0),type:p.type})).filter((p:Point)=>Number.isFinite(p.latitude)&&Number.isFinite(p.longitude));
  }
 };
