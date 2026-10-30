@@ -78,6 +78,13 @@ test('planner detects occupied fleet and rejects malformed solver output before 
  await f.db.run("UPDATE routes SET state='IN_PROGRESS' WHERE id=?",route.id);
  await assert.rejects(f.routing.preview(f.actor,f.input),{code:'VEHICLE_BUSY'});
 });
+test('road matrix API validates scope, finite coordinates and bounded request size',async t=>{
+ const f=await fixture(t);
+ assert.deepEqual(await f.routing.matrix(f.actor,{points:[{latitude:-25.3,longitude:-57.6},{latitude:-25.31,longitude:-57.61}]}),[[0,60],[60,0]]);
+ await assert.rejects(f.routing.matrix({...f.actor,role:'CUSTOMER'},{points:[{latitude:-25,longitude:-57}]}),{code:'FORBIDDEN'});
+ await assert.rejects(f.routing.matrix(f.actor,{points:[{latitude:91,longitude:0}]}));
+ await assert.rejects(f.routing.matrix(f.actor,{points:Array.from({length:82},()=>({latitude:0,longitude:0}))}));
+});
 test('real OR-Tools respects full orders, windows and capacity',{skip:!process.env.ROUTING_PYTHON},async t=>{
  const f=await fixture(t,true),result=await f.routing.preview(f.actor,f.input);
  assert.equal(result.routes.length,1);assert.equal(result.routes[0].stops.length,1);

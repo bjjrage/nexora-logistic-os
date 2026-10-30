@@ -28,7 +28,7 @@ docker compose -f infra/routing/compose.yaml up -d osrm nominatim
 
 Esperar a que finalice la importación Nominatim; un contenedor encendido no significa que el buscador esté listo. Los puertos locales se limitan a loopback. No se debe publicar el PostgreSQL de Nominatim ni los servicios de mapas sin control de acceso.
 
-Configuración privada del servidor del OS:
+Configuración privada del servidor del OS (alternativamente, para una instancia local conectada a la misma base y sesiones, definir solamente `ROUTING_REMOTE_OS_URL=https://nexora-logistic-os.vercel.app` para usar los mapas privados a través del OS publicado):
 
 ```dotenv
 ROUTING_OSRM_URL=http://127.0.0.1:5000
@@ -45,6 +45,8 @@ Provisionar OSRM con datos preprocesados de Paraguay y Nominatim con volumen per
 Aplicar primero `supabase/migrations/20261030023844_automatic_routing.sql` (versión 19). Las tablas son privadas con RLS; únicamente el rol de servidor `nexora_runtime` tiene acceso, con autorización por organización y función en las APIs del OS. El rol GPS no recibe permisos. Después desplegar el servidor y frontend juntos. El código requiere la versión 19 en el arranque: no publicar el cambio sin aplicar antes la migración.
 
 ## Verificación
+
+`scripts/verify-routing-production.ts` permite verificar servicios reales, pantalla publicada y el circuito operativo en una transacción PostgreSQL que se revierte completa. Requiere `ROUTING_PRODUCTION_VERIFY=1`, la configuración privada existente del OS y Python con OR-Tools. Crea una identidad QA aislada temporal, la elimina al finalizar y guarda el reporte en `.local/routing-production-verification/`. No ejecuta entregas sobre pedidos operativos reales.
 
 ```powershell
 $env:ROUTING_PYTHON='<ruta al Python con OR-Tools>'
