@@ -3,3 +3,5 @@
 .routing-point-map{height:260px;width:100%;border-radius:8px;z-index:0}
 
 .routing-suggestions{display:flex;flex-wrap:wrap;gap:8px}.routing-suggestions>span{padding:8px 12px;background:#eef4fa;border:1px solid #cbd6e6;border-radius:8px;font-size:13px}.routing-order-choice{display:flex;gap:10px;padding:10px 14px;border-bottom:1px solid #d5deeb}.routing-order-choice small{display:block}.orders-screen>.card>.routing-panel{margin:16px 0;background:#f9fbfd}
+
+.place-picker{display:grid;gap:10px}.place-search-bar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end}.place-picker .routing-point-map{height:340px}.place-results{display:grid;gap:4px;max-height:200px;overflow:auto}.place-save-row{display:flex;gap:14px;align-items:center;justify-content:space-between}.place-save-row>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.place-save-row>button{flex-shrink:0}@media(max-width:600px){.place-picker .routing-point-map{height:280px}.place-save-row{align-items:stretch;flex-direction:column}}

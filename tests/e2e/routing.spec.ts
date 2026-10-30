@@ -15,10 +15,15 @@ test('plan in Orders, locate destination, apply once and open physical loading i
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto('/');await page.getByRole('button',{name:'Empresa y equipo',exact:true}).click();
  const depots=page.getByRole('region',{name:'Depósitos de la empresa'});
- await depots.getByLabel('Dirección, nombre del lugar o enlace de Google Maps').fill('Base QA, Paraguay');
- await depots.getByRole('button',{name:'Buscar lugar',exact:true}).click();
- await depots.getByRole('button',{name:/Destino QA, Paraguay/}).click();
- await expect(depots.locator('summary').filter({hasText:'Cambiar lugar guardado'})).toBeVisible();
+ await depots.getByLabel('Buscar ubicación').fill('J9XG+VVH, San Vicente & Aca Ver\u00e1, Lambar\u00e9');
+ await depots.getByRole('button',{name:'Buscar',exact:true}).click();
+ await expect(depots.locator('.leaflet-marker-icon')).toBeVisible();
+ await expect(depots.getByRole('button',{name:'Guardar ubicaci\u00f3n'})).toBeEnabled();
+ const searchPoint=(await(await page.request.get('/api/routing/context')).json()).points;expect(searchPoint).toHaveLength(0);
+ await depots.getByRole('region',{name:'Mapa para elegir ubicaci\u00f3n'}).click({position:{x:190,y:120}});
+ await page.screenshot({path:'.local/simple-picker.png',fullPage:true});
+ await depots.getByRole('button',{name:'Guardar ubicaci\u00f3n'}).click();
+ await expect(depots.getByText('Ubicaci\u00f3n guardada.',{exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Pedidos',exact:true}).click();
  await page.getByRole('button',{name:'Reservar pedido',exact:true}).click();
  const dialog=page.getByRole('dialog',{name:'Reserva y ruta'});
@@ -32,9 +37,10 @@ test('plan in Orders, locate destination, apply once and open physical loading i
  await expect(panel.locator('.routing-suggestions')).toContainText('PLAN-TEST');
  await expect(panel.locator('.routing-suggestions')).toContainText('Chofer browser');
  await panel.locator('summary').filter({hasText:'Destinatarios por ubicar'}).click();
- const editor=panel.locator('article').filter({hasText:'Receptor browser'}).locator('.routing-point-body');
- await editor.getByRole('button',{name:'Buscar lugar',exact:true}).click();
- await editor.getByRole('button',{name:/Destino QA, Paraguay/}).click();
+ const editor=panel.locator('article').filter({hasText:'Receptor browser'}).locator('.place-picker');
+ await editor.getByRole('button',{name:'Buscar',exact:true}).click();
+ await expect(editor.locator('.leaflet-marker-icon')).toBeVisible();
+ await editor.getByRole('button',{name:'Guardar ubicaci\u00f3n'}).click();
 
  await expect(panel.getByRole('heading',{name:'Propuesta de reparto'})).toBeVisible({timeout:25000});
  await expect(panel.locator('.routing-route')).toContainText('PLAN-SKU × 2');
