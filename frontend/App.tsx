@@ -111,7 +111,7 @@ type AuditItem = Entity & { action: string; entityId: string; createdAt: string 
 type Bootstrap = {
   clientProfilesEnabled?:boolean;
   limits?: {perCollection:number;hasMore:boolean;message:string};
-  organization: { name: string; timezone: string; supportContacts?:{name:string;role:string}[] };
+  organization: { name: string; timezone: string; testMode?:boolean; supportContacts?:{name:string;role:string}[] };
   user: User;
   clients: Client[];
   drivers: Driver[];
@@ -605,6 +605,7 @@ function AppContent() {
         </header>
         <div className="content">
           {bootstrap.organization.name.startsWith('DEMO') && <div className="notice demo-notice" role="status">DEMO · Datos ficticios · Base separada de la operación</div>}
+          {bootstrap.organization.testMode && <div className="notice demo-notice" role="status">MODO DE PRUEBA ACTIVO · Se permite entregar sin foto. Usá únicamente pedidos de prueba.</div>}
           {bootstrap.limits?.hasMore && <div className="notice" role="status">{bootstrap.limits.message}</div>}
           {(error||success)&&<div className="operation-feedback"><ErrorBanner error={error} /><SuccessBanner message={success} /></div>}
           {page === "home" && !isDriver && <HomeView data={bootstrap} go={changePage} role={role} />}
@@ -1062,13 +1063,14 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
                 {['DRAFT','READY'].includes(selectedRoute.state)&&<p className="muted">{stopParcels.filter(isLoadedHere).length} de {stopParcels.length} bultos en el vehículo · {selectedRoute.state==='DRAFT'?'Ruta sin confirmar':'Ruta confirmada'}</p>}
                 <details className="parcel-code-details"><summary>{stopParcels.length} {stopParcels.length === 1 ? 'bulto' : 'bultos'} · ver códigos</summary><div className="parcel-tags">{stopParcels.map((parcel) => <span key={parcel.id}>{parcel.code} · {displayState(parcel.state)}</span>)}</div></details>
                 {!isClosed(stop.state) && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && stop.kind?.toUpperCase() === "PICKUP" && <PickupAction stop={stop} route={selectedRoute} parcels={routeParcels.filter((parcel) => parcel.shipmentId === stop.shipmentId)} action={action} busy={busy} />}
-                {!isClosed(stop.state) && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && stop.kind?.toUpperCase() !== "PICKUP" && <button type="button" className="text-button" onClick={() => { setStopId(stop.id); setDeliveredIds([]); setFailedIds([]); setEvidenceIds([]); setEvidenceParcelId(""); setReasonCode(""); setNextAction(""); }}>Registrar intento en esta parada</button>}
+                {!isClosed(stop.state) && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && stop.kind?.toUpperCase() !== "PICKUP" && <button type="button" className="text-button" onClick={() => { setStopId(stop.id); setDeliveredIds([]); setFailedIds([]); setEvidenceIds([]); setEvidenceParcelId(""); setReasonCode(""); setNextAction(""); }}>Registrar resultado de entrega</button>}
                 {canOperateRoad && selectedRoute.state === 'IN_PROGRESS' && stop.kind === 'DELIVERY' && ['FAILED','PARTIAL'].includes(stop.state) && routeParcels.some(parcel=>parcel.shipmentId===stop.shipmentId&&parcel.state==='RETURN_PENDING'&&!data.returns.some(item=>item.parcelId===parcel.id&&item.state!=='SENT_TO_SENDER')) && <button type="button" className="button button-secondary" disabled={busy} onClick={()=>void action('/api/stops/'+encodeURIComponent(stop.id)+'/retry',{commandId:commandId(),expectedVersion:selectedRoute.version},'Nuevo intento habilitado. Registrá el resultado de la nueva visita.')}>Habilitar nuevo intento</button>}
               </div>;
             })}
           </div>}
           {routeTab === "stops" && stopId && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && <form className="stack form-divider" onSubmit={submitAttempt}>
-            <h3>Resultado de intento</h3>
+            <h3>Resultado de la entrega</h3>
+            {data.organization.testMode&&<p className="notice">Modo de prueba: la foto es opcional para repartos Nexora. Usá solo pedidos de prueba.</p>}
             <p className="muted">Marcá por separado los bultos entregados y los que tuvieron un intento fallido.</p>
             <fieldset disabled={busy}>
               <div className="parcel-picker compact">{routeParcels.filter((parcel) => {

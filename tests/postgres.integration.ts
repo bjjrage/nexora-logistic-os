@@ -45,7 +45,7 @@ test('PostgreSQL: agregar un segundo pedido a una ruta confirmada conserva la ca
   await db.run('INSERT INTO organizations VALUES(?,?,?)',orgId,'QA varias entregas','UTC');
   await db.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)',userId,orgId,'qa-'+randomUUID(),'QA',passwordHash('QA-Multiple-2026!'),'ADMIN');
   const actor:Actor={id:userId,orgId,name:'QA',role:'ADMIN',driverId:null},domain=new Logistics(db),inv=new Inventory(db);
-  const client=(await domain.createClient(actor,{...cmd(),name:'Cliente'})).id;await configureDelivery(db,actor,client);
+  const client=(await domain.createClient(actor,{...cmd(),name:'Cliente'})).id;await configureDelivery(db,actor,client,'NEXORA');
   const location=(await inv.createLocation(actor,{...cmd(),code:'DEP',name:'Depósito'})).id;
   const product=(await inv.createProduct(actor,{...cmd(),clientId:client,sku:'MULTI',name:'Artículo',tracking:'QUANTITY',weightGrams:100,volumeCm3:100})).id;
   await inv.receive(actor,{...cmd(),clientId:client,productId:product,locationId:location,quantity:2});
@@ -56,7 +56,7 @@ test('PostgreSQL: agregar un segundo pedido a una ruta confirmada conserva la ca
   }
   const driver=(await domain.createDriver(actor,{...cmd(),name:'Chofer',username:'qa-'+randomUUID(),password:'QA-Driver-2026!'})).id;
   const vehicle=(await domain.createVehicle(actor,{...cmd(),plate:'QA-'+randomUUID(),capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0})).id;
-  const route=(await domain.createRoute(actor,{...cmd(),name:'Ruta',driverId:driver,vehicleId:vehicle,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()})).id;
+  const route=(await domain.createRoute(actor,{...cmd(),name:'Ruta',driverId:driver,vehicleId:vehicle,trackingProvider:'TRACCAR',startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()})).id;
   const version=async()=>(await domain.route(route,actor)).version;
   await domain.assign(actor,route,{...cmd(),expectedVersion:await version(),parcelIds:[parcels[0]],pickup:false});
   await domain.loadSelected(actor,route,{...cmd(),expectedVersion:await version(),parcelIds:[parcels[0]]});
@@ -72,6 +72,14 @@ test('PostgreSQL: agregar un segundo pedido a una ruta confirmada conserva la ca
   await db.run('UPDATE routes SET start_at=?,end_at=? WHERE id=?',futureStart,futureEnd,route);
   const departure=await domain.dispatch(actor,route,{...cmd(),expectedVersion:await version(),dispatchNow:true});
   assert.equal(departure.previousStartAt,futureStart);assert.equal((await domain.route(route,actor)).state,'IN_PROGRESS');
+  const stop=(await db.one('SELECT id FROM stops WHERE route_id=? ORDER BY sequence',route))!;
+  const attempt=()=>({...cmd(),expectedVersion:0,deliveredParcelIds:[parcels[0]],failedParcelIds:[],receiverName:'QA',evidenceIds:[],reasonCode:'',nextAction:''});
+  const absent=attempt();absent.expectedVersion=await version();
+  await assert.rejects(domain.attempt(actor,stop.id,absent),{code:'EVIDENCE_REQUIRED'});
+  await db.run('INSERT INTO organization_test_mode(org_id,enabled) VALUES(?,1)',orgId);
+  const testAttempt=attempt();testAttempt.expectedVersion=await version();
+  await domain.attempt(actor,stop.id,testAttempt);
+  assert.ok(await db.one('SELECT parcel_id FROM test_delivery_proofs WHERE org_id=? AND parcel_id=? AND command_id=?',orgId,parcels[0],testAttempt.commandId));
   assert.equal((await reconcileInventory(db,actor)).ok,true);
   throw rollback;
  }),error=>error===rollback);}finally{await db.close();}

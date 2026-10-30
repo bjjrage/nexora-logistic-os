@@ -1,0 +1,14 @@
+SET LOCAL search_path TO nexora,pg_catalog;
+CREATE TABLE organization_test_mode (org_id TEXT PRIMARY KEY REFERENCES organizations(id), enabled INTEGER NOT NULL CHECK(enabled IN(0,1)));
+CREATE TABLE test_delivery_proofs (org_id TEXT NOT NULL, parcel_id TEXT NOT NULL, command_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY(org_id,parcel_id,command_id));
+ALTER TABLE organization_test_mode ENABLE ROW LEVEL SECURITY;
+ALTER TABLE test_delivery_proofs ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON organization_test_mode,test_delivery_proofs FROM PUBLIC,anon,authenticated,nexora_tracking_worker,nexora_runtime;
+GRANT SELECT,INSERT,UPDATE ON organization_test_mode TO nexora_runtime;
+GRANT SELECT,INSERT ON test_delivery_proofs TO nexora_runtime;
+CREATE POLICY runtime_select ON organization_test_mode FOR SELECT TO nexora_runtime USING(true);
+CREATE POLICY runtime_insert ON organization_test_mode FOR INSERT TO nexora_runtime WITH CHECK(true);
+CREATE POLICY runtime_update ON organization_test_mode FOR UPDATE TO nexora_runtime USING(true) WITH CHECK(true);
+CREATE POLICY runtime_select ON test_delivery_proofs FOR SELECT TO nexora_runtime USING(true);
+CREATE POLICY runtime_insert ON test_delivery_proofs FOR INSERT TO nexora_runtime WITH CHECK(true);
+INSERT INTO schema_migrations(version,applied_at) VALUES(18,now());

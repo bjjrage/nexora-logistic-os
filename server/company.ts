@@ -8,6 +8,13 @@ const DELETED_HASH='!deleted';
 export class CompanyAdministration {
   private store:Database;
   constructor(store:Database){this.store=store;}
+  async setTestMode(actor:Actor,input:unknown){
+    const body=z.object({commandId:z.uuid(),enabled:z.boolean()}).strict().parse(input);
+    return new Logistics(this.store).command(actor,'organization.test-mode',body,['ADMIN'],async()=>{
+      await this.store.run('INSERT INTO organization_test_mode(org_id,enabled) VALUES(?,?) ON CONFLICT(org_id) DO UPDATE SET enabled=excluded.enabled',actor.orgId,body.enabled?1:0);
+      return {id:actor.orgId,testMode:body.enabled};
+    });
+  }
   async read(actor:Actor){
     authorize(actor,['ADMIN']);
     return {organization:await this.store.one('SELECT id,name,timezone FROM organizations WHERE id=?',actor.orgId),

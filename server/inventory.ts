@@ -818,7 +818,7 @@ export class Inventory {
         const policy=await this.store.one('SELECT c.delivery_provider FROM inventory_orders o LEFT JOIN client_delivery_policies c ON c.org_id=o.org_id AND c.client_id=o.client_id WHERE o.id=? AND o.org_id=?',item.order_id,actor.orgId);
         const link = await this.store.one("SELECT provider_result,evidence_state FROM quad_parcel_links WHERE org_id=? AND parcel_id=?", actor.orgId, parcelId);
         if(policy?.delivery_provider==='NEXORA'&&!link){
-          ensure(await this.store.one('SELECT id FROM evidence WHERE org_id=? AND parcel_id=?',actor.orgId,parcelId),'EVIDENCE_REQUIRED','La entrega del pedido Nexora requiere una foto del bulto.');
+          ensure(await this.store.one('SELECT id FROM evidence WHERE org_id=? AND parcel_id=?',actor.orgId,parcelId)||await this.store.one('SELECT t.parcel_id FROM test_delivery_proofs t JOIN organization_test_mode m ON m.org_id=t.org_id AND m.enabled=1 WHERE t.org_id=? AND t.parcel_id=? AND t.command_id=?',actor.orgId,parcelId,commandId),'EVIDENCE_REQUIRED','La entrega del pedido Nexora requiere una foto del bulto.');
         }else{
         ensure(link?.provider_result === 'DELIVERED' && link.evidence_state === 'COMPLETE', 'EVIDENCE_REQUIRED', 'La entrega del pedido requiere resultado y evidencia completos de QuadMinds.');
         const proofs = await this.store.all(`SELECT q.kind,e.sha256 FROM quad_proofs q JOIN evidence e ON e.id=q.evidence_id AND e.org_id=q.org_id
@@ -1003,7 +1003,7 @@ export class Inventory {
         CASE WHEN p.tracking='SERIAL' THEN (SELECT COUNT(*) FROM inventory_units u JOIN inventory_locations loc ON loc.id=u.location_id AND loc.org_id=u.org_id WHERE u.org_id=l.org_id AND u.client_id=p.client_id AND u.product_id=l.product_id AND u.status='AVAILABLE' AND loc.active=1 AND loc.kind<>'QUARANTINE')
         ELSE (SELECT COALESCE(SUM(b.quantity),0) FROM inventory_balances b JOIN inventory_locations loc ON loc.id=b.location_id AND loc.org_id=b.org_id WHERE b.org_id=l.org_id AND b.client_id=p.client_id AND b.product_id=l.product_id AND b.status='AVAILABLE' AND b.order_id='' AND b.quantity>0 AND loc.active=1 AND loc.kind<>'QUARANTINE') END AS available_quantity
         FROM inventory_order_lines l JOIN inventory_products p ON p.id=l.product_id AND p.org_id=l.org_id WHERE l.order_id=? AND l.org_id=? ORDER BY l.id`, order.id, actor.orgId),
-      this.store.all(`SELECT p.id,p.code,op.product_id,op.serial_id,op.state,q.provider_result,q.evidence_state,qp.kind,e.sha256
+      this.store.all(`SELECT p.id,p.code,op.product_id,op.serial_id,op.state,q.provider_result,q.evidence_state,qp.kind,e.sha256,EXISTS(SELECT 1 FROM test_delivery_proofs t WHERE t.org_id=op.org_id AND t.parcel_id=op.parcel_id) AS test_without_photo
         FROM inventory_order_parcels op JOIN parcels p ON p.id=op.parcel_id AND p.org_id=op.org_id
         LEFT JOIN quad_parcel_links q ON q.parcel_id=op.parcel_id AND q.org_id=op.org_id
         LEFT JOIN quad_proofs qp ON qp.parcel_id=op.parcel_id AND qp.org_id=op.org_id
@@ -1015,7 +1015,7 @@ export class Inventory {
       let parcel = parcelsById.get(row.id);
       if (!parcel) {
         parcel = { id: row.id, code: row.code, productId: row.product_id, serialId: row.serial_id, state: row.state,
-          deliveryResult: row.provider_result ?? 'PENDING', evidenceState: row.evidence_state ?? 'PENDING', photoHashes: new Set<string>(), signatureHashes: new Set<string>() };
+          deliveryResult: row.provider_result ?? 'PENDING', evidenceState: row.evidence_state ?? 'PENDING', testWithoutPhoto:!!row.test_without_photo, photoHashes: new Set<string>(), signatureHashes: new Set<string>() };
         parcelsById.set(row.id, parcel);
       }
       if (row.kind === 'PHOTO' && row.sha256) parcel.photoHashes.add(row.sha256);
@@ -1024,7 +1024,7 @@ export class Inventory {
     const orderParcels = [...parcelsById.values()].map(parcel => {
       const distinctProofs = [...parcel.photoHashes].some(photo => [...parcel.signatureHashes].some(signature => signature !== photo));
       return { id: parcel.id, code: parcel.code, productId: parcel.productId, serialId: parcel.serialId, state: parcel.state,
-        deliveryResult: parcel.deliveryResult, evidenceState: parcel.evidenceState,
+        deliveryResult: parcel.deliveryResult, evidenceState: parcel.evidenceState, testWithoutPhoto:parcel.testWithoutPhoto,
         evidenceStatus: parcel.deliveryResult === 'DELIVERED' && parcel.evidenceState === 'COMPLETE' && distinctProofs ? 'COMPLETE' : 'PENDING' };
     });
     return { ...camel(order), parcelIds: orderParcels.map(parcel => parcel.id), parcels: orderParcels,

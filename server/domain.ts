@@ -430,6 +430,7 @@ export class Logistics {
             if (failed.length)
                 ensure(b.reasonCode && b.nextAction.trim(), 'VALIDATION_ERROR', 'La incidencia requiere motivo y próxima acción.', 400);
             const shipment = await this.record('shipments', stop.shipment_id, actor);
+            const testMode=(await this.store.one('SELECT enabled FROM organization_test_mode WHERE org_id=?',actor.orgId))?.enabled===1;
             for (const parcelId of [...delivered, ...failed]) {
                 const p = await this.parcel(parcelId, actor);
                 ensure(p.shipment_id === stop.shipment_id && await this.store.one('SELECT id FROM route_assignments WHERE route_id=? AND parcel_id=? AND active=1', r.id, p.id), 'FORBIDDEN', 'El bulto no está en esta parada.', 403);
@@ -451,7 +452,10 @@ export class Logistics {
                 }
                 if (delivered.includes(p.id) && shipment.proof_policy === 'RECEIVER_PHOTO') {
                     const evidenceMatches = await Promise.all(b.evidenceIds.map(async (e: string) => !!await this.store.one('SELECT id FROM evidence WHERE id=? AND parcel_id=? AND org_id=?', e, p.id, actor.orgId)));
-                    ensure(evidenceMatches.some(Boolean), 'EVIDENCE_REQUIRED', `Falta una foto almacenada para ${p.code}.`);
+                    if(!evidenceMatches.some(Boolean)){
+                        ensure(testMode&&!quad&&ownDelivery, 'EVIDENCE_REQUIRED', `Falta una foto almacenada para ${p.code}.`);
+                        await this.store.run('INSERT INTO test_delivery_proofs(org_id,parcel_id,command_id,created_at) VALUES(?,?,?,?)',actor.orgId,p.id,b.commandId,now());
+                    }
                 }
             }
             for (const e of b.evidenceIds) {
@@ -651,7 +655,7 @@ export class Logistics {
         const stops=all('stops').filter(x=>routeIds.has(x.route_id)),stopIds=new Set(stops.map(s=>s.id));
         return {
             clientProfilesEnabled:true,
-            organization:{...camel((await s.one('SELECT * FROM organizations WHERE id=?',actor.orgId))!),supportContacts:await s.all("SELECT name,role FROM users WHERE org_id=? AND enabled=1 AND role IN('ADMIN','OPERATIONS') ORDER BY name",actor.orgId)},user:actor,
+            organization:{...camel((await s.one('SELECT * FROM organizations WHERE id=?',actor.orgId))!),testMode:(await s.one('SELECT enabled FROM organization_test_mode WHERE org_id=?',actor.orgId))?.enabled===1,supportContacts:await s.all("SELECT name,role FROM users WHERE org_id=? AND enabled=1 AND role IN('ADMIN','OPERATIONS') ORDER BY name",actor.orgId)},user:actor,
             clients:clients.map((client):Row=>({...camel(client),...profileMap.get(client.id)})),drivers:drivers.map(x=>({...camel(x),available:!!x.available})),vehicles:vehicles.map(x=>({...camel(x),available:!!x.available})),
             shipments:shipments.map((x):Row=>({...camel(x),counts:countMap.get(x.id)??{expected:0,received:0,delivered:0,pending:0,returned:0,missing:0}})),parcels:parcels.map(x=>({...camel(x),product:parcelProducts.get(x.id)??null})),routes:routes.map(camel),stops:stops.map(camel),
             assignments:all('route_assignments').filter(x=>routeIds.has(x.route_id)).map(x=>({...camel(x),active:!!x.active,pickup:!!x.pickup})),

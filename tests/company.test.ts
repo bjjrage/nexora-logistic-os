@@ -18,6 +18,14 @@ async function fixture(t:any){
  const client=(await domain.createClient(actor,{...command(),name:'Universo'})).id;
  return {store,actor,domain,company,client};
 }
+test('solo Administración puede activar modo de prueba y el cambio queda auditado por empresa',async t=>{
+ const {actor,store,company,domain}=await fixture(t);
+ for(const role of ['OPERATIONS','DEPOT','DRIVER','CUSTOMER'] as const)await assert.rejects(()=>company.setTestMode({...actor,role},{...command(),enabled:true}),forbidden);
+ const input={...command(),enabled:true};await company.setTestMode(actor,input);await company.setTestMode(actor,input);
+ assert.equal((await domain.bootstrap(actor)).organization.testMode,true);
+ assert.equal((await store.one('SELECT COUNT(*) n FROM audit WHERE command_id=?',input.commandId))!.n,1);
+ await company.setTestMode(actor,{...command(),enabled:false});assert.equal((await domain.bootstrap(actor)).organization.testMode,false);
+});
 
 test('empresa operadora se corrige sin convertir al cliente en empresa ni cambiar su personal; auditoría e aislamiento',async t=>{
  const {store,actor,domain,company,client}=await fixture(t);

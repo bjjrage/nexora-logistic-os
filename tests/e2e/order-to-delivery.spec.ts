@@ -97,9 +97,9 @@ test('reserve → assign → route load → inspection → delivery stays in the
  await expect(page.getByText('Checklist de salida guardado.',{exact:true})).toBeVisible();
  await expect(page.getByText(/Al despachar ahora, el horario se actualizará automáticamente/)).toBeVisible();
  await page.getByRole('button',{name:'Despachar ahora',exact:true}).click();
- await expect(page.getByRole('button',{name:'Registrar intento en esta parada',exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Registrar resultado de entrega',exact:true})).toBeVisible();
  expect((await orderDetail()).status).toBe('IN_TRANSIT');
- await page.getByRole('button',{name:'Registrar intento en esta parada',exact:true}).click();
+ await page.getByRole('button',{name:'Registrar resultado de entrega',exact:true}).click();
  for(const choice of await page.getByRole('checkbox',{name:'Entregado',exact:true}).all())await choice.check();
  await page.getByRole('textbox',{name:'Nombre de quien recibe',exact:true}).fill('Receptor ficticio demo');
  const detail=await orderDetail();

@@ -153,7 +153,7 @@ test('browser: isolated API fixtures → dispatch → photo evidence → Nexora 
  await page.getByRole('button',{name:new RegExp(name)}).click();
  await page.getByRole('button',{name:'Despachar ahora',exact:true}).click();
  await expect(page.getByText('Salida de ruta registrada.',{exact:true})).toBeVisible();
- await page.getByRole('button',{name:'Registrar intento en esta parada',exact:true}).click();
+ await page.getByRole('button',{name:'Registrar resultado de entrega',exact:true}).click();
  await page.getByLabel('Fallido',{exact:true}).check();
  await page.getByRole('combobox',{name:'Motivo del fallo',exact:true}).selectOption('ABSENT');
  await page.getByLabel('Próxima acción',{exact:true}).fill('Nueva visita QA');
@@ -161,7 +161,7 @@ test('browser: isolated API fixtures → dispatch → photo evidence → Nexora 
  await expect(page.getByRole('button',{name:'Habilitar nuevo intento',exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Habilitar nuevo intento',exact:true}).click();
  await expect(page.getByText('Nuevo intento habilitado. Registrá el resultado de la nueva visita.',{exact:true})).toBeVisible();
- await page.getByRole('button',{name:'Registrar intento en esta parada',exact:true}).click();
+ await page.getByRole('button',{name:'Registrar resultado de entrega',exact:true}).click();
  await page.getByLabel('Entregado',{exact:true}).check();
  await page.getByLabel('Nombre de quien recibe',{exact:true}).fill('Receptor ficticio QA');
  await page.getByLabel(/Bulto al que pertenece la foto/).selectOption(parcel.id);
