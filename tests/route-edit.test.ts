@@ -36,11 +36,11 @@ test('se puede editar una ruta con el mismo chofer suspendido, sin permitir desp
  await f.store.run('UPDATE users SET enabled=0 WHERE org_id=? AND driver_id IN (?,?)',f.actor.orgId,f.driver.id,f.otherDriver.id);
  const changed=await f.domain.updateRoute(f.actor,f.route.id,{...cmd(),...f.body,name:'Horario corregido',expectedVersion:await f.version()});
  assert.equal((await f.domain.route(f.route.id,f.actor)).name,'Horario corregido');
- await assert.rejects(f.domain.updateRoute(f.actor,f.route.id,{...cmd(),...f.body,driverId:f.otherDriver.id,expectedVersion:changed.version}),(error:any)=>error.code==='INVALID_TRANSITION'&&error.message.includes('Empresa y equipo'));
+ await assert.rejects(f.domain.updateRoute(f.actor,f.route.id,{...cmd(),...f.body,driverId:f.otherDriver.id,expectedVersion:changed.version}),(error:any)=>error.code==='INVALID_TRANSITION'&&error.message.includes('Flota → Choferes'));
  await f.domain.load(f.actor,f.route.id,{...cmd(),expectedVersion:await f.version(),code:f.parcel.code});
  await f.domain.ready(f.actor,f.route.id,{...cmd(),expectedVersion:await f.version()});
  await f.domain.inspect(f.actor,f.vehicle.id,{...cmd(),odometer:0,fuelPercent:90,items:[{label:'Inspección QA',severity:'OK',note:''}]});
- await assert.rejects(f.domain.dispatch(f.actor,f.route.id,{...cmd(),expectedVersion:await f.version()}),(error:any)=>error.code==='INVALID_TRANSITION'&&error.message.includes('Empresa y equipo'));
+ await assert.rejects(f.domain.dispatch(f.actor,f.route.id,{...cmd(),expectedVersion:await f.version()}),(error:any)=>error.code==='INVALID_TRANSITION'&&error.message.includes('Flota → Choferes'));
  assert.equal((await f.domain.route(f.route.id,f.actor)).state,'READY');
 });
 test('ruta confirmada permite editar; vehículo cargado exige descargar; ruta despachada conserva su historial',async t=>{

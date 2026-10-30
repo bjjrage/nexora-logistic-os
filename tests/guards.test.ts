@@ -104,7 +104,7 @@ test('nonoverlapping confirmed routes do not deadlock dispatch; active road occu
 });
 for(const offset of [7200000,-7200000,-1800000])test(`Despachar ahora ajusta la ventana ${offset>0?'futura':offset===-1800000?'vigente':'vencida'} sin perder la carga ni omitir el checklist`,async t=>{
     const f=await fixture(t),{r,s}=await f.loaded();
-    const start=new Date(Date.now()+offset).toISOString(),end=new Date(Date.now()+offset+3600000).toISOString();
+    const startTime=Date.now()+offset, start=new Date(startTime).toISOString(),end=new Date(startTime+3600000).toISOString();
     await f.store.run('UPDATE routes SET start_at=?,end_at=? WHERE id=?',start,end,r);
     if(offset!==-1800000)await assert.rejects(f.d.dispatch(f.actor,r,{...f.cmd(),expectedVersion:await f.version(r)}),{code:'INVALID_TRANSITION'});
     const input={...f.cmd(),expectedVersion:await f.version(r),dispatchNow:true};
