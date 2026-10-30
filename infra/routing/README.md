@@ -42,7 +42,7 @@ El Dockerfile del OS instala Python y OR-Tools en `/opt/routing`. Fuera de Docke
 
 Provisionar OSRM con datos preprocesados de Paraguay y Nominatim con volumen persistente `/var/lib/postgresql/16/main`. Usar exclusivamente networking privado para los endpoints anteriores, verificando sus nombres y puertos reales. Medir la memoria necesaria durante la importación y ajustar recursos antes de activarla. No compartir credenciales de Supabase con estos servicios: el optimizador recibe solamente el modelo de viaje.
 
-Aplicar primero `supabase/migrations/20261030023844_automatic_routing.sql` (versión 19). Las tablas son privadas con RLS; únicamente el rol de servidor `nexora_runtime` tiene acceso, con autorización por organización y función en las APIs del OS. El rol GPS no recibe permisos. Después desplegar el servidor y frontend juntos. El código requiere la versión 19 en el arranque: no publicar el cambio sin aplicar antes la migración.
+Aplicar primero `supabase/migrations/20261030023844_automatic_routing.sql` (versión 19) y `supabase/migrations/20261030042446_route_ingress_order.sql` (versión 20, prioridad de ingreso para pedidos importados simultáneamente). Las tablas son privadas con RLS; únicamente el rol de servidor `nexora_runtime` tiene acceso, con autorización por organización y función en las APIs del OS. El rol GPS no recibe permisos. Después desplegar el servidor y frontend juntos. El código requiere la versión 20 en el arranque: no publicar el cambio sin aplicar antes las migraciones.
 
 ## Verificación
 
