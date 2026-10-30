@@ -227,6 +227,10 @@ tbody tr:hover { background:#f0f1f4; }
 .count-strip { display:flex; gap:16px; flex-wrap:wrap; margin-top:15px; padding:10px 0; border-top:1px solid var(--line); color:#344259; font-size:11px; }
 .count-strip strong { font-weight:700; margin-left:4px; }
 .document-row,.incident-row,.defect-row,.attempt-row { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); }
+.attempt-row { flex-wrap:wrap; }
+.attempt-row > span { flex:1 1 220px; }
+.attempt-row > span small { display:block; color:var(--muted); margin-top:4px; overflow-wrap:anywhere; }
+.attempt-row label { white-space:nowrap; }
 .document-row strong,.document-row small,.incident-row small,.defect-row small { display:block; }
 .document-row small,.incident-row small,.defect-row small { color:var(--muted); font-size:10px; margin-top:3px; overflow-wrap:anywhere; }
 .evidence-list { padding-left:16px; margin:8px 0; font-size:10px; overflow-wrap:anywhere; }

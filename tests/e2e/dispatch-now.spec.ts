@@ -57,7 +57,7 @@ test('loaded route must be confirmed before it can dispatch now, with checklist 
  expect(Date.parse(departed.endAt)-Date.parse(departed.startAt)).toBe(7200000);
  expect((await detail()).status).toBe('IN_TRANSIT');expect(readyRequests).toHaveLength(1);
  await page.getByRole('button',{name:'Registrar resultado de entrega',exact:true}).click();
- await page.getByRole('checkbox',{name:'Entregado',exact:true}).check();
+ await page.getByRole('radio',{name:'Entregado',exact:true}).check();
  await page.getByRole('textbox',{name:'Nombre de quien recibe',exact:true}).fill('Receptor QA');
  await page.getByRole('button',{name:'Guardar resultado',exact:true}).click();
  await expect(page.getByRole('alert')).toContainText('Falta una foto');
@@ -69,7 +69,7 @@ test('loaded route must be confirmed before it can dispatch now, with checklist 
  await page.getByRole('searchbox',{name:'Buscar ruta',exact:true}).fill(suffix);
  await page.getByRole('button',{name:new RegExp(routeName)}).click();
  await page.getByRole('button',{name:'Registrar resultado de entrega',exact:true}).click();
- await page.getByRole('checkbox',{name:'Entregado',exact:true}).check();
+ await page.getByRole('radio',{name:'Entregado',exact:true}).check();
  await page.getByRole('textbox',{name:'Nombre de quien recibe',exact:true}).fill('Receptor QA');
  await page.getByRole('button',{name:'Guardar resultado',exact:true}).click();
  await expect.poll(async()=> (await detail()).status).toBe('DELIVERED');

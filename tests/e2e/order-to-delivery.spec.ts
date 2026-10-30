@@ -100,7 +100,18 @@ test('reserve → assign → route load → inspection → delivery stays in the
  await expect(page.getByRole('button',{name:'Registrar resultado de entrega',exact:true})).toBeVisible();
  expect((await orderDetail()).status).toBe('IN_TRANSIT');
  await page.getByRole('button',{name:'Registrar resultado de entrega',exact:true}).click();
- for(const choice of await page.getByRole('checkbox',{name:'Entregado',exact:true}).all())await choice.check();
+ const items=page.locator('.attempt-row');
+ await expect(page.getByRole('combobox',{name:'Motivo de no entrega',exact:true})).toHaveCount(0);
+ await expect(page.getByLabel('Nombre de quien recibe',{exact:true})).toHaveCount(0);
+ await items.first().getByRole('radio',{name:'Entregado',exact:true}).check();
+ await expect(page.getByLabel('Nombre de quien recibe',{exact:true})).toBeVisible();
+ await items.first().getByRole('radio',{name:'No entregado',exact:true}).check();
+ await expect(items.first().getByRole('radio',{name:'Entregado',exact:true})).not.toBeChecked();
+ await expect(page.getByLabel('Nombre de quien recibe',{exact:true})).toHaveCount(0);
+ await expect(page.getByRole('combobox',{name:'Motivo de no entrega',exact:true})).toBeVisible();
+ await items.first().getByRole('radio',{name:'Pendiente',exact:true}).check();
+ await expect(page.getByRole('combobox',{name:'Motivo de no entrega',exact:true})).toHaveCount(0);
+ for(const choice of await page.getByRole('radio',{name:'Entregado',exact:true}).all())await choice.check();
  await page.getByRole('textbox',{name:'Nombre de quien recibe',exact:true}).fill('Receptor ficticio demo');
  const detail=await orderDetail();
  for(const parcel of detail.parcels){
@@ -108,6 +119,17 @@ test('reserve → assign → route load → inspection → delivery stays in the
   await page.getByLabel('Agregar evidencia fotográfica',{exact:true}).setInputFiles({name:'demo.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aCioAAAAASUVORK5CYII=','base64')});
  }
  await expect(page.getByRole('link',{name:'Ver foto 2',exact:true})).toBeVisible();
+ await items.last().getByRole('radio',{name:'Pendiente',exact:true}).check();
+ await expect(page.getByRole('link',{name:'Ver foto 2',exact:true})).toHaveCount(0);
+ await page.getByRole('button',{name:'Guardar resultado',exact:true}).click();
+ await expect.poll(async()=> (await orderDetail()).status).toBe('PARTIAL');
+ await page.getByRole('button',{name:'Registrar resultado de entrega',exact:true}).click();
+ await expect(page.getByRole('radio',{name:'Entregado',exact:true})).toHaveCount(1);
+ await page.getByRole('radio',{name:'Entregado',exact:true}).check();
+ await page.getByRole('textbox',{name:'Nombre de quien recibe',exact:true}).fill('Receptor ficticio demo');
+ const remainingPhoto=page.getByRole('combobox',{name:'Bulto al que pertenece la foto',exact:true});
+ await remainingPhoto.selectOption((await remainingPhoto.locator('option').nth(1).getAttribute('value'))!);
+ await page.getByLabel('Agregar evidencia fotográfica',{exact:true}).setInputFiles({name:'demo.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aCioAAAAASUVORK5CYII=','base64')});
  await page.getByRole('button',{name:'Guardar resultado',exact:true}).click();
  await expect.poll(async()=> (await orderDetail()).status).toBe('DELIVERED');
  await quantities({'Pedido':2,'Disponible para reservar':1,'Reservado en depósito':0,'Cargado en vehículo':0,'Entregado':2});

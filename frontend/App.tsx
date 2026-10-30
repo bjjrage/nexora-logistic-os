@@ -868,7 +868,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
   const [receiverName, setReceiverName] = useState("");
   const [reasonCode, setReasonCode] = useState("");
   const [nextAction, setNextAction] = useState("");
-  const [evidenceIds, setEvidenceIds] = useState<string[]>([]);
+  const [evidenceIds, setEvidenceIds] = useState<Array<{id:string;parcelId:string}>>([]);
   const [evidenceParcelId, setEvidenceParcelId] = useState("");
   const [lastEvidenceId, setLastEvidenceId] = useState("");
   const [driverInspectionOdometer, setDriverInspectionOdometer] = useState("");
@@ -935,10 +935,10 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
     if (!selectedRoute || !stop) return;
     const ok = await action("/api/stops/" + encodeURIComponent(stop.id) + "/attempts", {
       deliveredParcelIds: deliveredIds, failedParcelIds: failedIds, receiverName: receiverName.trim(),
-      evidenceIds, reasonCode: reasonCode.trim(), nextAction: nextAction.trim(),
+      evidenceIds:evidenceIds.filter(e=>deliveredIds.includes(e.parcelId)||failedIds.includes(e.parcelId)).map(e=>e.id), reasonCode:failedIds.length?reasonCode.trim():'', nextAction:failedIds.length?nextAction.trim():'',
       expectedVersion: selectedRoute.version, commandId: commandId(),
-    }, "Resultado del intento registrado.");
-    if (ok) { setDeliveredIds([]); setFailedIds([]); setReceiverName(""); setReasonCode(""); setNextAction(""); setEvidenceIds([]); }
+    }, "Resultado de la entrega registrado.");
+    if (ok) { setStopId(''); setDeliveredIds([]); setFailedIds([]); setReceiverName(""); setReasonCode(""); setNextAction(""); setEvidenceIds([]); setEvidenceParcelId(''); }
   };
   const submitDriverInspection = async (event: FormEvent) => {
     event.preventDefault();
@@ -965,7 +965,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
     const file = event.target.files?.[0];
     if (!file || !evidenceParcelId) return;
     const id = await uploadEvidence(evidenceParcelId, file);
-    if (id) { setEvidenceIds((current) => [...current, id]); setLastEvidenceId(id); event.target.value = ""; }
+    if (id) { setEvidenceIds((current) => [...current, {id,parcelId:evidenceParcelId}]); setLastEvidenceId(id); event.target.value = ""; }
   };
 
   return (
@@ -1049,6 +1049,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
             <h3>Paradas</h3>
             {stops.length === 0 ? <EmptyState>Aún no hay paradas asignadas.</EmptyState> : stops.map((stop) => {
               const shipment = data.shipments.find((item) => item.id === stop.shipmentId);
+              const earlierPending=stops.some(item=>item.sequence<stop.sequence&&!['COMPLETED','FAILED'].includes(item.state));
               const stopParcels = routeParcels.filter(parcel => parcel.shipmentId === stop.shipmentId);
               const products = new Map<string, { name: string; count: number }>();
               for (const parcel of stopParcels) {
@@ -1063,7 +1064,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
                 {['DRAFT','READY'].includes(selectedRoute.state)&&<p className="muted">{stopParcels.filter(isLoadedHere).length} de {stopParcels.length} bultos en el vehículo · {selectedRoute.state==='DRAFT'?'Ruta sin confirmar':'Ruta confirmada'}</p>}
                 <details className="parcel-code-details"><summary>{stopParcels.length} {stopParcels.length === 1 ? 'bulto' : 'bultos'} · ver códigos</summary><div className="parcel-tags">{stopParcels.map((parcel) => <span key={parcel.id}>{parcel.code} · {displayState(parcel.state)}</span>)}</div></details>
                 {!isClosed(stop.state) && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && stop.kind?.toUpperCase() === "PICKUP" && <PickupAction stop={stop} route={selectedRoute} parcels={routeParcels.filter((parcel) => parcel.shipmentId === stop.shipmentId)} action={action} busy={busy} />}
-                {!isClosed(stop.state) && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && stop.kind?.toUpperCase() !== "PICKUP" && <button type="button" className="text-button" onClick={() => { setStopId(stop.id); setDeliveredIds([]); setFailedIds([]); setEvidenceIds([]); setEvidenceParcelId(""); setReasonCode(""); setNextAction(""); }}>Registrar resultado de entrega</button>}
+                {!isClosed(stop.state) && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && stop.kind?.toUpperCase() !== "PICKUP" && <button type="button" className="text-button" disabled={busy||earlierPending} onClick={() => { setStopId(stop.id); setDeliveredIds([]); setFailedIds([]); setReceiverName(""); setEvidenceIds([]); setEvidenceParcelId(""); setReasonCode(""); setNextAction(""); }}>{earlierPending?'Primero completá la parada anterior':'Registrar resultado de entrega'}</button>}
                 {canOperateRoad && selectedRoute.state === 'IN_PROGRESS' && stop.kind === 'DELIVERY' && ['FAILED','PARTIAL'].includes(stop.state) && routeParcels.some(parcel=>parcel.shipmentId===stop.shipmentId&&parcel.state==='RETURN_PENDING'&&!data.returns.some(item=>item.parcelId===parcel.id&&item.state!=='SENT_TO_SENDER')) && <button type="button" className="button button-secondary" disabled={busy} onClick={()=>void action('/api/stops/'+encodeURIComponent(stop.id)+'/retry',{commandId:commandId(),expectedVersion:selectedRoute.version},'Nuevo intento habilitado. Registrá el resultado de la nueva visita.')}>Habilitar nuevo intento</button>}
               </div>;
             })}
@@ -1071,26 +1072,27 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
           {routeTab === "stops" && stopId && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && <form className="stack form-divider" onSubmit={submitAttempt}>
             <h3>Resultado de la entrega</h3>
             {data.organization.testMode&&<p className="notice">Modo de prueba: la foto es opcional para repartos Nexora. Usá solo pedidos de prueba.</p>}
-            <p className="muted">Marcá por separado los bultos entregados y los que tuvieron un intento fallido.</p>
+            <p className="muted">Cada artículo está en tránsito. Elegí el resultado real; los que dejes pendientes seguirán en el vehículo.</p>
             <fieldset disabled={busy}>
               <div className="parcel-picker compact">{routeParcels.filter((parcel) => {
                 const stop = stops.find((item) => item.id === stopId);
                 return stop?.shipmentId === parcel.shipmentId && parcel.state === "IN_TRANSIT";
               }).map((parcel) => <div className="parcel-row attempt-row" key={parcel.id}>
-                <span><strong>{parcel.code}</strong><small>{displayState(parcel.state)}</small></span>
-                <label><input type="checkbox" checked={deliveredIds.includes(parcel.id)} onChange={() => toggleParcel(parcel.id, "delivered")} /> Entregado</label>
-                <label><input type="checkbox" checked={failedIds.includes(parcel.id)} onChange={() => toggleParcel(parcel.id, "failed")} /> Fallido</label>
+                <span><strong>{parcel.product?.name || 'Artículo'}{parcel.product?.sku?' · SKU: '+parcel.product.sku:''}</strong><small>{parcel.code} · En tránsito</small></span>
+                <label><input type="radio" name={'resultado-'+parcel.id} checked={!deliveredIds.includes(parcel.id)&&!failedIds.includes(parcel.id)} onChange={()=>{setDeliveredIds(items=>items.filter(id=>id!==parcel.id));setFailedIds(items=>items.filter(id=>id!==parcel.id));}} /> Pendiente</label>
+                <label><input type="radio" name={'resultado-'+parcel.id} checked={deliveredIds.includes(parcel.id)} onChange={() => toggleParcel(parcel.id, "delivered")} /> Entregado</label>
+                <label><input type="radio" name={'resultado-'+parcel.id} checked={failedIds.includes(parcel.id)} onChange={() => toggleParcel(parcel.id, "failed")} /> No entregado</label>
               </div>)}</div>
               <div className="form-grid">
-                <Field label="Nombre de quien recibe"><input value={receiverName} onChange={(event) => setReceiverName(event.target.value)} /></Field>
-                <Field label="Motivo del fallo"><select value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}><option value="">Seleccionar motivo</option><option value="ABSENT">Ausente</option><option value="REFUSED">Rechazado</option><option value="ADDRESS_ISSUE">Problema de dirección</option><option value="DAMAGED">Dañado</option><option value="OTHER">Otro</option></select></Field>
-                <Field label="Próxima acción"><input value={nextAction} onChange={(event) => setNextAction(event.target.value)} /></Field>
+                {deliveredIds.length>0&&<Field label="Nombre de quien recibe"><input value={receiverName} onChange={(event) => setReceiverName(event.target.value)} /></Field>}
+                {failedIds.length>0&&<><Field label="Motivo de no entrega"><select value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}><option value="">Seleccionar motivo</option><option value="ABSENT">Ausente</option><option value="REFUSED">Rechazado</option><option value="ADDRESS_ISSUE">Problema de dirección</option><option value="DAMAGED">Dañado</option><option value="OTHER">Otro</option></select></Field>
+                <Field label="Próxima acción"><input value={nextAction} onChange={(event) => setNextAction(event.target.value)} /></Field></>}
               </div>
-              {routeParcels.length > 0 && <div className="evidence-control">
-                <Field label="Bulto al que pertenece la foto"><select value={evidenceParcelId} onChange={(event) => setEvidenceParcelId(event.target.value)}><option value="">Seleccionar bulto</option>{routeParcels.filter((parcel) => stops.find((stop) => stop.id === stopId)?.shipmentId === parcel.shipmentId).map((parcel) => <option key={parcel.id} value={parcel.id}>{parcel.code}</option>)}</select></Field>
-                <Field label="Agregar evidencia fotográfica"><input type="file" accept="image/*" disabled={busy || !evidenceParcelId} onChange={onUpload} /></Field>
+              {deliveredIds.length > 0 && <div className="evidence-control">
+                <Field label="Bulto al que pertenece la foto"><select value={evidenceParcelId} onChange={(event) => setEvidenceParcelId(event.target.value)}><option value="">Seleccionar bulto</option>{routeParcels.filter(parcel=>deliveredIds.includes(parcel.id)).map((parcel) => <option key={parcel.id} value={parcel.id}>{parcel.product?.name || 'Artículo'} · {parcel.code}</option>)}</select></Field>
+                <Field label="Agregar evidencia fotográfica"><input type="file" accept="image/*" disabled={busy || !deliveredIds.includes(evidenceParcelId)} onChange={onUpload} /></Field>
               </div>}
-              {evidenceIds.length > 0 && <ul className="evidence-list" aria-label="Evidencias cargadas">{evidenceIds.map((id,index) => <li key={id}><a href={"/api/evidence/" + encodeURIComponent(id)} target="_blank" rel="noreferrer">Ver foto {index+1}</a></li>)}</ul>}
+              {evidenceIds.some(e=>deliveredIds.includes(e.parcelId)) && <ul className="evidence-list" aria-label="Evidencias cargadas">{evidenceIds.filter(e=>deliveredIds.includes(e.parcelId)).map((e,index) => <li key={e.id}><a href={"/api/evidence/" + encodeURIComponent(e.id)} target="_blank" rel="noreferrer">Ver foto {index+1}</a> · {routeParcels.find(p=>p.id===e.parcelId)?.product?.name||'Artículo'} ({routeParcels.find(p=>p.id===e.parcelId)?.code})</li>)}</ul>}
             </fieldset>
             <button className="button button-primary" disabled={busy || (deliveredIds.length === 0 && failedIds.length === 0) || (deliveredIds.length > 0 && !receiverName.trim()) || (failedIds.length > 0 && (!reasonCode || !nextAction.trim()))}>Guardar resultado</button>
           </form>}

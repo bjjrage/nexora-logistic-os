@@ -154,8 +154,8 @@ test('browser: isolated API fixtures → dispatch → photo evidence → Nexora 
  await page.getByRole('button',{name:'Despachar ahora',exact:true}).click();
  await expect(page.getByText('Salida de ruta registrada.',{exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Registrar resultado de entrega',exact:true}).click();
- await page.getByLabel('Fallido',{exact:true}).check();
- await page.getByRole('combobox',{name:'Motivo del fallo',exact:true}).selectOption('ABSENT');
+ await page.getByLabel('No entregado',{exact:true}).check();
+ await page.getByRole('combobox',{name:'Motivo de no entrega',exact:true}).selectOption('ABSENT');
  await page.getByLabel('Próxima acción',{exact:true}).fill('Nueva visita QA');
  await page.getByRole('button',{name:'Guardar resultado',exact:true}).click();
  await expect(page.getByRole('button',{name:'Habilitar nuevo intento',exact:true})).toBeVisible();
