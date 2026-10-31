@@ -11,6 +11,7 @@ import {correctDispatchOrders} from '../server/dispatch-corrections.ts';
 import {confirmDispatchLocations} from '../server/dispatch-location-review.ts';
 import {solveLocal,type RoutingProviders} from '../server/routing-providers.ts';
 import {reconcileInventory} from '../server/reconciliation.ts';
+import {TraccarTracking} from '../server/traccar.ts';
 const cmd=()=>({commandId:randomUUID()});
 async function fixture(t:any,real=false){
  const db=new Store(':memory:');t.after(()=>db.close());
@@ -38,6 +39,21 @@ async function fixture(t:any,real=false){
 }
 const automatic=(f:Awaited<ReturnType<typeof fixture>>)=>new ReservedDispatch(f.db,{...f.providers,solve:async m=>({routes:[{vehicleId:m.fleet[0].vehicleId,driverId:m.fleet[0].driverId,durationSeconds:m.orders.length*660+60,stops:m.orders.map((o:any,i:number)=>({orderId:o.id,arrivalSeconds:60+i*660}))}],unassigned:[]})});
 const departure={date:'2026-10-30',startAt:'2026-10-30T08:00:00Z',endAt:'2026-10-30T18:00:00Z'};
+
+test('missing circuit has an actionable blocker; configuring it clears stale reasons and preserves external circuits',async t=>{
+ const f=await fixture(t),dispatch=automatic(f);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());
+ await f.db.run('DELETE FROM client_delivery_policies WHERE client_id=?',f.client);
+ let board=await dispatch.board(f.actor,departure.date);assert.equal(board.orders[0].reasonCode,'MISSING_DELIVERY_PROVIDER');assert.equal(board.features.canConfigureDelivery,true);
+ assert.equal((await dispatch.board({...f.actor,role:'OPERATIONS'},departure.date)).features.canConfigureDelivery,false);
+ const blocked=await dispatch.organize(f.actor,{...cmd(),...departure});assert.equal(blocked.organized,0);assert.equal(blocked.pending[0].reasonCode,'MISSING_DELIVERY_PROVIDER');
+ const tracking=new TraccarTracking(f.db,{});await tracking.clientPolicy(f.actor,f.client,{...cmd(),deliveryProvider:'QUADMINDS'});
+ board=await dispatch.board(f.actor,departure.date);assert.equal(board.orders[0].reasonCode,'EXTERNAL_DELIVERY_PROVIDER');
+ const external=await dispatch.organize(f.actor,{...cmd(),...departure});assert.equal(external.organized,0);assert.equal(external.pending[0].reasonCode,'EXTERNAL_DELIVERY_PROVIDER');
+ await tracking.clientPolicy(f.actor,f.client,{...cmd(),deliveryProvider:'NEXORA'});
+ board=await dispatch.board(f.actor,departure.date);assert.equal(board.orders[0].reasonCode,null);assert.equal(board.orders[0].reason,'Listo para organizar');
+ assert.equal((await dispatch.organize(f.actor,{...cmd(),...departure})).organized,1);
+ assert.equal((await f.db.one('SELECT delivery_provider FROM client_delivery_policies WHERE client_id=?',f.client))!.delivery_provider,'NEXORA');
+});
 
 test('release multiple reservations from Routes atomically and replay without adding stock twice',async t=>{
  const f=await fixture(t);await f.inv.receive(f.actor,{...cmd(),clientId:f.client,productId:f.product,locationId:f.location,quantity:1});for(const id of f.orders)await f.inv.reserveOrder(f.actor,id,cmd());
@@ -190,7 +206,7 @@ test('future reservations and external circuits are never silently dispatched in
  await f.db.run('UPDATE inventory_orders SET order_date=? WHERE id=?','2026-10-31',f.orders[1]);
  await f.db.run("UPDATE client_delivery_policies SET delivery_provider='QUADMINDS' WHERE client_id=?",f.client);
  const result=await automatic(f).organize(f.actor,{...cmd(),...departure});
- assert.equal(result.organized,0);assert.equal(result.pending.length,1);assert.match(result.pending[0].reason,/externo/);
+ assert.equal(result.organized,0);assert.equal(result.pending.length,1);assert.equal(result.pending[0].reasonCode,'EXTERNAL_DELIVERY_PROVIDER');
  assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
 });
 test('concurrent organizers cannot assign the same reservation twice',async t=>{
@@ -267,7 +283,7 @@ test('planner excludes external circuits, unknown capacity and reserved stock fr
  let result=await f.routing.preview(f.actor,f.input);assert.equal(result.routes.length,0);assert.match(result.pending[0].reason,/capacidad/);
  result=await f.routing.preview(f.actor,{...f.input,allowUnknownCapacity:true});assert.equal(result.capacityUnverified,true);
  await f.db.run("UPDATE client_delivery_policies SET delivery_provider='QUADMINDS' WHERE client_id=?",f.client);
- result=await f.routing.preview(f.actor,{...f.input,allowUnknownCapacity:true});assert.equal(result.routes.length,0);assert.match(result.pending[0].reason,/Circuito/);
+ result=await f.routing.preview(f.actor,{...f.input,allowUnknownCapacity:true});assert.equal(result.routes.length,0);assert.match(result.pending[0].reason,/QuadMinds/);
 });
 test('planner detects occupied fleet and rejects malformed solver output before any inventory changes',async t=>{
  const f=await fixture(t);f.providers.solve=async()=>({routes:[{vehicleId:f.vehicle,driverId:f.driver,durationSeconds:500,stops:[{orderId:f.orders[0],arrivalSeconds:0}]}],unassigned:[]});

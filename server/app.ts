@@ -130,7 +130,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
         res.json(camel(shipment));
     });
     const post = (path: string, schema: ZodType, work: (actor: Actor, b: any, req: Request) => unknown) => app.post(path, async (req, res) => res.json(await work(await auth(req), schema.parse(req.body), req)));
-    post('/api/clients', schemas.client, async (a, b) => await domain.createClient(a, b));
+    post('/api/clients', schemas.client, async (a, b) => await domain.createClient(a, {...b,deliveryProvider:b.deliveryProvider??'NEXORA'}));
     post('/api/clients/:id', schemas.client, async (a,b,r)=>await domain.updateClient(a,String(r.params.id),b));
     post('/api/users', schemas.user, async (a, b) => await domain.createUser(a, b));
     post('/api/drivers', schemas.driver, async (a, b) => await domain.createDriver(a, b));

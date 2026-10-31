@@ -367,7 +367,7 @@ test('tracking: three views, client policy persists and route setup has a single
  const send=async(path:string,data:Record<string,unknown>)=>{const response=await page.request.post(path,{headers:{'X-Requested-With':'logistics-os'},data:{commandId:randomUUID(),...data}});expect(response.ok(),await response.text()).toBeTruthy();return response.json();};
  const session=await(await page.request.get('/api/session')).json();
  if(session.setupRequired)await send('/api/setup',{organizationName:'Nexora QA aislada',timezone:'America/Asuncion',username:'qa-browser',password:'QA-Browser-Isolated-2026!'});else await send('/api/login',{username:'qa-browser',password:'QA-Browser-Isolated-2026!'});
- const id=(await send('/api/clients',{name:'Cliente tracking '+randomUUID().slice(0,8)})).id;
+ const id=(await send('/api/clients',{name:'Cliente tracking '+randomUUID().slice(0,8),deliveryProvider:'QUADMINDS'})).id;
  await page.goto('/');await page.getByRole('button',{name:'Tracking',exact:true}).click();
  const views=page.getByRole('navigation',{name:'Vistas de seguimiento'});
  await expect(views.getByRole('button')).toHaveText(['Mapa','Sistema por cliente','Universo · QuadMinds']);

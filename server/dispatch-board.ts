@@ -1,6 +1,7 @@
 import type {Database,Row} from './database.ts';
 import type {Actor} from './auth.ts';
 import {ensure} from './errors.ts';
+import {deliveryBlock} from './delivery-block.ts';
 export async function orderLines(db:Database,actor:Actor,ids:string[]){
  if(!ids.length)return [];
  return db.all(`SELECT l.order_id,p.name,p.sku,l.quantity FROM inventory_order_lines l JOIN inventory_products p ON p.id=l.product_id AND p.org_id=l.org_id WHERE l.org_id=? AND l.order_id IN(${ids.map(()=>'?').join(',')}) ORDER BY l.order_id,l.id`,actor.orgId,...ids);
@@ -30,8 +31,10 @@ export async function dispatchBoard(db:Database,actor:Actor,queue:Row){
  for(const route of routes.values())for(const order of route.orders){const total=totals.find(t=>t.order_id===order.id);if(total){order.orderUnits=total.units;order.orderLoaded=total.loaded;}}
  const last=await db.one("SELECT i.response FROM idempotency i JOIN audit a ON a.org_id=i.org_id AND a.command_id=i.command_id WHERE i.org_id=? AND i.operation='routing.organizeReserved' ORDER BY a.created_at DESC,a.id DESC LIMIT 1",actor.orgId);
  const previous:Row[]=last?JSON.parse(last.response).pending??[]:[];
- return {...queue,features:{batchCorrections:true,bulkLocationReview:true},orders:queue.orders.map((order:Row)=>{
-  const point=orderPoint(order.id,order.destination),oldReason=previous.find(p=>p.id===order.id)?.reason;
-  return {...order,point:point??null,reason:oldReason&&!(point&&oldReason.includes('ubicación del destinatario'))?oldReason:point?'Listo para organizar':'Ubicación por confirmar'};
+ return {...queue,features:{batchCorrections:true,bulkLocationReview:true,canConfigureDelivery:actor.role==='ADMIN'},orders:queue.orders.map((order:Row)=>{
+  const point=orderPoint(order.id,order.destination),previousOrder=previous.find(p=>p.id===order.id);
+  const staleCircuit=previousOrder?.reasonCode?.endsWith('DELIVERY_PROVIDER')||previousOrder?.reason==='Circuito externo o sin definir';
+  const oldReason=staleCircuit?null:previousOrder?.reason,circuit=deliveryBlock(order.delivery_provider);
+  return {...order,point:point??null,reasonCode:circuit?.reasonCode??null,reason:circuit?.reason??(oldReason&&!(point&&oldReason.includes('ubicación del destinatario'))?oldReason:point?'Listo para organizar':'Ubicación por confirmar')};
  }),routes:[...routes.values()]};
 }

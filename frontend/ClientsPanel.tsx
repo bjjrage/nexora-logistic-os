@@ -1,4 +1,4 @@
-﻿import {useMemo,useState,type FormEvent} from 'react';
+import {useMemo,useState,type FormEvent} from 'react';
 import {Plus,Pencil,ArrowRight} from 'lucide-react';
 import {useModalFocus} from './useModalFocus';
 
@@ -19,6 +19,7 @@ const groups:{title:string;fields:Field[]}[]=[
 export default function ClientsPanel({profileEnabled,initialClientId='',clients,shipments,canManage,busy,actionError,action,onInventory}:Props){
  const [editing,setEditing]=useState<ClientRecord|null>(null),[creating,setCreating]=useState(false),[form,setForm]=useState<ClientForm>(emptyForm),[failed,setFailed]=useState(false);
  const [selectedId,setSelectedId]=useState(initialClientId);
+ const [deliveryProvider,setDeliveryProvider]=useState('NEXORA');
  const selected=clients.find(client=>client.id===selectedId);
  const open=creating||!!editing,close=()=>{if(!busy){setCreating(false);setEditing(null);setFailed(false);}};
  useModalFocus(open,close);
@@ -28,6 +29,7 @@ export default function ClientsPanel({profileEnabled,initialClientId='',clients,
   event.preventDefault();setFailed(false);
   if(!profileEnabled)return;
   const payload=Object.fromEntries(Object.entries(form).map(([key,text])=>[key,text.trim()]));
+  if(!editing)payload.deliveryProvider=deliveryProvider;
   const saved=await action(editing?'/api/clients/'+editing.id:'/api/clients',payload,editing?'Ficha del cliente actualizada.':'Cliente registrado. Ahora podés importar su catálogo.',result=>{if(typeof result.id==='string')setSelectedId(result.id);});
   if(saved){setCreating(false);setEditing(null);}else setFailed(true);
  };
@@ -35,6 +37,7 @@ export default function ClientsPanel({profileEnabled,initialClientId='',clients,
  const editor=open&&<div className="modal-backdrop"><section className="modal-card client-editor" role="dialog" aria-modal="true" aria-labelledby="client-editor-title">
   <div className="card-header"><div><h2 id="client-editor-title">{editing?'Editar ficha del cliente':'Registrar cliente'}</h2><p>Datos de la empresa que entrega su mercadería a Nexora.</p></div><button className="text-button" onClick={close} disabled={busy}>Cerrar</button></div>
   <form className="stack" onSubmit={submit}><fieldset disabled={busy}>{groups.map(group=><fieldset key={group.title}><legend>{group.title}</legend><div className="client-form-grid">{group.fields.map(item=><label key={item.key} className={'field'+(item.wide?' client-field-wide':'')}><span>{item.label}</span>{item.type==='textarea'?<textarea rows={2} maxLength={item.max} value={form[item.key]} placeholder={item.placeholder} onChange={e=>setForm(current=>({...current,[item.key]:e.target.value}))}/>:<input required={item.key==='name'} type={item.type??'text'} maxLength={item.max} value={form[item.key]} placeholder={item.placeholder} onChange={e=>setForm(current=>({...current,[item.key]:e.target.value}))}/>}</label>)}</div></fieldset>)}</fieldset>
+   {!editing&&<label className="field"><span>Sistema de reparto</span><select aria-label="Sistema de reparto" value={deliveryProvider} disabled={busy} onChange={e=>setDeliveryProvider(e.target.value)}><option value="NEXORA">Nexora · Camiones propios y GPS Traccar</option><option value="QUADMINDS">QuadMinds · Reparto externo</option></select><small>Los pedidos de Nexora se organizan automáticamente desde Rutas.</small></label>}
    <div className="client-form-actions"><p className="muted">* Obligatorio. Podés guardar una ficha parcial y completar los datos después.</p>
    {failed&&<p className="notice error" role="alert">{actionError||'No se pudo guardar la ficha.'}</p>}
    <button className="button button-primary" disabled={busy||!form.name.trim()}>{busy?'Guardando…':editing?'Guardar ficha':'Registrar cliente'}</button></div>
@@ -58,7 +61,7 @@ export default function ClientsPanel({profileEnabled,initialClientId='',clients,
    {editor}</>;
  }
  return <>
-  <div className="page-heading"><div><p className="eyebrow">CLIENTES DE NEXORA</p><h1>Clientes</h1><p className="muted">Registrá la empresa y su contacto antes de recibir su mercadería.</p></div>{canManage&&<button className="button button-primary" onClick={()=>{setForm({...emptyForm});setCreating(true);setEditing(null);setFailed(false);}}><Plus size={16}/>Registrar cliente</button>}</div>
+  <div className="page-heading"><div><p className="eyebrow">CLIENTES DE NEXORA</p><h1>Clientes</h1><p className="muted">Registrá la empresa y su contacto antes de recibir su mercadería.</p></div>{canManage&&<button className="button button-primary" onClick={()=>{setForm({...emptyForm});setDeliveryProvider('NEXORA');setCreating(true);setEditing(null);setFailed(false);}}><Plus size={16}/>Registrar cliente</button>}</div>
   <p className="client-flow">1. Ficha del cliente <span>→</span> 2. Catálogo de productos <span>→</span> 3. Recibir mercadería</p>
   <section className="card"><div className="card-header"><h2>Clientes registrados</h2></div>{clients.length?<div className="table-wrap"><table className="table"><thead><tr><th>Cliente / RUC</th><th>Contacto</th><th>Ficha</th><th>Acciones</th></tr></thead><tbody>{clients.map(client=><tr key={client.id}><td><strong>{client.name}</strong><small>{client.taxId||'RUC sin completar'}</small></td><td>{client.contactName||'Sin contacto'}<small>{client.phone||'Teléfono sin completar'}</small></td><td>{missingDetails(client).length?'Datos por completar':'Completa'}<small>{counts.get(client.id)??0} envíos en la vista</small></td><td><div className="client-row-actions"><button className="button button-secondary" onClick={()=>{setSelectedId(client.id);}}>Abrir ficha</button>{canManage&&<button className="text-button" onClick={()=>edit(client)}>Editar</button>}</div></td></tr>)}</tbody></table></div>:<p className="empty-state">Registrá la primera empresa que te entrega mercadería.</p>}</section>
   {editor}</>;

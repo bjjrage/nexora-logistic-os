@@ -9,6 +9,7 @@ import {Inventory} from './inventory.ts';
 import {routingProviders,type RoutingProviders} from './routing-providers.ts';
 import {resolveMapsLink} from './maps-link.ts';
 import {resolvePlusCode} from './plus-code.ts';
+import {deliveryBlock} from './delivery-block.ts';
 const roles:Actor['role'][]=['ADMIN','OPERATIONS'];
 const timestamp=()=>new Date().toISOString();
 const digest=(data:unknown)=>createHash('sha256').update(JSON.stringify(data)).digest('hex');
@@ -109,7 +110,7 @@ export class Routing {
   for(const row of raw){
    const item:Row={id:row.id,reference:row.external_id,clientName:row.client_name,recipientName:row.recipient_name,destination:row.destination,instructions:row.restrictions,updatedAt:row.updated_at};
    const p=await this.store.one("SELECT * FROM routing_points WHERE org_id=? AND entity_kind='ORDER' AND entity_id=?",actor.orgId,row.id);
-   let reason=row.delivery_provider!=='NEXORA'?'Circuito externo o sin definir':!p||p.address!==row.destination?'Confirmar ubicación del destinatario':row.restrictions&&!b.reviewedInstructions.some(r=>r.orderId===row.id&&r.text===row.restrictions)?'Revisar indicaciones de entrega':null;
+   let reason=deliveryBlock(row.delivery_provider)?.reason??(!p||p.address!==row.destination?'Confirmar ubicación del destinatario':row.restrictions&&!b.reviewedInstructions.some(r=>r.orderId===row.id&&r.text===row.restrictions)?'Revisar indicaciones de entrega':null);
    const lines=await this.store.all('SELECT l.*,p.sku,p.name,p.tracking,p.active,p.weight_grams,p.volume_cm3 FROM inventory_order_lines l JOIN inventory_products p ON p.id=l.product_id AND p.org_id=l.org_id WHERE l.org_id=? AND l.order_id=? ORDER BY l.id',actor.orgId,row.id);
    item.lines=lines.map(l=>({name:l.name,sku:l.sku,quantity:l.quantity}));
    let weight=0,volume=0,unknown=false;const deductions:Array<[string,number]>=[];

@@ -11,7 +11,7 @@ const routeSelection=z.object({...version,parcelIds:z.array(id).min(1).max(200).
 export const schemas={
   setup:z.object({organizationName:text,timezone:text,username,password}),
   login:z.object({username,password:z.string().min(1).max(128)}),
-  client:z.object({...command,name:text,legalName:z.string().trim().max(500).optional(),taxId:z.string().trim().max(80).optional(),contactName:z.string().trim().max(200).optional(),phone:z.string().trim().max(80).optional(),email:z.union([z.literal(''),z.email().max(254)]).optional(),address:z.string().trim().max(500).optional(),city:z.string().trim().max(160).optional(),notes:z.string().trim().max(2000).optional()}),
+  client:z.object({...command,name:text,deliveryProvider:z.enum(['NEXORA','QUADMINDS']).optional(),legalName:z.string().trim().max(500).optional(),taxId:z.string().trim().max(80).optional(),contactName:z.string().trim().max(200).optional(),phone:z.string().trim().max(80).optional(),email:z.union([z.literal(''),z.email().max(254)]).optional(),address:z.string().trim().max(500).optional(),city:z.string().trim().max(160).optional(),notes:z.string().trim().max(2000).optional()}),
   driver:z.object({...command,name:text,username,password}),
   user:z.object({...command,name:text,username,password,role:z.enum(['ADMIN','OPERATIONS','DEPOT'])}),
   vehicle:z.object({...command,plate:text,capacityWeightGrams:positive,capacityVolumeCm3:positive,odometer:z.number().int().nonnegative()}),

@@ -8,6 +8,7 @@ import {Routing} from './routing.ts';
 import type {RoutingProviders} from './routing-providers.ts';
 import {dispatchBoard,orderLines} from './dispatch-board.ts';
 import {prepareAppend,applyAppend} from './dispatch-append.ts';
+import {deliveryBlock} from './delivery-block.ts';
 const roles:Actor['role'][]=['ADMIN','OPERATIONS'];
 const inputSchema=z.object({commandId:z.uuid(),reviewedInstructions:z.array(z.object({orderId:z.uuid(),text:z.string().max(4000)})).max(1000).default([]),date:z.iso.date().optional(),startAt:z.iso.datetime({offset:true}).optional(),endAt:z.iso.datetime({offset:true}).optional()}).strict();
 const fingerprint=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -49,8 +50,9 @@ export class ReservedDispatch{
   const locationSuggestions:Row[]=[],pending:Row[]=[],plans:Row[]=[],merges:NonNullable<Awaited<ReturnType<typeof prepareAppend>>>[]=[],usedVehicles=new Set<string>(),usedDrivers=new Set<string>();
   const groups=new Map<string,Row[]>();
   for(const order of queue.orders){
-   const reason=order.delivery_provider!=='NEXORA'?'Circuito externo o sin definir':!order.locationId?'La reserva está repartida entre sectores; consolidá la mercadería antes de organizar':!context.locations.some(l=>l.id===order.locationId)?'Depósito inactivo':!context.points.some(p=>p.kind==='LOCATION'&&p.id===order.locationId)?'Configurar ubicación del depósito en Mi empresa':null;
-   if(reason){pending.push({...order,reason});continue;}
+   const circuit=deliveryBlock(order.delivery_provider);
+   const reason=circuit?.reason??(!order.locationId?'La reserva está repartida entre sectores; consolidá la mercadería antes de organizar':!context.locations.some(l=>l.id===order.locationId)?'Depósito inactivo':!context.points.some(p=>p.kind==='LOCATION'&&p.id===order.locationId)?'Configurar ubicación del depósito en Mi empresa':null);
+   if(reason){pending.push({...order,reason,...(circuit?{reasonCode:circuit.reasonCode}:{})});continue;}
    groups.set(order.locationId,[...(groups.get(order.locationId)??[]),order]);
   }
   for(const [locationId,group] of groups){

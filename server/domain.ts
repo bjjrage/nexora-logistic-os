@@ -74,6 +74,7 @@ export class Logistics {
             const id = randomUUID();
             await this.store.run('INSERT INTO clients VALUES(?,?,?)', id, actor.orgId, b.name);
             await saveClientProfile(this.store,actor.orgId,id,b);
+            if(b.deliveryProvider)await this.store.run('INSERT INTO client_delivery_policies VALUES(?,?,?,?)',actor.orgId,id,b.deliveryProvider,now());
             return { id };
         });
     }

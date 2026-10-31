@@ -58,8 +58,16 @@ test('HTTP valida correo y longitud antes de guardar; bootstrap conserva el cont
  assert.equal((await post('/api/clients',{...command(),...profile,phone:'1'.repeat(81)})).status,400);
  assert.equal((await store.one('SELECT COUNT(*) n FROM clients'))!.n,0);
  const created=await post('/api/clients',{...command(),...profile});assert.equal(created.status,200);const {id}=await created.json();
+ assert.equal((await store.one('SELECT delivery_provider FROM client_delivery_policies WHERE client_id=?',id))!.delivery_provider,'NEXORA');
+ const externalBody={...command(),name:'Cliente externo',deliveryProvider:'QUADMINDS'};
+ const external=await (await post('/api/clients',externalBody)).json();assert.deepEqual(await (await post('/api/clients',externalBody)).json(),external);
+ assert.equal((await store.one('SELECT delivery_provider FROM client_delivery_policies WHERE client_id=?',external.id))!.delivery_provider,'QUADMINDS');
+ assert.equal((await post('/api/clients',{...command(),name:'Inválido',deliveryProvider:'OTHER'})).status,400);
+ assert.equal((await post('/api/clients',{...command(),...profile,name:'RUC duplicado',deliveryProvider:'QUADMINDS'})).status,409);
+ assert.equal((await store.one('SELECT COUNT(*) n FROM clients'))!.n,2);assert.equal((await store.one('SELECT COUNT(*) n FROM client_delivery_policies'))!.n,2);
  const boot=await (await fetch(base+'/api/bootstrap',{headers:{Cookie:cookie}})).json();
- assert.equal(boot.clients[0].id,id);assert.equal(boot.clients[0].legalName,profile.legalName);assert.equal(boot.clients[0].contactName,profile.contactName);assert.ok(!('legal_name' in boot.clients[0]));
+ const client=boot.clients.find((c:any)=>c.id===id);assert.equal(client.legalName,profile.legalName);assert.equal(client.contactName,profile.contactName);assert.ok(!('legal_name' in client));
  assert.equal((await post('/api/clients/'+id,{...command(),name:'Editado',notes:'Nota editada'})).status,200);
- const read=await (await fetch(base+'/api/bootstrap',{headers:{Cookie:cookie}})).json();assert.equal(read.clients[0].notes,'Nota editada');assert.equal(read.clients[0].taxId,profile.taxId);
+ const read=await (await fetch(base+'/api/bootstrap',{headers:{Cookie:cookie}})).json(),updated=read.clients.find((c:any)=>c.id===id);assert.equal(updated.notes,'Nota editada');assert.equal(updated.taxId,profile.taxId);
+ assert.equal((await store.one('SELECT delivery_provider FROM client_delivery_policies WHERE client_id=?',id))!.delivery_provider,'NEXORA');
 });
