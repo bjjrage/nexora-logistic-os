@@ -11,6 +11,7 @@ import {relayRouting} from './routing-relay.ts';
 import {correctDispatchOrders} from './dispatch-corrections.ts';
 import {confirmDispatchLocations} from './dispatch-location-review.ts';
 import {ReservedDispatch} from './reserved-dispatch.ts';
+import {RouteReports} from './route-report.ts';
 
 export type InventoryAuth = (req: Request) => Promise<Actor | InventoryActor>;
 const actorForInventory = async (auth: InventoryAuth, req: Request) => await auth(req) as InventoryActor;
@@ -23,6 +24,7 @@ export function installInventoryRoutes(app: Express, store: Database, auth: Inve
   const receipts = new StockReceipts(store);
   const routing = new Routing(store);
   const dispatch = new ReservedDispatch(store);
+  app.post('/api/routing/itinerary',async(req,res)=>{const actor=await auth(req) as Actor;res.set('Cache-Control','no-store').json(await relayRouting(req,actor,store.kind,'/itinerary')??await new RouteReports(store).read(actor,req.body));});
   app.get('/api/routing/queue',async(req,res)=>res.json(await dispatch.board(await auth(req) as Actor,queryString(req.query.date))));
   app.post('/api/routing/organize',async(req,res)=>{const actor=await auth(req) as Actor;res.json(await relayRouting(req,actor,store.kind,'/organize')??await dispatch.organize(actor,req.body));});
   app.post('/api/routing/approve',async(req,res)=>res.json(await dispatch.approve(await auth(req) as Actor,req.body)));

@@ -1,6 +1,7 @@
 import {useEffect,useRef,useState} from 'react';
 import OrderCorrections from './OrderCorrections';
 import DispatchBatch from './DispatchBatch';
+import RouteItinerary from './RouteItinerary';
 import {api} from './api';
 import {PointEditor} from './RoutingPanel';
 import './routing.css';
@@ -67,6 +68,7 @@ export default function ReservedDispatch({onRefresh,onOpen,onConfigureDepot,revi
    <section aria-label="Pedidos organizados por camión" className="dispatch-section"><h3>Pedidos organizados por camión <span>{assigned}</span></h3>
     {routes.map((route:Row)=><article className="routing-route dispatch-truck" key={route.id} aria-label={`${route.name} · ${route.plate}`}>
      <div className="card-header"><div><h4>{route.name} · Camión {route.plate}</h4><p>Salida: {new Intl.DateTimeFormat('es-PY',{dateStyle:'short',timeStyle:'short',timeZone:board?.timezone??'America/Asuncion'}).format(new Date(route.startAt))} · Chofer: <strong>{route.driverName}</strong> · Pedidos: {route.orders.length} · Bultos: {route.orders.reduce((n:number,o:Row)=>n+total(o),0)}</p></div><span className="badge badge-neutral">{route.state==='IN_PROGRESS'?'En reparto':route.state==='READY'?'Ruta confirmada':'Por cargar / confirmar'}</span></div>
+     <RouteItinerary sources={[{label:`Camión ${route.plate} · ${route.driverName}`,source:{routeId:route.id}}]}/>
      {route.capacityUnverified&&<p className="muted">Capacidad sin verificar: hay bultos sin peso o volumen.</p>}
      <ol className="dispatch-stop-list">{route.visibleOrders.map((order:Row)=><li key={`${order.id}:${order.kind}`}><div><span className="dispatch-stop-number">{order.sequence??'—'}</span><div><strong>{order.reference} · {order.clientName}</strong><small>{order.kind==='PICKUP'?'Retiro · ':''}{order.recipientName} · {order.destination}</small><Articles order={order}/>{order.point?.approximate&&<small>Ubicación aproximada: {order.point.name}</small>}{order.status==='RESERVED'&&<button type="button" className="text-button" disabled={busy} onClick={()=>setReview({id:order.id,external_id:order.reference,recipient_name:order.recipientName,client_name:order.clientName,destination:order.destination,point:order.point})}>Ajustar ubicación</button>}{order.status&&route.state!=='IN_PROGRESS'&&<OrderCorrections orders={[{...order,id:order.id}]} allowRequeue disabled={busy||!board?.features?.batchCorrections} onWorking={setBusy} onSuccess={setFeedback} onChanged={changed} onError={setError}/>}</div></div><span className="dispatch-count">{total(order)} bultos{order.pendingLoad?` · ${order.pendingLoad} por cargar`:order.delivered?` · ${order.delivered} entregados`:` · ${order.loaded} en vehículo`}</span></li>)}</ol>
      <button className="button button-primary" type="button" disabled={busy} onClick={()=>onOpen(route.id)}>{route.state==='IN_PROGRESS'?'Abrir reparto':'Cargar este camión'}</button>

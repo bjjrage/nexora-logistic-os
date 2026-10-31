@@ -12,6 +12,8 @@ import {confirmDispatchLocations} from '../server/dispatch-location-review.ts';
 import {solveLocal,type RoutingProviders} from '../server/routing-providers.ts';
 import {reconcileInventory} from '../server/reconciliation.ts';
 import {TraccarTracking} from '../server/traccar.ts';
+import {RouteReports} from '../server/route-report.ts';
+import type {Point} from '../server/routing-providers.ts';
 const cmd=()=>({commandId:randomUUID()});
 async function fixture(t:any,real=false){
  const db=new Store(':memory:');t.after(()=>db.close());
@@ -40,6 +42,31 @@ async function fixture(t:any,real=false){
 const automatic=(f:Awaited<ReturnType<typeof fixture>>)=>new ReservedDispatch(f.db,{...f.providers,solve:async m=>({routes:[{vehicleId:m.fleet[0].vehicleId,driverId:m.fleet[0].driverId,durationSeconds:m.orders.length*660+60,stops:m.orders.map((o:any,i:number)=>({orderId:o.id,arrivalSeconds:60+i*660}))}],unassigned:[]})});
 const departureDay=new Date(Date.now()+86400000).toISOString().slice(0,10);
 const departure={date:departureDay,startAt:departureDay+'T08:00:00Z',endAt:departureDay+'T18:00:00Z'};
+const roadFixture=async(points:Point[])=>({distanceMeters:12000,drivingSeconds:(points.length-1)*60,geometry:{type:'LineString' as const,coordinates:points.map(p=>[p.longitude,p.latitude])},legs:points.slice(1).map(()=>({distanceMeters:6000,drivingSeconds:60}))});
+
+test('itinerary keeps solver order, road distances, service time and depot return without creating routes',async t=>{
+ const f=await fixture(t);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());
+ const dispatch=automatic(f),proposal=await dispatch.organize(f.actor,{...cmd(),...departure});
+ const before=await f.db.all('SELECT * FROM inventory_balances'),report=await new RouteReports(f.db,roadFixture).read(f.actor,{proposalCommandId:proposal.id,vehicleId:f.vehicle});
+ assert.equal(report.distanceMeters,12000);assert.equal(report.drivingSeconds,120);assert.equal(report.totalSeconds,720);assert.equal(report.stops[0].orderId,f.orders[0]);assert.deepEqual(report.geometry!.coordinates[0],report.geometry!.coordinates.at(-1));
+ assert.equal((await f.db.one('SELECT COUNT(*) n FROM routes'))!.n,0);assert.deepEqual(await f.db.all('SELECT * FROM inventory_balances'),before);
+ await assert.rejects(new RouteReports(f.db,roadFixture).read({...f.actor,orgId:randomUUID()},{proposalCommandId:proposal.id,vehicleId:f.vehicle}),{code:'NOT_FOUND'});
+ await assert.rejects(new RouteReports(f.db,roadFixture).read({...f.actor,role:'CUSTOMER'},{proposalCommandId:proposal.id,vehicleId:f.vehicle}),{code:'FORBIDDEN'});
+ const approved=await dispatch.approve(f.actor,{...cmd(),proposalCommandId:proposal.id}),routeId=approved.routes[0].id;
+ const actual=await new RouteReports(f.db,roadFixture).read(f.actor,{routeId});assert.equal(actual.stops[0].orderId,f.orders[0]);assert.equal(actual.distanceMeters,12000);assert.equal(actual.depot!.label,'CENTRAL · Central');
+ await assert.rejects(new RouteReports(f.db,roadFixture).read({...f.actor,role:'DRIVER',driverId:randomUUID()},{routeId}),{code:'FORBIDDEN'});
+ assert.equal((await new RouteReports(f.db,roadFixture).read({...f.actor,role:'DRIVER',driverId:f.driver},{routeId})).stops.length,1);
+});
+
+test('itinerary shows approximate points and all appended stops, preserves incomplete reports on map outage',async t=>{
+ const f=await fixture(t);await f.inv.receive(f.actor,{...cmd(),clientId:f.client,productId:f.product,locationId:f.location,quantity:1});await f.inv.reserveOrder(f.actor,f.orders[0],cmd());
+ const dispatch=automatic(f),first=await organizeAndApprove(dispatch,f.actor,{...cmd(),...departure});
+ await f.inv.reserveOrder(f.actor,f.orders[1],cmd());const proposal=await dispatch.organize(f.actor,{...cmd(),...departure});
+ const report=await new RouteReports(f.db,roadFixture).read(f.actor,{proposalCommandId:proposal.id,vehicleId:f.vehicle});assert.deepEqual(report.stops.map(s=>s.orderId),f.orders);assert.equal(report.stops.length,2);
+ const failure=await new RouteReports(f.db,async()=>{throw Error('offline');}).read(f.actor,{proposalCommandId:proposal.id,vehicleId:f.vehicle});assert.equal(failure.distanceMeters,null);assert.equal(failure.geometry,null);assert.equal(failure.stops.length,2);assert.ok(failure.warnings.some(w=>w.includes('no pudo trazar')));
+ await f.db.run('DELETE FROM routing_points WHERE entity_id=?',f.orders[0]);let called=false;
+ const missing=await new RouteReports(f.db,async points=>{called=true;return roadFixture(points);}).read(f.actor,{routeId:first.routes[0].id});assert.equal(called,false);assert.equal(missing.distanceMeters,null);assert.equal(missing.stops.length,1);assert.ok(missing.warnings.some(w=>w.includes('sin ubicación')));
+});
 // Operational-flow tests now cross the explicit human approval boundary.
 async function organizeAndApprove(service:ReservedDispatch,actor:Actor,input:unknown){const proposal=await service.organize(actor,input);if(!proposal.proposed)return proposal;return service.approve(actor,{...cmd(),proposalCommandId:proposal.id});}
 

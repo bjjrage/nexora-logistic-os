@@ -48,9 +48,13 @@ test('confirm reservation without maps, automatically organize in Routes and loa
  expect((await(await page.request.get('/api/routing/context')).json()).points).toHaveLength(1);
  expect((await(await page.request.get('/api/bootstrap')).json()).routes).toHaveLength(0);
  await page.reload();await page.getByRole('button',{name:'Rutas',exact:true}).click();await expect(proposal).toContainText('PLAN-TEST');
- await page.screenshot({path:'.local/dispatch-proposal-desktop.png',fullPage:true});await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:'.local/dispatch-proposal-mobile.png',fullPage:true});await page.setViewportSize({width:1365,height:900});
- await expect(proposal.getByRole('button',{name:'Aprobar distribución y crear rutas'})).toBeDisabled();await proposal.getByLabel('Revisé la distribución, las ubicaciones y las indicaciones de entrega').check();
- await proposal.getByRole('button',{name:'Aprobar distribución y crear rutas'}).click();
+ await page.setViewportSize({width:1365,height:900});await proposal.getByRole('button',{name:'Ver mapa grande y recorrido'}).click();
+ const itinerary=page.getByRole('dialog',{name:'Recorrido del reparto'});await expect(itinerary.getByLabel('Resumen del recorrido')).toContainText('12,5 km');await expect(itinerary.getByLabel('Paradas en orden')).toContainText('PLAN-BROWSER');
+ const map=itinerary.getByRole('region',{name:'Mapa grande del recorrido'});await expect(map).toBeVisible();const bounds=await map.boundingBox();expect(bounds!.width).toBeGreaterThan(900);expect(bounds!.height).toBeGreaterThan(500);await expect(map.locator('canvas')).toBeVisible();expect((await map.locator('canvas').boundingBox())!.width).toBeGreaterThan(900);
+ await page.screenshot({path:'.local/itinerary-desktop.png'});await page.setViewportSize({width:390,height:844});await expect(map).toBeVisible();expect((await map.boundingBox())!.height).toBeGreaterThan(350);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:'.local/itinerary-mobile.png'});
+ await itinerary.getByRole('button',{name:'Paradas y productos',exact:true}).click();await expect(itinerary.getByLabel('Paradas en orden')).toBeVisible();await itinerary.locator('.itinerary-stop').click();await expect(map).toBeVisible();await itinerary.getByRole('button',{name:'Ver recorrido completo'}).click();await page.setViewportSize({width:1365,height:900});
+ await expect(itinerary.getByRole('button',{name:'Aprobar distribución y crear rutas'})).toBeDisabled();await itinerary.getByLabel('Revisé la distribución, las ubicaciones y las indicaciones de entrega').check();
+ await itinerary.getByRole('button',{name:'Aprobar distribución y crear rutas'}).click();await expect(itinerary).toHaveCount(0);
  await expect(panel.getByRole('status').filter({hasText:'Organizados en esta operación: 1'})).toBeVisible({timeout:25000});
  await expect(panel.locator('.routing-route')).toContainText('PLAN-TEST');
  await expect(panel.locator('.routing-route')).toContainText('Chofer browser');
@@ -61,6 +65,7 @@ test('confirm reservation without maps, automatically organize in Routes and loa
  await page.reload();await page.getByRole('button',{name:'Rutas',exact:true}).click();await expect(grouped).toContainText('PLAN-BROWSER');await expect(grouped).toContainText('PLAN-TEST');await expect(unassigned.getByText('PLAN-BROWSER',{exact:true})).toHaveCount(0);
  await page.screenshot({path:'.local/dispatch-board-desktop.png',fullPage:true});await page.setViewportSize({width:390,height:844});await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:'.local/dispatch-board-mobile.png',fullPage:true});await page.setViewportSize({width:1365,height:900});
  await panel.getByRole('button',{name:'Cargar este cami\u00f3n'}).click();
+ await page.getByRole('button',{name:'Ver mapa grande y recorrido'}).click();await expect(itinerary.getByLabel('Resumen del recorrido')).toContainText('12,5 km');await page.keyboard.press('Escape');await expect(itinerary).toHaveCount(0);
  await expect(page.getByText('Ventilador QA',{exact:false}).first()).toBeVisible();
  await page.getByRole('button',{name:'Seleccionar pendientes',exact:true}).click();
  await page.getByRole('button',{name:'Confirmar carga',exact:true}).click();

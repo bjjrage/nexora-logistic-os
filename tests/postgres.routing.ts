@@ -10,6 +10,7 @@ import {ReservedDispatch} from '../server/reserved-dispatch.ts';
 import {correctDispatchOrders} from '../server/dispatch-corrections.ts';
 import {confirmDispatchLocations} from '../server/dispatch-location-review.ts';
 import {reconcileInventory} from '../server/reconciliation.ts';
+import {RouteReports} from '../server/route-report.ts';
 const cmd=()=>({commandId:randomUUID()});
 test('private routing schema on PostgreSQL runtime role applies once and reconciles inventory',async()=>{
  const url=new URL(process.env.DATABASE_URL??'');
@@ -37,12 +38,14 @@ test('private routing schema on PostgreSQL runtime role applies once and reconci
   const scopedRequest={...request,replacesProposalId:preflight.id};const proposed=await dispatch.organize(actor,scopedRequest);assert.equal(proposed.proposed,1);assert.equal(proposed.organized,0);assert.deepEqual(await dispatch.organize(actor,scopedRequest),proposed);
   const first=await dispatch.approve(actor,{...cmd(),proposalCommandId:proposed.id});assert.equal(first.organized,1);
   const routeId=first.routes[0].id,oldCargo=(await db.all('SELECT parcel_id FROM route_assignments WHERE route_id=?',routeId)).map(p=>p.parcel_id);
+  const reports=new RouteReports(db,async points=>({distanceMeters:12000,drivingSeconds:120,geometry:{type:'LineString',coordinates:points.map(p=>[p.longitude,p.latitude])},legs:points.slice(1).map(()=>({distanceMeters:6000,drivingSeconds:60}))}));
+  const report=await reports.read(actor,{routeId});assert.equal(report.stops.length,1);assert.equal(report.distanceMeters,12000);assert.equal(report.stops[0].precision,'STREET');assert.equal(report.depot!.label,'PG · Base PG');
   await d.loadSelected(actor,routeId,{...cmd(),expectedVersion:(await d.route(routeId,actor)).version,parcelIds:oldCargo});
   await inv.receive(actor,{...cmd(),clientId:client,locationId:location,productId:product,quantity:1});
   const extra=(await inv.createOrder(actor,{...cmd(),clientId:client,externalId:'PG-EXTRA',orderDate:'2026-10-29',destination:'Destino PG extra',recipientName:'Receptor extra',lines:[{productId:product,quantity:1}]})).id;
   await routing.point(actor,{...cmd(),kind:'ORDER',id:extra,latitude:-25.32,longitude:-57.62});
   await inv.reserveOrder(actor,extra,cmd());
-  const appendProposal=await dispatch.organize(actor,{...request,commandId:randomUUID()});assert.equal(appendProposal.proposed,1);const appended=await dispatch.approve(actor,{...cmd(),proposalCommandId:appendProposal.id});assert.equal(appended.organized,1);assert.equal(appended.routes[0].id,routeId);
+  const appendProposal=await dispatch.organize(actor,{...request,commandId:randomUUID()});assert.equal(appendProposal.proposed,1);assert.equal((await reports.read(actor,{proposalCommandId:appendProposal.id,vehicleId:vehicle})).stops.length,2);const appended=await dispatch.approve(actor,{...cmd(),proposalCommandId:appendProposal.id});assert.equal(appended.organized,1);assert.equal(appended.routes[0].id,routeId);
   assert.equal((await db.one('SELECT status FROM inventory_orders WHERE id=?',order))!.status,'LOADED');
   const board=await dispatch.board(actor,request.date);assert.equal(board.orders.length,0);assert.equal(board.routes.length,1);assert.equal(board.routes[0].orders.length,2);
   assert.equal(board.routes[0].orders.find((o:any)=>o.id===order).loaded,2);assert.equal(board.routes[0].orders.find((o:any)=>o.id===extra).pendingLoad,1);assert.equal(board.routes[0].orders[0].lines[0].sku,'PG');

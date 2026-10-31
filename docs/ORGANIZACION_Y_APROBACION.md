@@ -14,4 +14,8 @@ Las referencias de calle o ciudad se identifican como aproximadas. No se present
 
 Las rutas aprobadas permanecen en preparación. Cargar los bultos, confirmar la ruta y despachar son acciones posteriores. Los planes internos del organizador requieren esta aprobación y no pueden aplicarse directamente con `/api/routing/apply`.
 
+**Ver mapa grande y recorrido** abre una vista de toda la ventana, tanto en cada propuesta como en los camiones organizados y dentro de la ruta. En computadora, el mapa ocupa el espacio principal y las paradas tienen desplazamiento independiente al costado. En celular se alternan Mapa y Paradas; el resumen y los controles permanecen visibles. No se apilan mapas pequeños ni se obliga a recorrer la página para llegar a la aprobación del lote.
+
+`POST /api/routing/itinerary` recibe `proposalCommandId` y `vehicleId`, o `routeId`. Resuelve los puntos autorizados de la empresa y solicita a OSRM el trazado por calles **en el orden ya propuesto o guardado**, sin optimizarlo de nuevo. Incluye salida, paradas numeradas, productos, instrucciones, referencias aproximadas, kilómetros, tiempo de conducción, atención y espera por ventana horaria, y regreso al depósito. Son estimaciones sin tráfico en vivo; Traccar conserva el seguimiento real. Si falta un punto o falla OSRM, todas las paradas siguen visibles y no se presenta una distancia parcial como total. Esta consulta no aprueba, geocodifica, carga ni modifica stock.
+
 La verificación incluye pruebas SQLite/HTTP, PostgreSQL con el rol limitado, OR-Tools, navegador y una copia aislada de los seis pedidos reales. Los ensayos de carga y aprobación se realizan fuera de los datos operativos de producción.

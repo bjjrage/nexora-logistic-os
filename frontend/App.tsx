@@ -1,4 +1,5 @@
 import RouteOrderManagement from './RouteOrderManagement';
+import RouteItinerary from './RouteItinerary';
 import ReservedDispatch from './ReservedDispatch';
 import { ChangeEvent, Component, ErrorInfo, FormEvent, ReactNode, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MaintenancePanel from './MaintenancePanel';
@@ -990,6 +991,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
           {filteredRoutes.length>8 && <div className="list-pagination"><button className="button button-secondary" disabled={routePage===0} onClick={()=>setRoutePage(p=>p-1)}>Anterior</button><span>{routePage+1} / {Math.ceil(filteredRoutes.length/8)}</span><button className="button button-secondary" disabled={(routePage+1)*8>=filteredRoutes.length} onClick={()=>setRoutePage(p=>p+1)}>Siguiente</button></div>}
         </Panel></details>}
         {selectedRoute ? <Panel title="Pedidos y operación">
+          <RouteItinerary key={selectedRoute.id+':map:'+selectedRoute.version} sources={[{label:`${selectedRoute.name} · ${data.vehicles.find(v=>v.id===selectedRoute.vehicleId)?.plate??''}`,source:{routeId:selectedRoute.id}}]}/>
           {missingChecklist&&<div className="notice notice-neutral"><p>Para despachar, registrá los controles observados del vehículo.</p><button type="button" className="button button-secondary" disabled={busy} onClick={()=>{setEditRouteId('');setRouteTab('checks');onClearError();}}>Ir al control de salida</button></div>}
           {canPlan && editRouteId!==selectedRoute.id && ['DRAFT','READY'].includes(selectedRoute.state) && <button type="button" className="button button-secondary" disabled={busy} onClick={()=>setEditRouteId(selectedRoute.id)}>Editar ruta</button>}
           {canPlan && editRouteId===selectedRoute.id && <Panel title="Editar ruta"><RouteSetup key={selectedRoute.id+':'+selectedRoute.version} route={selectedRoute} drivers={data.drivers} vehicles={data.vehicles} action={action} busy={busy} operationError={operationError} onCancel={()=>setEditRouteId('')} onSaved={()=>setEditRouteId('')}/></Panel>}

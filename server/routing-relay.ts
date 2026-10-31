@@ -2,9 +2,9 @@ import type {Request} from 'express';
 import {authorize,type Actor} from './auth.ts';
 import {DomainError,ensure} from './errors.ts';
 /** Local OS shares the operational DB/session store but cannot resolve Railway private DNS. */
-export async function relayRouting(req:Pick<Request,'headers'|'method'|'body'>,actor:Actor,kind:string,path:'/context'|'/search'|'/preview'|'/suggest'|'/organize',destination=process.env.ROUTING_REMOTE_OS_URL,fetcher:typeof fetch=fetch){
+export async function relayRouting(req:Pick<Request,'headers'|'method'|'body'>,actor:Actor,kind:string,path:'/context'|'/search'|'/preview'|'/suggest'|'/organize'|'/itinerary',destination=process.env.ROUTING_REMOTE_OS_URL,fetcher:typeof fetch=fetch){
  if(!destination)return undefined;
- authorize(actor,['ADMIN','OPERATIONS']);
+ authorize(actor,path==='/itinerary'?['ADMIN','OPERATIONS','DEPOT','DRIVER']:['ADMIN','OPERATIONS']);
  ensure(kind==='postgres'&&process.env.NODE_ENV!=='production','ROUTING_CONFIGURATION','El enlace remoto de mapas es exclusivo del OS local con PostgreSQL.',503);
  const url=new URL(destination);ensure(url.protocol==='https:'&&!url.username&&!url.password&&url.pathname==='/','ROUTING_CONFIGURATION','El enlace remoto requiere el origen HTTPS del OS.',503);
  const cookie=req.headers.cookie?.split(';').map(x=>x.trim()).find(x=>/^logistics_session=[a-f0-9]{64}$/.test(x));
