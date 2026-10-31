@@ -81,18 +81,41 @@ test('second batch keeps the first visible, claims only leftovers and both appro
  board=await service.board(f.actor,departure.date);assert.equal(board.routes.length,2);assert.equal(board.orders.length,0);assert.equal(board.batches.filter(b=>b.status==='APPROVED').length,2);assert.equal((await reconcileInventory(f.db,f.actor)).ok,true);
 });
 
-test('expired batches stay visible and retain their groups until explicitly recalculated or discarded',async t=>{
+test('expired proposals remain in history but do not trap reserved orders outside a new calculation',async t=>{
  const f=await fixture(t);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());const service=automatic(f),proposal=await service.organize(f.actor,{...cmd(),...departure});
  await f.db.run('UPDATE idempotency SET response=? WHERE command_id=?',JSON.stringify({...proposal,validUntil:'2000-01-01T00:00:00Z'}),proposal.id);
- let board=await service.board(f.actor,departure.date);assert.equal(board.batches[0].status,'EXPIRED');assert.equal((await service.organize(f.actor,{...cmd(),...departure})).proposed,0);await assert.rejects(service.approve(f.actor,{...cmd(),proposalCommandId:proposal.id}),{code:'STALE_PLAN'});
+ let board=await service.board(f.actor,departure.date);assert.equal(board.batches[0].status,'EXPIRED');await assert.rejects(service.approve(f.actor,{...cmd(),proposalCommandId:proposal.id}),{code:'STALE_PLAN'});
  await assert.rejects(service.discard({...f.actor,role:'DEPOT'},{...cmd(),proposalCommandId:proposal.id}),{code:'FORBIDDEN'});await assert.rejects(service.discard({...f.actor,orgId:randomUUID()},{...cmd(),proposalCommandId:proposal.id}),{code:'NOT_FOUND'});
  const admin=(await f.d.createUser(f.actor,{...cmd(),name:'Otro administrador',username:'other-batch-admin',password:'Admin-Batch-2026!',role:'ADMIN'})).id;
  await service.discard({...f.actor,id:admin},{...cmd(),proposalCommandId:proposal.id});board=await service.board(f.actor,departure.date);assert.equal(board.batches[0].status,'DISCARDED');assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',f.orders[0]))!.status,'RESERVED');assert.equal((await service.organize(f.actor,{...cmd(),...departure})).proposed,1);
 });
 
+test('an expired proposal needs no manual discard before organizing the same reservations again',async t=>{
+ const f=await fixture(t);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());const service=automatic(f),first=await service.organize(f.actor,{...cmd(),...departure});await f.db.run('UPDATE idempotency SET response=? WHERE command_id=?',JSON.stringify({...first,validUntil:'2000-01-01T00:00:00Z'}),first.id);
+ const next=await service.organize(f.actor,{...cmd(),...departure});assert.equal(next.proposed,1);assert.notEqual(next.id,first.id);assert.deepEqual((await service.board(f.actor,departure.date)).batches.map(b=>b.status),['EXPIRED','PENDING']);
+});
+
+test('a spare crew receives new orders before adding work to a loaded preparing truck',async t=>{
+ const f=await fixture(t);await f.inv.receive(f.actor,{...cmd(),clientId:f.client,productId:f.product,locationId:f.location,quantity:1});await f.inv.reserveOrder(f.actor,f.orders[0],cmd());const service=automatic(f),first=await organizeAndApprove(service,f.actor,{...cmd(),...departure});
+ const truck=(await f.d.createVehicle(f.actor,{...cmd(),plate:'SPARE',capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0})).id;await f.d.createDriver(f.actor,{...cmd(),name:'Chofer disponible',username:'spare-crew',password:'Spare-Crew-2026!'});await f.inv.reserveOrder(f.actor,f.orders[1],cmd());
+ const second=await service.organize(f.actor,{...cmd(),...departure});assert.equal(second.proposedRoutes[0].vehicleId,truck);assert.notEqual(second.proposedRoutes[0].driverId,first.routes[0].driverId);assert.equal(second.merges.length,0);
+ const saved=await f.d.route(first.routes[0].id,f.actor);assert.equal(Date.parse(saved.end_at)-Date.parse(saved.start_at),720000);
+});
+
+test('when no job fits the current departure the organizer tries the next morning once and keeps original-request idempotency',async t=>{
+ const f=await fixture(t);await f.inv.reserveOrder(f.actor,f.orders[0],cmd());let calls=0;const service=new ReservedDispatch(f.db,{...f.providers,solve:async model=>{calls++;return calls===1?{routes:[],unassigned:model.orders.map((o:any)=>o.id)}:f.providers.solve(model);}}),input=cmd();
+ const proposal=await service.organize(f.actor,input);assert.equal(calls,2);assert.equal(proposal.proposed,1);assert.ok(proposal.scheduleReason);assert.deepEqual(await service.organize(f.actor,input),proposal);assert.equal(calls,2);
+});
+
+test('real OR-Tools balances six complete jobs across two usable crews even when one truck could carry everything',{skip:!process.env.ROUTING_PYTHON},async()=>{
+ const coords=[0,-3,-2,-1,1,2,3],orders=coords.slice(1).map(()=>({id:randomUUID(),weight:1,volume:1,window:[0,7200],serviceSeconds:600})),fleet=[0,1].map(()=>({vehicleId:randomUUID(),driverId:randomUUID(),capacityWeight:100,capacityVolume:100}));
+ const result=await solveLocal({horizon:7200,matrix:coords.map(a=>coords.map(b=>Math.abs(a-b)*60)),orders,fleet});assert.equal(result.routes.length,2);assert.equal(result.unassigned.length,0);assert.equal(new Set(result.routes.map((r:any)=>r.driverId)).size,2);assert.ok(Math.max(...result.routes.map((r:any)=>r.durationSeconds))<3000);assert.equal(result.routes.flatMap((r:any)=>r.stops).length,6);
+ const one=await solveLocal({horizon:7200,matrix:[[0,60],[60,0]],orders:orders.slice(0,1),fleet});assert.equal(one.routes.length,1);
+});
+
 test('legacy overlapping batches remain visible and recalculating the second recovers only its unclaimed orders',async t=>{
  const f=await fixture(t);await f.inv.receive(f.actor,{...cmd(),clientId:f.client,productId:f.product,locationId:f.location,quantity:1});for(const id of f.orders)await f.inv.reserveOrder(f.actor,id,cmd());await f.d.createVehicle(f.actor,{...cmd(),plate:'SECOND',capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0});await f.d.createDriver(f.actor,{...cmd(),name:'Segundo',username:'legacy-batch',password:'Driver-QA-2026!'});
- const service=automatic(f),first=await service.organize(f.actor,{...cmd(),...departure,orderIds:[f.orders[0]]}),legacyId=randomUUID(),legacy={...first,id:legacyId,persistentBatch:false,selectedOrderSignature:undefined,proposed:2,proposedRoutes:[{...first.proposedRoutes[0],stops:[...first.proposedRoutes[0].stops,{...first.proposedRoutes[0].stops[0],orderId:f.orders[1]}]}]};
+ const service=automatic(f),first=await service.organize(f.actor,{...cmd(),...departure,orderIds:[f.orders[0]]}),legacyId=randomUUID(),legacy={...first,id:legacyId,persistentBatch:false,scopeOrderIds:undefined,selectedOrderSignature:undefined,proposed:2,proposedRoutes:[{...first.proposedRoutes[0],stops:[...first.proposedRoutes[0].stops,{...first.proposedRoutes[0].stops[0],orderId:f.orders[1]}]}]};
  await f.d.command(f.actor,'routing.organizeReserved',{commandId:legacyId},['ADMIN'],async()=>legacy);
  let board=await service.board(f.actor,departure.date);assert.deepEqual(board.batches.map(b=>b.status),['PENDING','CONFLICT']);const recovered=await service.organize(f.actor,{...cmd(),...departure,replacesProposalId:legacyId});assert.equal(recovered.proposed,1);assert.equal(recovered.proposedRoutes[0].stops[0].orderId,f.orders[1]);
  board=await service.board(f.actor,departure.date);assert.deepEqual(board.batches.map(b=>b.status),['PENDING','REPLACED','PENDING']);

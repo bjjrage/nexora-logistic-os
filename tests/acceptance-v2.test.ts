@@ -203,7 +203,7 @@ test('otro tenant no puede leer evidencia existente', async (t) => {
     assert.equal(response.status, 404);
     assert.equal(response.body.error?.code, 'NOT_FOUND');
 });
-test('dos sesiones ops que confirman rutas con el mismo chofer y vehículo producen un único ready', async (t) => {
+test('dos sesiones ops no pueden cargar ni confirmar borradores que ya tienen reservas de flota superpuestas', async (t) => {
     const f = await fileFixture(t);
     const shipmentA = await f.shipment();
     const shipmentB = await f.shipment();
@@ -212,9 +212,9 @@ test('dos sesiones ops que confirman rutas con el mismo chofer y vehículo produ
     await f.receive(shipmentA);
     await f.receive(shipmentB);
     await f.assign(routeA, shipmentA.parcels.map(parcel => parcel.id));
-    await f.assign(routeB, shipmentB.parcels.map(parcel => parcel.id));
     await f.domain.load(f.actor,routeA,{...await f.command(),expectedVersion:await f.version(routeA),code:shipmentA.parcels[0].code});
-    await f.domain.load(f.actor,routeB,{...await f.command(),expectedVersion:await f.version(routeB),code:shipmentB.parcels[0].code});
+    await f.assign(routeB, shipmentB.parcels.map(parcel => parcel.id));
+    await assert.rejects(f.domain.load(f.actor,routeB,{...await f.command(),expectedVersion:await f.version(routeB),code:shipmentB.parcels[0].code}),{code:'VERSION_CONFLICT'});
     const opsA = `ops-a-${randomUUID().slice(0, 8)}`;
     const opsB = `ops-b-${randomUUID().slice(0, 8)}`;
     await f.domain.createUser(f.actor, { ...await f.command(), name: 'Operaciones QA A', username: opsA, password, role: 'OPERATIONS' });
@@ -225,9 +225,8 @@ test('dos sesiones ops que confirman rutas con el mismo chofer y vehículo produ
         request(base, `/api/routes/${routeA}/ready`, { method: 'POST', cookie: cookieA, body: { ...await f.command(), expectedVersion: await f.version(routeA) } }),
         request(base, `/api/routes/${routeB}/ready`, { method: 'POST', cookie: cookieB, body: { ...await f.command(), expectedVersion: await f.version(routeB) } }),
     ]);
-    assert.deepEqual(replies.map(reply => reply.status).sort((a, b) => a - b), [200, 409]);
-    assert.ok(replies.some(reply => reply.status === 200));
-    assert.ok(replies.some(reply => reply.status === 409 && reply.body.error?.code === 'VERSION_CONFLICT'));
+    assert.deepEqual(replies.map(reply => reply.status), [409,409]);
+    assert.ok(replies.every(reply => reply.body.error?.code === 'VERSION_CONFLICT'));
     const states = (await f.store.all('SELECT state FROM routes WHERE id IN (?,?) ORDER BY id', routeA, routeB)).map(row => row.state).sort();
-    assert.deepEqual(states, ['DRAFT', 'READY']);
+    assert.deepEqual(states, ['DRAFT', 'DRAFT']);
 });

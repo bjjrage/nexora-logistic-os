@@ -11,6 +11,7 @@ import {correctDispatchOrders} from '../server/dispatch-corrections.ts';
 import {confirmDispatchLocations} from '../server/dispatch-location-review.ts';
 import {reconcileInventory} from '../server/reconciliation.ts';
 import {RouteReports} from '../server/route-report.ts';
+import {correctTestDispatch} from '../server/test-dispatch-correction.ts';
 const cmd=()=>({commandId:randomUUID()});
 test('private routing schema on PostgreSQL runtime role applies once and reconciles inventory',async()=>{
  const url=new URL(process.env.DATABASE_URL??'');
@@ -50,6 +51,10 @@ test('private routing schema on PostgreSQL runtime role applies once and reconci
   const board=await dispatch.board(actor,request.date);assert.equal(board.orders.length,0);assert.equal(board.routes.length,1);assert.equal(board.routes[0].orders.length,2);
   assert.equal(board.routes[0].orders.find((o:any)=>o.id===order).loaded,2);assert.equal(board.routes[0].orders.find((o:any)=>o.id===extra).pendingLoad,1);assert.equal(board.routes[0].orders[0].lines[0].sku,'PG');
   assert.equal(board.routes[0].orders.find((o:any)=>o.id===order).point.approximate,true);
+  const allCargo=(await db.all('SELECT parcel_id FROM route_assignments WHERE org_id=? AND route_id=? AND active=1',actor.orgId,routeId)).map(p=>p.parcel_id);
+  await d.loadSelected(actor,routeId,{...cmd(),expectedVersion:(await d.route(routeId,actor)).version,parcelIds:allCargo});await d.ready(actor,routeId,{...cmd(),expectedVersion:(await d.route(routeId,actor)).version});await d.inspect(actor,vehicle,{...cmd(),odometer:0,fuelPercent:80,items:[{label:'Control QA',severity:'OK',note:''}]});await d.dispatch(actor,routeId,{...cmd(),expectedVersion:(await d.route(routeId,actor)).version,dispatchNow:true});
+  await db.run('INSERT INTO organization_test_mode VALUES(?,1)',actor.orgId);const correctionBody={...cmd(),expectedVersion:(await d.route(routeId,actor)).version,didNotDepart:true,reason:'Prueba aislada; el vehículo no salió del depósito.'};
+  const undone=await correctTestDispatch(db,actor,routeId,correctionBody);assert.equal(undone.loadedPreserved,3);assert.equal((await db.one('SELECT status FROM inventory_orders WHERE id=?',order))!.status,'LOADED');assert.equal((await reconcileInventory(db,actor)).ok,true);
   const correction={...cmd(),orderIds:[order,extra],mode:'RELEASE',confirmUnloaded:true};
   assert.equal((await correctDispatchOrders(db,actor,correction)).released,3);assert.equal((await correctDispatchOrders(db,actor,correction)).released,3);
   assert.equal((await db.one("SELECT COUNT(*) AS n FROM route_assignments WHERE org_id=? AND active=1",actor.orgId))!.n,0);

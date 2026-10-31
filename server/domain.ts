@@ -9,6 +9,7 @@ import {saveClientProfile,clientProfileSummaries} from './client-profiles.ts';
 import {latestParcelAssignment} from './driver-access.ts';
 import {verifyVehicleCapacity} from './vehicle-capacity.ts';
 import {bindVehiclePhone} from './vehicle-phone.ts';
+import {assertRouteAvailable} from './route-coordination.ts';
 const now = () => new Date().toISOString();
 const canonical = (value: any): string => JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 const OPS: Role[] = ['ADMIN', 'OPERATIONS'];
@@ -165,7 +166,8 @@ export class Logistics {
             if(provider==='TRACCAR')ensure(!await this.store.one('SELECT route_id FROM quad_route_links WHERE org_id=? AND route_id=?',actor.orgId,id),'INVALID_TRANSITION','La ruta está vinculada a QuadMinds.');
             if(route.state==='READY'||provider!==(setting?.provider??'QUADMINDS'))await validateRouteProvider(this.store,actor.orgId,id,provider);
             const next={...route,name:b.name,driver_id:b.driverId,vehicle_id:b.vehicleId,start_at:b.startAt,end_at:b.endAt};
-            if(route.state==='READY'){await this.routeAvailability(next,actor,false);await this.capacity(next,actor);}
+            if(route.state==='READY'||await this.store.one('SELECT id FROM route_assignments WHERE org_id=? AND route_id=? AND active=1 LIMIT 1',actor.orgId,id))await this.routeAvailability(next,actor,false);
+            if(route.state==='READY')await this.capacity(next,actor);
             await this.store.run('UPDATE routes SET name=?,driver_id=?,vehicle_id=?,start_at=?,end_at=?,version=version+1 WHERE id=? AND org_id=?',b.name,b.driverId,b.vehicleId,b.startAt,b.endAt,id,actor.orgId);
             if(b.trackingProvider)await this.store.run('INSERT INTO route_tracking_settings VALUES(?,?,?,?) ON CONFLICT(org_id,route_id) DO UPDATE SET provider=excluded.provider,updated_at=excluded.updated_at',actor.orgId,id,provider,now());
             if(b.phoneDeviceId!==undefined)await bindVehiclePhone(this.store,actor.orgId,b.vehicleId,b.phoneDeviceId);
@@ -255,14 +257,7 @@ export class Logistics {
         });
     }
     async routeAvailability(route: Row, actor: Actor, dispatching: boolean) {
-        const conflicts = await this.store.all(`SELECT r.name,r.state,r.driver_id,r.vehicle_id,d.name AS driver_name,v.plate FROM routes r JOIN drivers d ON d.id=r.driver_id AND d.org_id=r.org_id JOIN vehicles v ON v.id=r.vehicle_id AND v.org_id=r.org_id WHERE r.org_id=? AND r.id<>? AND r.state IN('READY','IN_PROGRESS') AND (r.driver_id=? OR r.vehicle_id=?) AND ((?=1 AND r.state='IN_PROGRESS') OR (r.start_at<? AND r.end_at>?)) ORDER BY r.name,r.id`,actor.orgId,route.id,route.driver_id,route.vehicle_id,dispatching?1:0,route.end_at,route.start_at);
-        const message = conflicts.map(conflict => {
-            const driver = conflict.driver_id === route.driver_id;
-            const vehicle = conflict.vehicle_id === route.vehicle_id;
-            const subject = driver && vehicle ? `El chofer ${conflict.driver_name} y el vehículo ${conflict.plate}` : driver ? `El chofer ${conflict.driver_name}` : `El vehículo ${conflict.plate}`;
-            return `${subject} ya ${driver && vehicle ? 'están asignados' : 'está asignado'} a la ruta «${conflict.name}»${conflict.state === 'IN_PROGRESS' && dispatching ? ', que debe finalizar antes de esta salida' : ' en ese horario'}.`;
-        }).join(' ');
-        ensure(!conflicts.length, 'VERSION_CONFLICT', message);
+        await assertRouteAvailable(this.store,actor.orgId,route,dispatching);
     }
     async vehicleCapacity(actor:Actor,vehicleId:string,additional:Row[]=[]){
         await verifyVehicleCapacity(this.store,actor.orgId,vehicleId,additional);
@@ -277,6 +272,7 @@ export class Logistics {
                 return { id, alreadyLoaded: true, version: r.version };
             ensure(['RECEIVED', 'RETURNED_TO_DEPOT'].includes(p.state) && p.custody_type === 'DEPOT', 'INVALID_TRANSITION', 'El bulto no está en depósito.');
             await this.vehicleCapacity(actor,r.vehicle_id,[p]);
+            await this.routeAvailability(r,actor,true);
             await this.move(p, actor, 'LOADED', 'VEHICLE', r.vehicle_id, 'LOADED', b.commandId);
             await this.store.run("UPDATE routes SET state='DRAFT',version=version+1 WHERE id=? AND org_id=?",id,actor.orgId);
             return { id, version: r.version + 1 };
@@ -293,6 +289,7 @@ export class Logistics {
             ensure(pending.every(p=>['RECEIVED','RETURNED_TO_DEPOT'].includes(p.state)&&p.custody_type==='DEPOT'),'INVALID_TRANSITION','Algún bulto seleccionado no está en depósito.');
             if(!pending.length)return {id,version:route.version,alreadyLoaded:true,loaded:0};
             await this.vehicleCapacity(actor,route.vehicle_id,pending);
+            await this.routeAvailability(route,actor,true);
             for(const parcel of pending)await this.move(parcel,actor,'LOADED','VEHICLE',route.vehicle_id,'LOADED',b.commandId);
             await this.store.run("UPDATE routes SET state='DRAFT',version=version+1 WHERE id=? AND org_id=?",id,actor.orgId);
             return {id,version:route.version+1,loaded:pending.length};

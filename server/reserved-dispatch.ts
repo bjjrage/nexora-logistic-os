@@ -10,7 +10,7 @@ import {dispatchBoard,orderLines} from './dispatch-board.ts';
 import {prepareAppend,applyAppend} from './dispatch-append.ts';
 import {deliveryBlock} from './delivery-block.ts';
 import {confirmDispatchLocations} from './dispatch-location-review.ts';
-import {dispatchBatches,batchOrderIds,batchScopeSignature,batchConflict,holdsBatchOrders} from './dispatch-batches.ts';
+import {dispatchBatches,batchOrderIds,batchScopeSignature,batchConflict,holdsBatchOrders,optimizerVersion,proposalWindow} from './dispatch-batches.ts';
 const roles:Actor['role'][]=['ADMIN','OPERATIONS'];
 const inputSchema=z.object({commandId:z.uuid(),replacesProposalId:z.uuid().optional(),orderIds:z.array(z.uuid()).min(1).max(1000).optional(),reviewedInstructions:z.array(z.object({orderId:z.uuid(),text:z.string().max(4000)})).max(1000).default([]),date:z.iso.date().optional(),startAt:z.iso.datetime({offset:true}).optional(),endAt:z.iso.datetime({offset:true}).optional()}).strict();
 const fingerprint=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -38,12 +38,12 @@ export class ReservedDispatch{
  }
  async board(actor:Actor,date?:string){return dispatchBoard(this.db,actor,await this.queue(actor,date));}
  private async free(actor:Actor,field:'vehicle_id'|'driver_id',id:string,start:string,end:string,held:Row[]=[]){
-  if(held.some(b=>b.status==='PENDING'&&Date.parse(b.schedule.startAt)<Date.parse(end)&&Date.parse(b.schedule.endAt)>Date.parse(start)&&b.proposedRoutes.some((r:Row)=>r[field==='vehicle_id'?'vehicleId':'driverId']===id)))return false;
+  if(held.some(b=>b.status==='PENDING'&&b.proposedRoutes.some((r:Row)=>{const slot=proposalWindow(b,r);return r[field==='vehicle_id'?'vehicleId':'driverId']===id&&slot.start<Date.parse(end)&&slot.end>Date.parse(start);})))return false;
   const route=await this.db.one(`SELECT r.id FROM routes r WHERE r.org_id=? AND r.${field}=? AND r.state<>'OPERATIONALLY_CLOSED' AND (r.state='IN_PROGRESS' OR(r.start_at<? AND r.end_at>?)) AND (r.state<>'DRAFT' OR EXISTS(SELECT 1 FROM route_assignments a WHERE a.org_id=r.org_id AND a.route_id=r.id AND a.active=1)) LIMIT 1`,actor.orgId,id,end,start);
   if(route)return false;
   return field!=='vehicle_id'||!await this.db.one("SELECT id FROM parcels WHERE org_id=? AND custody_type='VEHICLE' AND custody_id=? LIMIT 1",actor.orgId,id);
  }
- async organize(actor:Actor,input:unknown){
+ async organize(actor:Actor,input:unknown,automaticSchedule?:{startAt:string;endAt:string}):Promise<Row>{
   authorize(actor,roles);const body=inputSchema.parse(input),domain=new Logistics(this.db);
   // Resolve idempotency before geocoding/solving. Reused keys still validate actor and payload.
   if(await this.db.one('SELECT command_id FROM idempotency WHERE org_id=? AND command_id=?',actor.orgId,body.commandId))return domain.command(actor,'routing.organizeReserved',body,roles,()=>{throw new Error('Missing cached response');});
@@ -51,14 +51,14 @@ export class ReservedDispatch{
   const replacing=body.replacesProposalId?batches.find(b=>b.id===body.replacesProposalId):null;
   if(body.replacesProposalId)ensure(replacing?.canManage&&!['APPROVED','DISCARDED','REPLACED'].includes(replacing.status),'INVALID_TRANSITION','Ese lote no está disponible para recalcular.');
   const held=batches.filter(b=>holdsBatchOrders(b)&&b.id!==body.replacesProposalId),claimed=new Set(held.flatMap(batchOrderIds));
-  const requested=body.orderIds??(replacing?batchOrderIds(replacing):null);
-  if(body.orderIds&&replacing)ensure(body.orderIds.every(id=>batchOrderIds(replacing).includes(id)),'VALIDATION_ERROR','Elegí únicamente pedidos que pertenecen al lote que estás recalculando.');
+  const scope=replacing?.scopeOrderIds??(replacing?batchOrderIds(replacing):null),requested=body.orderIds??scope;
+  if(body.orderIds&&replacing)ensure(body.orderIds.every(id=>scope.includes(id)),'VALIDATION_ERROR','Elegí únicamente pedidos que pertenecen a la propuesta que estás actualizando.');
   if(body.orderIds&&!replacing)ensure(body.orderIds.every(id=>allQueue.orders.some((o:Row)=>o.id===id)),'STALE_PLAN','Un pedido seleccionado ya no está reservado.');
   const queue={...allQueue,orders:allQueue.orders.filter((o:Row)=>(!requested||requested.includes(o.id))&&!claimed.has(o.id))},inputIds=queue.orders.map((o:Row)=>o.id);
   ensure(queue.date>=queue.today||body.startAt,'VALIDATION_ERROR','Elegí hoy o una fecha futura para la salida. Los pedidos atrasados se incluyen automáticamente.');
   const preservedSchedule=replacing&&Date.parse(replacing.schedule.startAt)>Date.now()?replacing.schedule:null;
-  const start=body.startAt??preservedSchedule?.startAt??(queue.date===queue.today?new Date().toISOString():morning(queue.date,queue.timezone));
-  const end=body.endAt??preservedSchedule?.endAt??new Date(Date.parse(start)+10*3600000).toISOString();
+  const start=automaticSchedule?.startAt??body.startAt??preservedSchedule?.startAt??(queue.date===queue.today?new Date().toISOString():morning(queue.date,queue.timezone));
+  const end=automaticSchedule?.endAt??body.endAt??preservedSchedule?.endAt??new Date(Date.parse(start)+10*3600000).toISOString();
   const locationSuggestions:Row[]=[],pending:Row[]=[],plans:Row[]=[],merges:NonNullable<Awaited<ReturnType<typeof prepareAppend>>>[]=[],proposedRoutes:Row[]=[],usedVehicles=new Set<string>(),usedDrivers=new Set<string>();
   const planningPoints=new Map<string,{latitude:number;longitude:number}>();
   const reviews=queue.orders.filter(o=>o.restrictions).map(o=>({orderId:o.id,text:o.restrictions}));
@@ -81,11 +81,14 @@ export class ReservedDispatch{
     if(point)orders.push(order);else pending.push({...order,...(locationFailure??{reason:'No encontramos una referencia cercana; revisá la dirección para incluir este pedido',reasonCode:'MISSING_DELIVERY_LOCATION'})});
    }
    const candidates=await this.db.all("SELECT id,vehicle_id,driver_id FROM routes WHERE org_id=? AND state IN('DRAFT','READY') AND start_at<? AND end_at>? ORDER BY start_at,id",actor.orgId,end,start);
+   const freeVehicles=await Promise.all(context.vehicles.map(async v=>!usedVehicles.has(v.id)&&await this.free(actor,'vehicle_id',v.id,start,end,held))),freeDrivers=await Promise.all(context.drivers.map(async d=>!usedDrivers.has(d.id)&&await this.free(actor,'driver_id',d.id,start,end,held)));
+   const hasSpareCrew=freeVehicles.some(Boolean)&&freeDrivers.some(Boolean);
    for(const route of candidates){
+    if(hasSpareCrew)break;
     if(!orders.length)break;if(usedVehicles.has(route.vehicle_id)||usedDrivers.has(route.driver_id))continue;
     if(held.some(b=>b.status==='PENDING'&&Date.parse(b.schedule.startAt)<Date.parse(end)&&Date.parse(b.schedule.endAt)>Date.parse(start)&&b.proposedRoutes.some((r:Row)=>r.vehicleId===route.vehicle_id||r.driverId===route.driver_id)))continue;
     const merge=await prepareAppend(this.db,this.routing,actor,route.id,locationId,orders.map(o=>o.id),reviews,planningPoints);
-    if(merge){merges.push(merge);proposedRoutes.push({existingRouteId:merge.routeId,name:merge.name,vehicleId:merge.vehicleId,driverId:merge.driverId,plate:merge.plate,driverName:merge.driverName,stops:merge.accepted.map(o=>({orderId:o.id,reference:o.external_id,recipientName:o.recipient_name,destination:o.destination,instructions:o.restrictions,lines:o.lines})),existingOrders:merge.sequence.length-merge.accepted.length});usedVehicles.add(route.vehicle_id);usedDrivers.add(route.driver_id);for(const accepted of merge.accepted){const i=orders.findIndex(o=>o.id===accepted.id);if(i>=0)orders.splice(i,1);}}
+    if(merge){merges.push(merge);proposedRoutes.push({existingRouteId:merge.routeId,name:merge.name,startAt:merge.startAt,endAt:merge.endAt,durationSeconds:merge.durationSeconds,vehicleId:merge.vehicleId,driverId:merge.driverId,plate:merge.plate,driverName:merge.driverName,stops:merge.accepted.map(o=>({orderId:o.id,reference:o.external_id,recipientName:o.recipient_name,destination:o.destination,instructions:o.restrictions,lines:o.lines})),existingOrders:merge.sequence.length-merge.accepted.length});usedVehicles.add(route.vehicle_id);usedDrivers.add(route.driver_id);for(const accepted of merge.accepted){const i=orders.findIndex(o=>o.id===accepted.id);if(i>=0)orders.splice(i,1);}}
    }
    for(let offset=0;offset<orders.length;offset+=80){
     const batch=orders.slice(offset,offset+80),fleet:Array<{vehicleId:string;driverId:string}>=[];
@@ -103,6 +106,21 @@ export class ReservedDispatch{
     pending.push(...plan.pending);
     if(plan.id&&plan.routes.length){plans.push(plan);for(const route of plan.routes){proposedRoutes.push({...route,planId:plan.id,capacityUnverified:plan.capacityUnverified});usedVehicles.add(route.vehicleId);usedDrivers.add(route.driverId);}}
    }
+   // A free crew gets first choice. Append only the residual orders that it
+   // could not carry, without changing a preparing truck's existing stops.
+   if(hasSpareCrew)for(const route of candidates){
+    if(usedVehicles.has(route.vehicle_id)||usedDrivers.has(route.driver_id))continue;
+    if(held.some(b=>b.proposedRoutes.some((r:Row)=>{const slot=proposalWindow(b,r);return (r.vehicleId===route.vehicle_id||r.driverId===route.driver_id)&&slot.start<Date.parse(end)&&slot.end>Date.parse(start);})))continue;
+    const residual=pending.filter(p=>orders.some(o=>o.id===p.id)).map(p=>p.id);if(!residual.length)break;
+    const merge=await prepareAppend(this.db,this.routing,actor,route.id,locationId,residual,reviews,planningPoints);if(!merge)continue;
+    merges.push(merge);proposedRoutes.push({existingRouteId:merge.routeId,name:merge.name,startAt:merge.startAt,endAt:merge.endAt,durationSeconds:merge.durationSeconds,vehicleId:merge.vehicleId,driverId:merge.driverId,plate:merge.plate,driverName:merge.driverName,stops:merge.accepted.map(o=>({orderId:o.id,reference:o.external_id,recipientName:o.recipient_name,destination:o.destination,instructions:o.restrictions,lines:o.lines})),existingOrders:merge.sequence.length-merge.accepted.length});usedVehicles.add(route.vehicle_id);usedDrivers.add(route.driver_id);
+    for(const accepted of merge.accepted){const index=pending.findIndex(p=>p.id===accepted.id);if(index>=0)pending.splice(index,1);}
+   }
+  }
+  if(!proposedRoutes.length&&!body.startAt&&!automaticSchedule&&pending.some(p=>p.reasonCode==='DELIVERY_WINDOW_OR_FLEET_LIMIT'||p.reason?.includes('Horario de entrega fuera'))){
+   const day=new Intl.DateTimeFormat('en-CA',{timeZone:queue.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(start)),nextDay=new Date(Date.parse(day+'T00:00:00Z')+86400000).toISOString().slice(0,10),nextStart=morning(nextDay,queue.timezone);
+   // One bounded retry, retaining the original command body for safe retries.
+   return this.organize(actor,input,{startAt:nextStart,endAt:new Date(Date.parse(nextStart)+10*3600000).toISOString()});
   }
   return domain.command(actor,'routing.organizeReserved',body,roles,async()=>{
    const current=await this.queue(actor,queue.date);
@@ -114,7 +132,7 @@ export class ReservedDispatch{
    const nextDeparture=pending.some(p=>p.reason?.includes('Horario de entrega fuera')||p.reasonCode==='DELIVERY_WINDOW_OR_FLEET_LIMIT')?{startAt:nextStart,endAt:new Date(Date.parse(nextStart)+10*3600000).toISOString(),label:new Intl.DateTimeFormat('es-PY',{timeZone:queue.timezone,dateStyle:'short',timeStyle:'short'}).format(new Date(nextStart))}:null;
    const proposed=proposedRoutes.reduce((n,r)=>n+r.stops.length,0),selected=new Set(proposedRoutes.flatMap(r=>r.stops.map((s:Row)=>s.orderId)));
    const validUntil=Math.min(Date.now()+30*60000,...merges.map(m=>m.validUntil),...proposedRoutes.filter(r=>!r.existingRouteId).map(r=>Math.min(Date.parse(end)-r.durationSeconds*1000,...r.stops.map((s:Row)=>Date.parse(start)+(s.window[1]-s.arrivalSeconds)*1000))));
-   return {id:body.commandId,persistentBatch:true,replacesProposalId:proposed?body.replacesProposalId??null:null,date:queue.date,timezone:queue.timezone,queueSignature:fingerprint(queue.orders),selectedOrderSignature:batchScopeSignature(queue.orders,[...selected]),validUntil:new Date(validUntil).toISOString(),schedule:{startAt:start,endAt:end},locationSuggestions:locationSuggestions.filter(p=>selected.has(p.id)),nextDeparture,organized:0,routes:[],proposed,proposedRoutes,planIds:plans.map(p=>p.id),merges,pending};
+   return {id:body.commandId,optimizerVersion,scopeOrderIds:inputIds,scheduleReason:automaticSchedule?'Las ventanas de entrega de hoy no alcanzan. Se propone la próxima jornada para tu aprobación.':null,consideredFleet:[...new Map(plans.flatMap(p=>p.consideredFleet??[]).map((f:Row)=>[f.vehicleId,f])).values()],persistentBatch:true,replacesProposalId:proposed?body.replacesProposalId??null:null,date:queue.date,timezone:queue.timezone,queueSignature:fingerprint(queue.orders),selectedOrderSignature:batchScopeSignature(queue.orders,[...selected]),validUntil:new Date(validUntil).toISOString(),schedule:{startAt:start,endAt:end},locationSuggestions:locationSuggestions.filter(p=>selected.has(p.id)),nextDeparture,organized:0,routes:[],proposed,proposedRoutes,planIds:plans.map(p=>p.id),merges,pending};
   });
  }
  async approve(actor:Actor,input:unknown){

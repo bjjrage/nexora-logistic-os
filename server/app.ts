@@ -17,6 +17,7 @@ import { installLivePortal } from './live-portal.ts';
 import { QuadOperations } from './quad-operations.ts';
 import { installQuadOperationRoutes } from './quad-operation-routes.ts';
 import { installInventoryRoutes } from './inventory-routes.ts';
+import {correctTestDispatch} from './test-dispatch-correction.ts';
 import { synchronizeQuadMinds } from './quad-sync.ts';
 import {Diagnostics,requestContext,WindowLimiter} from './observability.ts';
 import {reconcileInventory} from './reconciliation.ts';
@@ -150,6 +151,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     post('/api/routes/:id/load-scans', schemas.load, async (a, b, r) => await domain.load(a, routeId(r), b));
     post('/api/routes/:id/load-selected', schemas.loadSelected, async (a, b, r) => await domain.loadSelected(a, routeId(r), b));
     post('/api/routes/:id/dispatch', schemas.dispatch, async (a, b, r) => await domain.dispatch(a, routeId(r), b));
+    app.post('/api/routes/:id/correct-test-dispatch',async(req,res)=>res.json(await correctTestDispatch(store,await auth(req),String(req.params.id),req.body)));
     post('/api/routes/:id/close', schemas.version, async (a, b, r) => await domain.closeRoute(a, routeId(r), b));
     post('/api/stops/:id/pickups', schemas.pickup, async (a, b, r) => await domain.pickup(a, routeId(r), b));
     post('/api/stops/:id/attempts', schemas.attempt, async (a, b, r) => await domain.attempt(a, routeId(r), b));

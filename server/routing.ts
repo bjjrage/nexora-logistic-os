@@ -161,7 +161,7 @@ export class Routing {
    const vehicle=model.fleet.find(v=>v.vehicleId===route.vehicleId)!;
    ensure(time+matrix[previous][0]<=route.durationSeconds&&route.durationSeconds<=model.horizon&&weight<=vehicle.capacityWeight&&volume<=vehicle.capacityVolume,'INVALID_PLAN','El recorrido excede la jornada o la capacidad del vehículo.');
   }
-  const proposal={requiresApproval:planningPoints!==undefined,routes:solution.routes.map(r=>({...r,...model.fleet.find(f=>f.vehicleId===r.vehicleId),stops:r.stops.map(s=>({...s,...model.orders.find(o=>o.id===s.orderId)}))})),pending:[...model.pending,...model.orders.filter(o=>!assigned.includes(o.id)).map(o=>{const fits=model.fleet.some(f=>o.weight<=f.capacityWeight&&o.volume<=f.capacityVolume);return {...o,reason:fits?'No hay tiempo o camiones suficientes dentro del horario de entrega':'El pedido completo excede la capacidad de todos los camiones disponibles',reasonCode:fits?'DELIVERY_WINDOW_OR_FLEET_LIMIT':'CAPACITY_EXCEEDED'};})],capacityUnverified:model.orders.some(o=>assigned.includes(o.id)&&o.unknown)};
+  const proposal={requiresApproval:planningPoints!==undefined,consideredFleet:model.fleet,routes:solution.routes.map(r=>({...r,...model.fleet.find(f=>f.vehicleId===r.vehicleId),startAt:model.input.startAt,endAt:new Date(Date.parse(model.input.startAt)+Math.max(1,r.durationSeconds)*1000).toISOString(),stops:r.stops.map(s=>({...s,...model.orders.find(o=>o.id===s.orderId)}))})),pending:[...model.pending,...model.orders.filter(o=>!assigned.includes(o.id)).map(o=>{const fits=model.fleet.some(f=>o.weight<=f.capacityWeight&&o.volume<=f.capacityVolume);return {...o,reason:fits?'No hay tiempo o camiones suficientes dentro del horario de entrega':'El pedido completo excede la capacidad de todos los camiones disponibles',reasonCode:fits?'DELIVERY_WINDOW_OR_FLEET_LIMIT':'CAPACITY_EXCEEDED'};})],capacityUnverified:model.orders.some(o=>assigned.includes(o.id)&&o.unknown)};
   // Approval freezes only the selected stops and fleet, never unrelated rejected orders.
   const selectedInput=planningPoints&&assigned.length?{...model.input,orderIds:assigned,fleet:model.input.fleet.filter(f=>solution.routes.some(r=>r.vehicleId===f.vehicleId))}:model.input;
   const snapshot=planningPoints&&assigned.length?await this.store.transaction(()=>this.model(actor,selectedInput,planningPoints)):model;
@@ -180,7 +180,7 @@ export class Routing {
    ensure(proposal.routes.length,'NO_ELIGIBLE_ORDERS','No hay rutas para aplicar.');
    const routes=[];
    for(const proposed of proposal.routes){
-    const route=await domain.createRoute(actor,{commandId:randomUUID(),name:`Reparto ${model.departureDate} · ${proposed.plate}`,driverId:proposed.driverId,vehicleId:proposed.vehicleId,trackingProvider:'TRACCAR',startAt:model.input.startAt,endAt:model.input.endAt});
+    const route=await domain.createRoute(actor,{commandId:randomUUID(),name:`Reparto ${model.departureDate} · ${proposed.plate}`,driverId:proposed.driverId,vehicleId:proposed.vehicleId,trackingProvider:'TRACCAR',startAt:model.input.startAt,endAt:new Date(Date.parse(model.input.startAt)+Math.max(1,proposed.durationSeconds)*1000).toISOString()});
     for(const stop of proposed.stops){
      const order=await domain.record('inventory_orders',stop.orderId,actor);
      if(order.status==='DRAFT')await inv.reserveOrder(actor,order.id,{commandId:randomUUID(),locationId:model.input.locationId});

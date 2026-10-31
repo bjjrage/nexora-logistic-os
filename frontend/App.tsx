@@ -1000,6 +1000,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
           <div className="button-row">
             {capacityIncomplete && <p className="muted">Hay bultos sin peso o volumen. Podés continuar; la capacidad total no está verificada.</p>}
             {canOperateRoad && selectedRoute.state === "IN_PROGRESS" && <button className="button button-secondary" disabled={busy} onClick={() => simpleRouteAction("close", "Cierre de ruta solicitado.")}>Cerrar ruta</button>}
+            {role==='ADMIN'&&data.organization.testMode&&selectedRoute.state==='IN_PROGRESS'&&<button type="button" className="text-button" disabled={busy} onClick={()=>{if(window.confirm('Solo si el camión NO salió y fue una prueba: se anulará el despacho, se conservarán los bultos cargados y se restaurará el horario previsto. ¿Confirmás que no hubo salida?'))void action('/api/routes/'+selectedRoute.id+'/correct-test-dispatch',{commandId:commandId(),expectedVersion:selectedRoute.version,didNotDepart:true,reason:'Administración confirma que fue una prueba y que el camión no salió.'},'Salida de prueba corregida. Se conservaron la carga y las reservas.');}}>Deshacer salida de prueba</button>}
           </div>
           {['DRAFT','READY'].includes(selectedRoute.state)&&<section className="route-next-step" aria-label="Próximo paso de la ruta">
             <p className="muted">Reservar pedido → Cargar vehículo → Confirmar ruta → Control de salida → Despachar ahora</p>

@@ -3,10 +3,12 @@ import type {Actor} from './auth.ts';
 import {signature} from './dispatch-append.ts';
 export const batchOrderIds=(proposal:Row):string[]=>[...new Set<string>((proposal.proposedRoutes??[]).flatMap((r:Row)=>r.stops.map((s:Row)=>s.orderId)))];
 export const batchScopeSignature=(orders:Row[],ids:string[])=>signature(orders.filter(o=>ids.includes(o.id)));
-export const holdsBatchOrders=(batch:Row)=>batch.status==='PENDING'||batch.persistentBatch&&['EXPIRED','CHANGED'].includes(batch.status);
+export const optimizerVersion='balanced-fleet-v2';
+export const holdsBatchOrders=(batch:Row)=>batch.status==='PENDING';
+export const proposalWindow=(proposal:Row,route:Row)=>({start:Date.parse(route.startAt??proposal.schedule.startAt),end:Date.parse(route.endAt??proposal.schedule.endAt)});
 export function batchConflict(proposal:Row,batches:Row[],exclude?:string){
- const ids=batchOrderIds(proposal),start=Date.parse(proposal.schedule.startAt),end=Date.parse(proposal.schedule.endAt);
- return batches.find(b=>b.id!==exclude&&holdsBatchOrders(b)&&(batchOrderIds(b).some(id=>ids.includes(id))||b.status==='PENDING'&&Date.parse(b.schedule.startAt)<end&&Date.parse(b.schedule.endAt)>start&&b.proposedRoutes.some((r:Row)=>proposal.proposedRoutes.some((s:Row)=>s.vehicleId===r.vehicleId||s.driverId===r.driverId))));
+ const ids=batchOrderIds(proposal);
+ return batches.find(b=>b.id!==exclude&&holdsBatchOrders(b)&&(batchOrderIds(b).some(id=>ids.includes(id))||b.proposedRoutes.some((r:Row)=>proposal.proposedRoutes.some((s:Row)=>{const a=proposalWindow(b,r),c=proposalWindow(proposal,s);return (s.vehicleId===r.vehicleId||s.driverId===r.driverId)&&a.start<c.end&&a.end>c.start;}))));
 }
 /** Immutable command records retain every batch, including expired and replaced proposals. */
 export async function dispatchBatches(db:Database,actor:Actor,orders:Row[]){
@@ -16,7 +18,7 @@ export async function dispatchBatches(db:Database,actor:Actor,orders:Row[]){
  const batches:Row[]=[];
  for(const [index,source] of sources.entries()){
   const ids=batchOrderIds(source),approval=approved.get(source.id),replacement=replaced.get(source.id),available=ids.filter(id=>orders.some(o=>o.id===id));
-  let status=approval?'APPROVED':discarded.has(source.id)?'DISCARDED':replacement?'REPLACED':Date.parse(source.validUntil)<=Date.now()?'EXPIRED':available.length!==ids.length||source.selectedOrderSignature&&source.selectedOrderSignature!==batchScopeSignature(orders,ids)?'CHANGED':'PENDING';
+  let status=approval?'APPROVED':discarded.has(source.id)?'DISCARDED':replacement?'REPLACED':source.optimizerVersion!==optimizerVersion||Date.parse(source.validUntil)<=Date.now()?'EXPIRED':available.length!==ids.length||source.selectedOrderSignature&&source.selectedOrderSignature!==batchScopeSignature(orders,ids)?'CHANGED':'PENDING';
   batches.push({...source,batchNumber:index+1,status,canManage:source.actorId===actor.id||actor.role==='ADMIN',availableOrderIds:available,approvedRoutes:approval?.routes??[],replacedBy:replacement??null,conflictWith:null});
  }
  const priority=(batch:Row):number=>{const parent=batches.find(b=>b.id===batch.replacesProposalId);return parent?priority(parent):batch.batchNumber;};

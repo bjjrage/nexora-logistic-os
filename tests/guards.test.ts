@@ -9,6 +9,7 @@ import { Store } from '../server/db.ts';
 import { Logistics } from '../server/domain.ts';
 import { setup, type Actor } from '../server/auth.ts';
 import { createApp } from '../server/app.ts';
+import {correctTestDispatch} from '../server/test-dispatch-correction.ts';
 async function fixture(t: any) {
     const directory = mkdtempSync(join(tmpdir(), 'logistics-guards-'));
     const store = new Store(join(directory, 'test.sqlite'));
@@ -81,8 +82,8 @@ test('QA-05: base rechaza rutas confirmadas incompatibles para chofer o vehícul
     await f.receive(s1);
     await f.receive(s2);
     await f.assign(r1, s1.parcels.map(p => p.id));
-    await f.assign(r2, s2.parcels.map(p => p.id));
     await f.ready(r1);
+    await f.assign(r2, s2.parcels.map(p => p.id));
     await assert.rejects(async () => await f.ready(r2), (error: any) => error.code === 'VERSION_CONFLICT' && error.message.includes('El chofer ') && error.message.includes(' y el vehículo ') && error.message.includes('ruta «'));
     assert.equal((await f.store.one('SELECT state FROM routes WHERE id=?', r2))!.state, 'DRAFT');
     await assert.rejects(async () => await f.store.run("UPDATE routes SET state='READY' WHERE id=?", r2), /ROUTE_RESOURCE_CONFLICT/);
@@ -101,6 +102,22 @@ test('nonoverlapping confirmed routes do not deadlock dispatch; active road occu
     await assert.rejects(f.store.run("UPDATE routes SET state='IN_PROGRESS' WHERE id=?", future), /ROUTE_RESOURCE_CONFLICT/);
     // Planning a later day remains possible while today's driver is still out.
     await f.d.routeAvailability((await f.store.one('SELECT * FROM routes WHERE id=?', future))!, f.actor, false);
+});
+
+test('dispatch now cannot occupy a loaded draft booking, and test-only reversal preserves custody and the planned date',async t=>{
+ const f=await fixture(t),{r:today}=await f.loaded();await f.store.run("UPDATE routes SET state='DRAFT' WHERE id=?",today);
+ const startAt=new Date(Date.now()+86400000).toISOString(),endAt=new Date(Date.now()+90000000).toISOString();
+ const future=(await f.d.createRoute(f.actor,{...f.cmd(),name:'Tomorrow',driverId:f.driver,vehicleId:f.vehicle,startAt,endAt})).id,s=await f.shipment();await f.receive(s);await f.assign(future,s.parcels.map(p=>p.id));await f.ready(future);
+ await assert.rejects(f.d.dispatch(f.actor,future,{...f.cmd(),expectedVersion:await f.version(future),dispatchNow:true}),{code:'VERSION_CONFLICT'});
+ assert.equal((await f.d.route(future,f.actor)).state,'READY');assert.equal((await f.store.one('SELECT state FROM parcels WHERE id=?',s.parcels[0].id))!.state,'LOADED');
+ // Reproduce the previous release's false departure, then exercise the audited recovery.
+ await f.store.run("UPDATE routes SET state='DRAFT' WHERE id=?",today);await f.store.run('UPDATE routes SET start_at=?,end_at=? WHERE id=?',new Date(Date.now()-7200000).toISOString(),new Date(Date.now()-3600000).toISOString(),today);
+ await f.d.dispatch(f.actor,future,{...f.cmd(),expectedVersion:await f.version(future),dispatchNow:true});
+ const input={...f.cmd(),expectedVersion:await f.version(future),didNotDepart:true,reason:'El camión no salió; fue una prueba de despacho.'};
+ await assert.rejects(correctTestDispatch(f.store,f.actor,future,input),{code:'FORBIDDEN'});await f.store.run('INSERT INTO organization_test_mode VALUES(?,1)',f.actor.orgId);
+ await assert.rejects(correctTestDispatch(f.store,{...f.actor,role:'OPERATIONS'},future,input),{code:'FORBIDDEN'});
+ const corrected=await correctTestDispatch(f.store,f.actor,future,input);assert.deepEqual(await correctTestDispatch(f.store,f.actor,future,input),corrected);assert.equal(corrected.startAt,startAt);assert.equal(corrected.loadedPreserved,1);assert.equal((await f.d.route(future,f.actor)).state,'DRAFT');assert.equal((await f.store.one('SELECT state FROM parcels WHERE id=?',s.parcels[0].id))!.state,'LOADED');
+ assert.equal((await f.store.one("SELECT COUNT(*) n FROM custody_events WHERE action='TEST_DISPATCH_CORRECTED'"))!.n,1);
 });
 for(const offset of [7200000,-7200000,-1800000])test(`Despachar ahora ajusta la ventana ${offset>0?'futura':offset===-1800000?'vigente':'vencida'} sin perder la carga ni omitir el checklist`,async t=>{
     const f=await fixture(t),{r,s}=await f.loaded();

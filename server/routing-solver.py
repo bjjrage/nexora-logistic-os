@@ -14,6 +14,8 @@ def solve(data):
     routing.SetArcCostEvaluatorOfAllVehicles(transit)
     routing.AddDimension(transit, data['horizon'], data['horizon'], False, 'Time')
     time = routing.GetDimensionOrDie('Time')
+    # Prioritize finishing the round earlier across the available fleet.
+    time.SetGlobalSpanCostCoefficient(100)
     for v in range(len(fleet)):
         time.CumulVar(routing.Start(v)).SetRange(0, 0)
         routing.AddVariableMinimizedByFinalizer(time.CumulVar(routing.End(v)))

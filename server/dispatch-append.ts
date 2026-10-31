@@ -30,14 +30,19 @@ export async function appendModel(db:Database,actor:Actor,routeId:string,locatio
  for(const id of ids){const order=await load(id);if(order)fresh.push(order);}
  if(!fresh.length||existing.length>=80)return null;
  const org=await db.one('SELECT timezone FROM organizations WHERE id=?',actor.orgId);
- return {route,cargo,base,existing,fresh:fresh.slice(0,80-existing.length),timezone:org!.timezone};
+ let planningEnd=route.end_at;
+ const plans=await db.all('SELECT input,result FROM routing_plans WHERE org_id=? AND result LIKE ?',actor.orgId,'%'+routeId+'%');
+ for(const plan of plans)if(JSON.parse(plan.result).routes?.some((r:Row)=>r.id===routeId)){planningEnd=JSON.parse(plan.input).endAt;break;}
+ const next=await db.one("SELECT start_at FROM routes r WHERE r.org_id=? AND r.id<>? AND (r.vehicle_id=? OR r.driver_id=?) AND r.state<>'OPERATIONALLY_CLOSED' AND r.start_at>=? AND r.start_at<? AND (r.state<>'DRAFT' OR EXISTS(SELECT 1 FROM route_assignments a WHERE a.org_id=r.org_id AND a.route_id=r.id AND a.active=1)) ORDER BY r.start_at LIMIT 1",actor.orgId,routeId,route.vehicle_id,route.driver_id,route.end_at,planningEnd);
+ if(next)planningEnd=next.start_at;
+ return {route,cargo,base,planningEnd,existing,fresh:fresh.slice(0,80-existing.length),timezone:org!.timezone};
 }
 export async function prepareAppend(db:Database,routing:Routing,actor:Actor,routeId:string,locationId:string,ids:string[],reviews:Array<{orderId:string;text:string}>=[],planningPoints?:PlanningPoints){
  const model=await appendModel(db,actor,routeId,locationId,ids,reviews,planningPoints);if(!model)return null;
  const orders=[...model.existing,...model.fresh],matrix=await routing.matrix(actor,{points:[model.base,...orders.map(o=>({latitude:o.latitude,longitude:o.longitude}))]});
- const start=Math.max(Date.now(),Date.parse(model.route.start_at)),horizon=Math.floor((Date.parse(model.route.end_at)-start)/1000);
+ const start=Math.max(Date.now(),Date.parse(model.route.start_at)),horizon=Math.floor((Date.parse(model.planningEnd)-start)/1000);
  const parts=new Intl.DateTimeFormat('en-GB',{timeZone:model.timezone,hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(start),p=(key:string)=>Number(parts.find(x=>x.type===key)!.value),startSeconds=p('hour')*3600+p('minute')*60+p('second');
- let time=0,previous=0,weight=0,volume=0,validUntil=Date.parse(model.route.end_at);const accepted:Row[]=[],sequence:Row[]=[];
+ let time=0,previous=0,weight=0,volume=0,validUntil=Date.parse(model.planningEnd);const accepted:Row[]=[],sequence:Row[]=[];
  for(let i=0;i<orders.length;i++){
   const order=orders[i],w=order.lines.reduce((n:number,l:Row)=>n+(l.weight_grams??0)*l.quantity,0),v=order.lines.reduce((n:number,l:Row)=>n+(l.volume_cm3??0)*l.quantity,0),seconds=(s:string)=>Number(s.slice(0,2))*3600+Number(s.slice(3))*60-startSeconds;
   const arrival=Math.max(time+matrix[previous][i+1],order.window_start?seconds(order.window_start):0),departure=arrival+(order.service_minutes??10)*60;
@@ -46,15 +51,16 @@ export async function prepareAppend(db:Database,routing:Routing,actor:Actor,rout
   validUntil=Math.min(validUntil,start+((order.window_end?seconds(order.window_end):horizon)-arrival)*1000);
   time=departure;previous=i+1;weight+=w;volume+=v;sequence.push(order);if(i>=model.existing.length)accepted.push(order);
  }
- validUntil=Math.min(validUntil,Date.parse(model.route.end_at)-(time+matrix[previous][0])*1000);
+ validUntil=Math.min(validUntil,Date.parse(model.planningEnd)-(time+matrix[previous][0])*1000);
  const selectedIds=accepted.map(o=>o.id),selectedModel=accepted.length?await appendModel(db,actor,routeId,locationId,selectedIds,reviews,planningPoints):null;
- return accepted.length?{routeId,locationId,ids:selectedIds,reviews,hash:signature(selectedModel),accepted,sequence,validUntil,vehicleId:model.route.vehicle_id,driverId:model.route.driver_id,plate:model.route.plate,driverName:model.route.driver_name,name:model.route.name}:null;
+ return accepted.length?{routeId,locationId,ids:selectedIds,reviews,hash:signature(selectedModel),accepted,sequence,validUntil,startAt:new Date(start).toISOString(),endAt:new Date(start+(time+matrix[previous][0])*1000).toISOString(),durationSeconds:time+matrix[previous][0],vehicleId:model.route.vehicle_id,driverId:model.route.driver_id,plate:model.route.plate,driverName:model.route.driver_name,name:model.route.name}:null;
 }
 export async function applyAppend(db:Database,actor:Actor,plan:NonNullable<Awaited<ReturnType<typeof prepareAppend>>>){
  const model=await appendModel(db,actor,plan.routeId,plan.locationId,plan.ids,plan.reviews);
  ensure(model&&signature(model)===plan.hash&&Date.now()<=plan.validUntil,'STALE_PLAN','Cambió el camión o su margen horario. Volvé a organizar; no se aplicó una distribución parcial.');
- const domain=new Logistics(db);await domain.routeAvailability(model.route,actor,false);
+ const domain=new Logistics(db);await domain.routeAvailability({...model.route,start_at:plan.startAt??model.route.start_at,end_at:plan.endAt??model.route.end_at},actor,false);
  for(const order of plan.accepted){const route=await domain.route(plan.routeId,actor);await domain.assign(actor,plan.routeId,{commandId:randomUUID(),expectedVersion:route.version,parcelIds:order.parcels.map((p:Row)=>p.parcel_id),pickup:false});}
  await domain.capacity(await domain.route(plan.routeId,actor),actor);
+ if(plan.startAt&&plan.endAt)await db.run('UPDATE routes SET start_at=?,end_at=?,version=version+1 WHERE org_id=? AND id=?',plan.startAt,plan.endAt,actor.orgId,plan.routeId);
  return {id:plan.routeId,name:model.route.name,plate:model.route.plate,driverName:model.route.driver_name,orders:plan.sequence.length,newOrders:plan.accepted.length,capacityUnverified:plan.sequence.some(o=>o.lines.some((l:Row)=>l.weight_grams==null||l.volume_cm3==null)),stops:plan.sequence.map(o=>({orderId:o.id,recipientName:o.recipient_name,reference:o.external_id,lines:o.lines}))};
 }

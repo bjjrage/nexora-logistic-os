@@ -6,6 +6,7 @@ import { DomainError, ensure } from './errors.ts';
 import { z } from 'zod';
 import {verifyVehicleCapacity} from './vehicle-capacity.ts';
 import {verifyProductCodes} from './product-codes.ts';
+import {assertRouteAvailable} from './route-coordination.ts';
 
 export type InventoryActor = Omit<Actor, 'role'> & { role: string; clientId?: string | null };
 type ItemInput = { productId: string; quantity: number; serials?: string[] };
@@ -781,6 +782,7 @@ export class Inventory {
       const loadingIds=planned.filter(item=>item.parcel_state!=='LOADED').map(item=>item.actual_parcel_id);
       const loading=loadingIds.length?await this.store.all(`SELECT * FROM parcels WHERE org_id=? AND id IN (${loadingIds.map(()=>'?').join(',')})`,actor.orgId,...loadingIds):[];
       await verifyVehicleCapacity(this.store,actor.orgId,vehicleId,loading);
+      if(loading.length)await assertRouteAvailable(this.store,actor.orgId,route,true);
       for (const item of planned) {
         ensure(await this.store.one('SELECT id FROM route_assignments WHERE org_id=? AND route_id=? AND parcel_id=? AND active=1', actor.orgId, route.id, item.actual_parcel_id), 'FORBIDDEN', 'La unidad no está asignada a esta ruta.', 403);
         if (item.parcel_state === 'LOADED' && item.custody_type === 'VEHICLE' && item.custody_id === vehicleId) { parcels.push({ id: item.actual_parcel_id, code: item.code, alreadyLoaded: true }); continue; }
