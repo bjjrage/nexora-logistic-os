@@ -26,6 +26,7 @@ export function installInventoryRoutes(app: Express, store: Database, auth: Inve
   app.get('/api/routing/queue',async(req,res)=>res.json(await dispatch.board(await auth(req) as Actor,queryString(req.query.date))));
   app.post('/api/routing/organize',async(req,res)=>{const actor=await auth(req) as Actor;res.json(await relayRouting(req,actor,store.kind,'/organize')??await dispatch.organize(actor,req.body));});
   app.post('/api/routing/approve',async(req,res)=>res.json(await dispatch.approve(await auth(req) as Actor,req.body)));
+  app.post('/api/routing/discard',async(req,res)=>res.json(await dispatch.discard(await auth(req) as Actor,req.body)));
   app.post('/api/routing/correct-orders',async(req,res)=>res.json(await correctDispatchOrders(store,await auth(req) as Actor,req.body)));
   app.post('/api/routing/confirm-locations',async(req,res)=>res.json(await confirmDispatchLocations(store,await auth(req) as Actor,req.body)));
   app.post('/api/routing/suggest',async(req,res)=>{const actor=await auth(req) as Actor;res.json(await relayRouting(req,actor,store.kind,'/suggest')??await routing.suggest(actor,req.body));});

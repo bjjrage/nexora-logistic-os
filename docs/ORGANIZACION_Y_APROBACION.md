@@ -2,7 +2,11 @@
 
 El flujo es **Pedidos → confirmar reserva → Rutas → organizar → aprobar distribución → cargar → confirmar ruta → despachar**.
 
-`POST /api/routing/organize` prepara una propuesta: agrupa reservas completas, elige camiones y choferes disponibles, calcula el orden y muestra las referencias geográficas e indicaciones. No crea rutas ni carga mercadería. La propuesta queda disponible al actualizar Rutas durante 30 minutos.
+`POST /api/routing/organize` prepara un lote: agrupa las reservas que todavía no pertenecen a otra propuesta, elige camiones y choferes disponibles y calcula el orden. No crea rutas ni carga mercadería. Cada lote se conserva al actualizar Rutas; el vencimiento del cálculo se muestra como estado y exige recalcular, sin ocultarlo ni desagrupar sus pedidos.
+
+La pantalla muestra todos los lotes y sus estados: pendientes, aprobados, vencidos, modificados, superpuestos, descartados o recalculados. Un segundo cálculo no reemplaza el primero. Los camiones y choferes de propuestas vigentes no se proponen simultáneamente para otro lote en un horario superpuesto. La aprobación valida únicamente las reservas de ese lote; aprobar el primero no invalida un segundo lote independiente.
+
+`replacesProposalId` permite recalcular explícitamente un lote, conservando su versión anterior y excluyendo pedidos ya agrupados en otros lotes. `POST /api/routing/discard` descarta la propuesta, conserva su registro y libera la agrupación sin desreservar ni modificar stock.
 
 Las referencias de calle o ciudad se identifican como aproximadas. No se presentan como alturas exactas. Si un pedido no entra por horario o capacidad, queda reservado con el motivo y, cuando corresponde, la opción de calcular la próxima jornada.
 

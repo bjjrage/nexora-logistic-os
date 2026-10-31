@@ -47,7 +47,8 @@ export async function prepareAppend(db:Database,routing:Routing,actor:Actor,rout
   time=departure;previous=i+1;weight+=w;volume+=v;sequence.push(order);if(i>=model.existing.length)accepted.push(order);
  }
  validUntil=Math.min(validUntil,Date.parse(model.route.end_at)-(time+matrix[previous][0])*1000);
- return accepted.length?{routeId,locationId,ids,reviews,hash:signature(model),accepted,sequence,validUntil,vehicleId:model.route.vehicle_id,driverId:model.route.driver_id,plate:model.route.plate,driverName:model.route.driver_name,name:model.route.name}:null;
+ const selectedIds=accepted.map(o=>o.id),selectedModel=accepted.length?await appendModel(db,actor,routeId,locationId,selectedIds,reviews,planningPoints):null;
+ return accepted.length?{routeId,locationId,ids:selectedIds,reviews,hash:signature(selectedModel),accepted,sequence,validUntil,vehicleId:model.route.vehicle_id,driverId:model.route.driver_id,plate:model.route.plate,driverName:model.route.driver_name,name:model.route.name}:null;
 }
 export async function applyAppend(db:Database,actor:Actor,plan:NonNullable<Awaited<ReturnType<typeof prepareAppend>>>){
  const model=await appendModel(db,actor,plan.routeId,plan.locationId,plan.ids,plan.reviews);

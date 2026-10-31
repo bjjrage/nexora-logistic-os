@@ -34,7 +34,7 @@ test('private routing schema on PostgreSQL runtime role applies once and reconci
   const startAt=new Date().toISOString(),dispatch=new ReservedDispatch(db,providers),request={...cmd(),date:startAt.slice(0,10),startAt,endAt:new Date(Date.now()+10*3600000).toISOString()};
   const preflight=await dispatch.organize(actor,{...request,commandId:randomUUID()});assert.equal(preflight.locationSuggestions.length,1);
   await confirmDispatchLocations(db,actor,{...cmd(),proposalCommandId:preflight.id,orderIds:[order]});
-  const proposed=await dispatch.organize(actor,request);assert.equal(proposed.proposed,1);assert.equal(proposed.organized,0);assert.deepEqual(await dispatch.organize(actor,request),proposed);
+  const scopedRequest={...request,replacesProposalId:preflight.id};const proposed=await dispatch.organize(actor,scopedRequest);assert.equal(proposed.proposed,1);assert.equal(proposed.organized,0);assert.deepEqual(await dispatch.organize(actor,scopedRequest),proposed);
   const first=await dispatch.approve(actor,{...cmd(),proposalCommandId:proposed.id});assert.equal(first.organized,1);
   const routeId=first.routes[0].id,oldCargo=(await db.all('SELECT parcel_id FROM route_assignments WHERE route_id=?',routeId)).map(p=>p.parcel_id);
   await d.loadSelected(actor,routeId,{...cmd(),expectedVersion:(await d.route(routeId,actor)).version,parcelIds:oldCargo});

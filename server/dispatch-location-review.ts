@@ -10,7 +10,7 @@ const schema=z.object({commandId:z.uuid(),proposalCommandId:z.uuid(),orderIds:z.
 export async function confirmDispatchLocations(db:Database,actor:Actor,input:unknown){
  const body=schema.parse(input),domain=new Logistics(db),routing=new Routing(db);
  return domain.command(actor,'routing.confirmLocations',body,['ADMIN','OPERATIONS'],async()=>{
-  const cached=await db.one("SELECT response FROM idempotency WHERE org_id=? AND command_id=? AND actor_id=? AND operation='routing.organizeReserved'",actor.orgId,body.proposalCommandId,actor.id);
+  const cached=await db.one("SELECT response FROM idempotency WHERE org_id=? AND command_id=? AND (actor_id=? OR ?='ADMIN') AND operation='routing.organizeReserved'",actor.orgId,body.proposalCommandId,actor.id,actor.role);
   ensure(cached,'STALE_PLAN','La propuesta de ubicaciones ya no está disponible. Volvé a organizar.');
   const suggestions:Row[]=JSON.parse(cached.response).locationSuggestions??[];
   const locations:Row[]=[];ensure(new Set(body.orderIds).size===body.orderIds.length,'VALIDATION_ERROR','Hay ubicaciones repetidas.');

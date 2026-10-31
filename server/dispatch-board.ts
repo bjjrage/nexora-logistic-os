@@ -2,7 +2,7 @@ import type {Database,Row} from './database.ts';
 import type {Actor} from './auth.ts';
 import {ensure} from './errors.ts';
 import {deliveryBlock} from './delivery-block.ts';
-import {signature} from './dispatch-append.ts';
+import {dispatchBatches,holdsBatchOrders} from './dispatch-batches.ts';
 export async function orderLines(db:Database,actor:Actor,ids:string[]){
  if(!ids.length)return [];
  return db.all(`SELECT l.order_id,p.name,p.sku,l.quantity FROM inventory_order_lines l JOIN inventory_products p ON p.id=l.product_id AND p.org_id=l.org_id WHERE l.org_id=? AND l.order_id IN(${ids.map(()=>'?').join(',')}) ORDER BY l.order_id,l.id`,actor.orgId,...ids);
@@ -32,9 +32,10 @@ export async function dispatchBoard(db:Database,actor:Actor,queue:Row){
  for(const route of routes.values())for(const order of route.orders){const total=totals.find(t=>t.order_id===order.id);if(total){order.orderUnits=total.units;order.orderLoaded=total.loaded;}}
  const last=await db.one("SELECT i.response,i.actor_id FROM idempotency i JOIN audit a ON a.org_id=i.org_id AND a.command_id=i.command_id WHERE i.org_id=? AND i.operation='routing.organizeReserved' ORDER BY a.created_at DESC,a.id DESC LIMIT 1",actor.orgId);
  const result=last?JSON.parse(last.response):null,previous:Row[]=result?.pending??[];
- const proposal=result?.proposedRoutes?.length&&last!.actor_id===actor.id&&Date.parse(result.validUntil)>Date.now()&&result.queueSignature===signature(queue.orders)&&!result.locationSuggestions.some((p:Row)=>orderPoint(p.id,p.destination))?result:null;
- const proposed=new Map<string,Row>();for(const route of proposal?.proposedRoutes??[])for(const stop of route.stops)proposed.set(stop.orderId,route);
- return {...queue,proposal,features:{batchCorrections:true,bulkLocationReview:true,proposalApproval:true,canConfigureDelivery:actor.role==='ADMIN'},orders:queue.orders.map((order:Row)=>{
+ const batches=await dispatchBatches(db,actor,queue.orders),active=batches.filter(holdsBatchOrders);
+ const proposal=[...active].reverse().find(b=>b.canManage&&b.status==='PENDING')??null;
+ const proposed=new Map<string,Row>();for(const batch of active)for(const route of batch.proposedRoutes)for(const stop of route.stops)proposed.set(stop.orderId,route);
+ return {...queue,proposal,batches,features:{persistentBatches:true,batchCorrections:true,bulkLocationReview:true,proposalApproval:true,canConfigureDelivery:actor.role==='ADMIN'},orders:queue.orders.map((order:Row)=>{
   const point=orderPoint(order.id,order.destination),previousOrder=previous.find(p=>p.id===order.id);
   const staleCircuit=previousOrder?.reasonCode?.endsWith('DELIVERY_PROVIDER')||previousOrder?.reason==='Circuito externo o sin definir';
   const oldReason=staleCircuit||point&&previousOrder?.reasonCode==='MISSING_DELIVERY_LOCATION'?null:previousOrder?.reason,circuit=deliveryBlock(order.delivery_provider);
