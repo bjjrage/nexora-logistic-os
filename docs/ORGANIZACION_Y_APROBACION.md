@@ -2,6 +2,8 @@
 
 El flujo es **Pedidos → confirmar reserva → Rutas → organizar → aprobar distribución → cargar → confirmar ruta → despachar**.
 
+La vista **Pedidos y camiones** separa las reservas pendientes de organizar, las que esperan aprobación y las que ya tienen camión. Cada reparto muestra chofer, pedidos, bultos totales, bultos en vehículo y faltantes de carga; cada pedido conserva sus propios conteos. Buscar un pedido filtra la lista, pero no reduce los totales del camión. Las versiones anteriores permanecen en **Historial de organización**, cerrado al entrar, sin presentarse como cargas pendientes.
+
 `POST /api/routing/organize` prepara una propuesta: agrupa las reservas que todavía no pertenecen a una propuesta vigente, elige camiones y choferes disponibles y calcula el orden. No crea rutas ni carga mercadería. El optimizador prioriza terminar el reparto antes distribuyendo el trabajo entre la flota utilizable; el costo total de viaje es secundario. No obliga a utilizar un camión vacío cuando no aporta una mejora o no respeta las restricciones.
 
 La pantalla principal muestra las propuestas vigentes por aprobar y los pedidos organizados por camión con su chofer. Los cálculos reemplazados, vencidos, descartados y aprobaciones anteriores quedan en **Historial de organización**, cerrado inicialmente. No representan nuevos trabajos pendientes. Un cálculo vencido deja de retener reservas: el botón de organizar puede incluirlas de nuevo sin una operación manual de descarte. El historial permanece íntegro.
