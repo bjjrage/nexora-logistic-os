@@ -31,6 +31,7 @@ test('direct HTTP cross-tenant matrix: reads and valid mutations cannot reach an
  [`/api/vehicles/${vehicle}/traccar-binding`,{deviceId:'999'}],
  [`/api/drivers/${driver}/documents`,{name:'QA',expiresAt:new Date(Date.now()+86400000).toISOString(),blocksDispatch:false}],
  [`/api/orders/${order}/reserve`,{locationId:location}],
+ ['/api/routing/approve',{proposalCommandId:randomUUID()}],
  ['/api/inventory/receipts',{clientId:client,productId:product,locationId:location,quantity:1}],
  ['/api/password-recovery/issue',{kind:'USER',id:actor.id}]
  ];

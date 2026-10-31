@@ -15,7 +15,7 @@ export async function confirmDispatchLocations(db:Database,actor:Actor,input:unk
   const suggestions:Row[]=JSON.parse(cached.response).locationSuggestions??[];
   const locations:Row[]=[];ensure(new Set(body.orderIds).size===body.orderIds.length,'VALIDATION_ERROR','Hay ubicaciones repetidas.');
   for(const id of body.orderIds){
-   const suggestion=suggestions.find(s=>s.id===id);ensure(suggestion&&['STREET','AREA'].includes(suggestion.precision),'VALIDATION_ERROR','Una ubicación seleccionada no pertenece a esta propuesta.');
+   const suggestion=suggestions.find(s=>s.id===id);ensure(suggestion&&['EXACT','STREET','AREA'].includes(suggestion.precision),'VALIDATION_ERROR','Una ubicación seleccionada no pertenece a esta propuesta.');
    const order=await domain.record('inventory_orders',id,actor);
    ensure(order.status==='RESERVED'&&order.destination===suggestion.destination&&order.updated_at===suggestion.updatedAt,'STALE_PLAN','Cambió un pedido de la propuesta. Volvé a organizar antes de confirmar ubicaciones.');
    ensure(!await db.one("SELECT entity_id FROM routing_points WHERE org_id=? AND entity_kind='ORDER' AND entity_id=? AND address=?",actor.orgId,id,order.destination),'STALE_PLAN','Una dirección ya fue ubicada por otra persona. Actualizá la organización.');

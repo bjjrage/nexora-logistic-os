@@ -28,3 +28,8 @@ test('a city fallback cannot select a same-named street in another department',a
  const rows=await searchAddress('Calle Caañabé 2583, B° Caañabé, Lambaré',async()=>[{name:'Lambaré, Menno, Loma Plata, Boquerón, Paraguay',latitude:-22.4,longitude:-59.9,addressRank:26},{name:'Lambaré, Central, Paraguay',latitude:-25.34,longitude:-57.62,addressRank:16}]);
  assert.equal(rows[0].precision,'AREA');assert.equal(rows[0].latitude,-25.34);assert.equal(rows.length,1);
 });
+
+test('a neighborhood query does not relabel an unrelated road as the requested street',async()=>{
+ const result=await searchAddress('Av. Eusebio Ayala 4320, Zona Sur, Fernando de la Mora, Paraguay',async q=>q==='Zona Sur, Fernando de la Mora, Paraguay'?[{name:'Paraguay, Zona Sur, Fernando de la Mora, Paraguay',latitude:-25.32,longitude:-57.54,addressRank:26}]:q==='Fernando de la Mora, Paraguay'?[{name:'Fernando de la Mora, Central, Paraguay',latitude:-25.32,longitude:-57.54,addressRank:16}]:[]);
+ assert.equal(result.length,1);assert.equal(result[0].precision,'AREA');assert.equal(result[0].name,'Fernando de la Mora, Central, Paraguay');
+});

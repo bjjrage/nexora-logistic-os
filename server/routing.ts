@@ -19,6 +19,8 @@ const inputSchema=z.object({date:z.iso.date(),reservedOnly:z.boolean().default(f
 });
 const pointSchema=z.object({commandId:z.uuid(),kind:z.enum(['ORDER','LOCATION']),id:z.uuid(),address:z.string().trim().max(500).optional(),latitude:z.number().finite().min(-90).max(90),longitude:z.number().finite().min(-180).max(180)});
 const outputSchema=z.object({routes:z.array(z.object({vehicleId:z.uuid(),driverId:z.uuid(),durationSeconds:z.number().int().nonnegative(),stops:z.array(z.object({orderId:z.uuid(),arrivalSeconds:z.number().int().nonnegative()})).min(1)})),unassigned:z.array(z.uuid())});
+/** Server-derived candidate points, used only to prepare a proposal for human approval. */
+export type PlanningPoints=Map<string,{latitude:number;longitude:number}>;
 export class Routing {
  private store:Database;
  private providers:RoutingProviders;
@@ -84,7 +86,7 @@ export class Routing {
   ensure(rows.length<=80,'PLAN_LIMIT','Hay más de 80 pedidos pendientes. Filtrá por cliente para planificar este lote.');
   return rows;
  }
- async model(actor:Actor,input:unknown){
+ async model(actor:Actor,input:unknown,planningPoints?:PlanningPoints){
   authorize(actor,roles);const b=inputSchema.parse(input),domain=new Logistics(this.store);
   const location=await domain.record('inventory_locations',b.locationId,actor);ensure(location.active&&location.kind!=='QUARANTINE','VALIDATION_ERROR','Elegí un depósito o sector activo.');
   const point=await this.store.one("SELECT * FROM routing_points WHERE org_id=? AND entity_kind='LOCATION' AND entity_id=?",actor.orgId,b.locationId);ensure(point,'MISSING_DEPOT_POINT','Administración debe configurar la ubicación del depósito en Empresa y equipo → Mi empresa.');
@@ -109,7 +111,8 @@ export class Routing {
   const raw=b.orderIds?eligible.filter(o=>b.orderIds!.includes(o.id)):eligible;
   for(const row of raw){
    const item:Row={id:row.id,reference:row.external_id,clientName:row.client_name,recipientName:row.recipient_name,destination:row.destination,instructions:row.restrictions,updatedAt:row.updated_at};
-   const p=await this.store.one("SELECT * FROM routing_points WHERE org_id=? AND entity_kind='ORDER' AND entity_id=?",actor.orgId,row.id);
+   const candidate=planningPoints?.get(row.id);
+   const p=candidate?{...candidate,address:row.destination}:await this.store.one("SELECT * FROM routing_points WHERE org_id=? AND entity_kind='ORDER' AND entity_id=?",actor.orgId,row.id);
    let reason=deliveryBlock(row.delivery_provider)?.reason??(!p||p.address!==row.destination?'Confirmar ubicación del destinatario':row.restrictions&&!b.reviewedInstructions.some(r=>r.orderId===row.id&&r.text===row.restrictions)?'Revisar indicaciones de entrega':null);
    const lines=await this.store.all('SELECT l.*,p.sku,p.name,p.tracking,p.active,p.weight_grams,p.volume_cm3 FROM inventory_order_lines l JOIN inventory_products p ON p.id=l.product_id AND p.org_id=l.org_id WHERE l.org_id=? AND l.order_id=? ORDER BY l.id',actor.orgId,row.id);
    item.lines=lines.map(l=>({name:l.name,sku:l.sku,quantity:l.quantity}));
@@ -140,8 +143,8 @@ export class Routing {
   }
   return {input:b,departureDate,point:{latitude:point.latitude,longitude:point.longitude},fleet,orders,pending,horizon};
  }
- async preview(actor:Actor,input:unknown){
-  const model=await this.store.transaction(()=>this.model(actor,input));
+ async preview(actor:Actor,input:unknown,planningPoints?:PlanningPoints){
+  const model=await this.store.transaction(()=>this.model(actor,input,planningPoints));
   if(!model.orders.length)return {id:null,routes:[],pending:model.pending,capacityUnverified:false};
   const matrix=await this.providers.matrix([model.point,...model.orders.map(o=>({latitude:o.latitude,longitude:o.longitude}))]);
   const solution=outputSchema.parse(await this.providers.solve({...model,matrix}));
@@ -158,19 +161,23 @@ export class Routing {
    const vehicle=model.fleet.find(v=>v.vehicleId===route.vehicleId)!;
    ensure(time+matrix[previous][0]<=route.durationSeconds&&route.durationSeconds<=model.horizon&&weight<=vehicle.capacityWeight&&volume<=vehicle.capacityVolume,'INVALID_PLAN','El recorrido excede la jornada o la capacidad del vehículo.');
   }
-  const proposal={routes:solution.routes.map(r=>({...r,...model.fleet.find(f=>f.vehicleId===r.vehicleId),stops:r.stops.map(s=>({...s,...model.orders.find(o=>o.id===s.orderId)}))})),pending:[...model.pending,...model.orders.filter(o=>!assigned.includes(o.id)).map(o=>({...o,reason:'Sin vehículo o tiempo suficiente para este reparto'}))],capacityUnverified:model.orders.some(o=>assigned.includes(o.id)&&o.unknown)};
-  const id=randomUUID();await this.store.run('INSERT INTO routing_plans VALUES(?,?,?,?,?,?,?,?,?)',id,actor.orgId,actor.id,JSON.stringify(model.input),digest(model),JSON.stringify(proposal),timestamp(),null,null);
+  const proposal={requiresApproval:planningPoints!==undefined,routes:solution.routes.map(r=>({...r,...model.fleet.find(f=>f.vehicleId===r.vehicleId),stops:r.stops.map(s=>({...s,...model.orders.find(o=>o.id===s.orderId)}))})),pending:[...model.pending,...model.orders.filter(o=>!assigned.includes(o.id)).map(o=>{const fits=model.fleet.some(f=>o.weight<=f.capacityWeight&&o.volume<=f.capacityVolume);return {...o,reason:fits?'No hay tiempo o camiones suficientes dentro del horario de entrega':'El pedido completo excede la capacidad de todos los camiones disponibles',reasonCode:fits?'DELIVERY_WINDOW_OR_FLEET_LIMIT':'CAPACITY_EXCEEDED'};})],capacityUnverified:model.orders.some(o=>assigned.includes(o.id)&&o.unknown)};
+  // Approval freezes only the selected stops and fleet, never unrelated rejected orders.
+  const selectedInput=planningPoints&&assigned.length?{...model.input,orderIds:assigned,fleet:model.input.fleet.filter(f=>solution.routes.some(r=>r.vehicleId===f.vehicleId))}:model.input;
+  const snapshot=planningPoints&&assigned.length?await this.store.transaction(()=>this.model(actor,selectedInput,planningPoints)):model;
+  const id=randomUUID();await this.store.run('INSERT INTO routing_plans VALUES(?,?,?,?,?,?,?,?,?)',id,actor.orgId,actor.id,JSON.stringify(selectedInput),digest(snapshot),JSON.stringify(proposal),timestamp(),null,null);
   return {id,...proposal};
  }
- async apply(actor:Actor,input:unknown){
+ async apply(actor:Actor,input:unknown,approvedReservedProposal=false){
   authorize(actor,roles);const b=z.object({commandId:z.uuid(),planId:z.uuid()}).parse(input),domain=new Logistics(this.store),inv=new Inventory(this.store);
   return domain.command(actor,'routing.apply',b,roles,async()=>{
    if(this.store.kind==='postgres')await this.store.one('SELECT id FROM organizations WHERE id=? FOR UPDATE',actor.orgId);
    const plan=await domain.record('routing_plans',b.planId,actor);
    if(plan.applied_at)return JSON.parse(plan.result);
+   const proposal=JSON.parse(plan.proposal);ensure(!proposal.requiresApproval||approvedReservedProposal,'APPROVAL_REQUIRED','Aprobá la distribución completa desde Rutas antes de crear los repartos.');
    ensure(Date.now()-Date.parse(plan.created_at)<30*60000,'STALE_PLAN','La propuesta venció. Calculá nuevamente.');
    const model=await this.model(actor,JSON.parse(plan.input));ensure(digest(model)===plan.snapshot_hash,'STALE_PLAN','Cambió el stock, la ubicación o la disponibilidad. Calculá nuevamente antes de aplicar.');
-   const proposal=JSON.parse(plan.proposal);ensure(proposal.routes.length,'NO_ELIGIBLE_ORDERS','No hay rutas para aplicar.');
+   ensure(proposal.routes.length,'NO_ELIGIBLE_ORDERS','No hay rutas para aplicar.');
    const routes=[];
    for(const proposed of proposal.routes){
     const route=await domain.createRoute(actor,{commandId:randomUUID(),name:`Reparto ${model.departureDate} · ${proposed.plate}`,driverId:proposed.driverId,vehicleId:proposed.vehicleId,trackingProvider:'TRACCAR',startAt:model.input.startAt,endAt:model.input.endAt});

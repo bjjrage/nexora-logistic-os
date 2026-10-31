@@ -2,6 +2,7 @@ import type {Database,Row} from './database.ts';
 import type {Actor} from './auth.ts';
 import {ensure} from './errors.ts';
 import {deliveryBlock} from './delivery-block.ts';
+import {signature} from './dispatch-append.ts';
 export async function orderLines(db:Database,actor:Actor,ids:string[]){
  if(!ids.length)return [];
  return db.all(`SELECT l.order_id,p.name,p.sku,l.quantity FROM inventory_order_lines l JOIN inventory_products p ON p.id=l.product_id AND p.org_id=l.org_id WHERE l.org_id=? AND l.order_id IN(${ids.map(()=>'?').join(',')}) ORDER BY l.order_id,l.id`,actor.orgId,...ids);
@@ -24,17 +25,20 @@ export async function dispatchBoard(db:Database,actor:Actor,queue:Row){
  const points=await db.all("SELECT entity_kind,entity_id,address,latitude,longitude,updated_at FROM routing_points WHERE org_id=?",actor.orgId);
  const confirmations=await db.all("SELECT i.response FROM idempotency i JOIN audit a ON a.org_id=i.org_id AND a.command_id=i.command_id WHERE i.org_id=? AND i.operation='routing.confirmLocations' ORDER BY a.created_at DESC,a.id DESC",actor.orgId),approximate=new Map<string,Row>();
  for(const entry of confirmations)for(const location of JSON.parse(entry.response).locations??[]){const point=points.find(p=>p.entity_kind==='ORDER'&&p.entity_id===location.id);if(point&&point.updated_at===location.updatedAt&&!approximate.has(location.id))approximate.set(location.id,location);}
- const orderPoint=(id:string,address:string)=>{const point=points.find(p=>p.entity_kind==='ORDER'&&p.entity_id===id&&p.address===address);const quality=approximate.get(id);return point?{...point,...(quality?{approximate:true,precision:quality.precision,name:quality.label}:{})}:null;};
+ const orderPoint=(id:string,address:string)=>{const point=points.find(p=>p.entity_kind==='ORDER'&&p.entity_id===id&&p.address===address);const quality=approximate.get(id);return point?{...point,...(quality?{approximate:quality.precision!=='EXACT',precision:quality.precision,name:quality.label}:{})}:null;};
  for(const route of routes.values())for(const order of route.orders)order.point=orderPoint(order.id,order.destination);
  const inventoryIds=[...new Set(rows.filter(r=>r.order_status).map(r=>r.order_id))];
  const totals=inventoryIds.length?await db.all(`SELECT op.order_id,COUNT(*) AS units,SUM(CASE WHEN p.state='LOADED' THEN 1 ELSE 0 END) AS loaded FROM inventory_order_parcels op JOIN parcels p ON p.id=op.parcel_id AND p.org_id=op.org_id WHERE op.org_id=? AND op.order_id IN(${inventoryIds.map(()=>'?').join(',')}) AND op.state IN('RESERVED','VEHICLE') GROUP BY op.order_id`,actor.orgId,...inventoryIds):[];
  for(const route of routes.values())for(const order of route.orders){const total=totals.find(t=>t.order_id===order.id);if(total){order.orderUnits=total.units;order.orderLoaded=total.loaded;}}
- const last=await db.one("SELECT i.response FROM idempotency i JOIN audit a ON a.org_id=i.org_id AND a.command_id=i.command_id WHERE i.org_id=? AND i.operation='routing.organizeReserved' ORDER BY a.created_at DESC,a.id DESC LIMIT 1",actor.orgId);
- const previous:Row[]=last?JSON.parse(last.response).pending??[]:[];
- return {...queue,features:{batchCorrections:true,bulkLocationReview:true,canConfigureDelivery:actor.role==='ADMIN'},orders:queue.orders.map((order:Row)=>{
+ const last=await db.one("SELECT i.response,i.actor_id FROM idempotency i JOIN audit a ON a.org_id=i.org_id AND a.command_id=i.command_id WHERE i.org_id=? AND i.operation='routing.organizeReserved' ORDER BY a.created_at DESC,a.id DESC LIMIT 1",actor.orgId);
+ const result=last?JSON.parse(last.response):null,previous:Row[]=result?.pending??[];
+ const proposal=result?.proposedRoutes?.length&&last!.actor_id===actor.id&&Date.parse(result.validUntil)>Date.now()&&result.queueSignature===signature(queue.orders)&&!result.locationSuggestions.some((p:Row)=>orderPoint(p.id,p.destination))?result:null;
+ const proposed=new Map<string,Row>();for(const route of proposal?.proposedRoutes??[])for(const stop of route.stops)proposed.set(stop.orderId,route);
+ return {...queue,proposal,features:{batchCorrections:true,bulkLocationReview:true,proposalApproval:true,canConfigureDelivery:actor.role==='ADMIN'},orders:queue.orders.map((order:Row)=>{
   const point=orderPoint(order.id,order.destination),previousOrder=previous.find(p=>p.id===order.id);
   const staleCircuit=previousOrder?.reasonCode?.endsWith('DELIVERY_PROVIDER')||previousOrder?.reason==='Circuito externo o sin definir';
-  const oldReason=staleCircuit?null:previousOrder?.reason,circuit=deliveryBlock(order.delivery_provider);
-  return {...order,point:point??null,reasonCode:circuit?.reasonCode??null,reason:circuit?.reason??(oldReason&&!(point&&oldReason.includes('ubicación del destinatario'))?oldReason:point?'Listo para organizar':'Ubicación por confirmar')};
+  const oldReason=staleCircuit||point&&previousOrder?.reasonCode==='MISSING_DELIVERY_LOCATION'?null:previousOrder?.reason,circuit=deliveryBlock(order.delivery_provider);
+  const truck=proposed.get(order.id);
+  return {...order,point:point??null,proposedVehicle:truck?{plate:truck.plate,driverName:truck.driverName}:null,reasonCode:circuit?.reasonCode??(truck||!oldReason?null:previousOrder?.reasonCode??null),reason:circuit?.reason??(truck?`Propuesto para ${truck.plate} · ${truck.driverName}`:oldReason&&!(point&&oldReason.includes('ubicación del destinatario'))?oldReason:point?'Listo para organizar':'Ubicación por confirmar')};
  }),routes:[...routes.values()]};
 }

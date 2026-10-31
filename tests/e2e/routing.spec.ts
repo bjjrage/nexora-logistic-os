@@ -1,5 +1,10 @@
-import {test,expect} from '@playwright/test';
+import {test as base,expect} from '@playwright/test';
 import {randomUUID} from 'node:crypto';
+import {startRoutingTestServer} from '../support/routing-server.ts';
+const test=base.extend<{}, {routingServer:Awaited<ReturnType<typeof startRoutingTestServer>>}>({
+ routingServer:[async({},use)=>{const server=await startRoutingTestServer();try{await use(server);}finally{await server.close();}},{scope:'worker'}],
+ baseURL:async({routingServer},use)=>{await use(routingServer.origin);}
+});
 test.skip(!process.env.ROUTING_E2E,'Usar playwright.routing.config.ts para los servicios de mapas aislados.');
 test('confirm reservation without maps, automatically organize in Routes and load the assigned truck once',async({page})=>{
  const send=async(path:string,data:Record<string,unknown>)=>{const r=await page.request.post(path,{headers:{'X-Requested-With':'logistics-os'},data:{commandId:randomUUID(),...data}});expect(r.ok(),path+': '+await r.text()).toBeTruthy();return r.json();};
@@ -38,11 +43,14 @@ test('confirm reservation without maps, automatically organize in Routes and loa
  await page.getByRole('button',{name:'Rutas',exact:true}).click();
  const panel=page.getByRole('region',{name:'Reservados por organizar'});
  const unassigned=panel.getByRole('region',{name:'Pedidos por organizar',exact:true});await expect(unassigned.getByText('PLAN-BROWSER',{exact:true})).toBeVisible();await expect(unassigned).toContainText('PLAN-SKU');await expect(unassigned).toContainText('2 bultos reservados');
- await panel.getByLabel('Revisé las indicaciones y autorizo organizar estos pedidos').check();
  await panel.getByRole('button',{name:'Organizar todos los reservados'}).click();
- await expect(panel.getByRole('region',{name:'Confirmar ubicaciones aproximadas'})).toContainText('PLAN-BROWSER');
+ const proposal=panel.getByRole('region',{name:'Propuesta de distribución'});await expect(proposal).toContainText('PLAN-BROWSER');await expect(proposal).toContainText('PLAN-TEST');await expect(proposal).toContainText('Chofer browser');
  expect((await(await page.request.get('/api/routing/context')).json()).points).toHaveLength(1);
- await panel.getByRole('button',{name:'Confirmar ubicaciones propuestas y organizar'}).click();
+ expect((await(await page.request.get('/api/bootstrap')).json()).routes).toHaveLength(0);
+ await page.reload();await page.getByRole('button',{name:'Rutas',exact:true}).click();await expect(proposal).toContainText('PLAN-TEST');
+ await page.screenshot({path:'.local/dispatch-proposal-desktop.png',fullPage:true});await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:'.local/dispatch-proposal-mobile.png',fullPage:true});await page.setViewportSize({width:1365,height:900});
+ await expect(proposal.getByRole('button',{name:'Aprobar distribución y crear rutas'})).toBeDisabled();await proposal.getByLabel('Revisé la distribución, las ubicaciones y las indicaciones de entrega').check();
+ await proposal.getByRole('button',{name:'Aprobar distribución y crear rutas'}).click();
  await expect(panel.getByRole('status').filter({hasText:'Organizados en esta operación: 1'})).toBeVisible({timeout:25000});
  await expect(panel.locator('.routing-route')).toContainText('PLAN-TEST');
  await expect(panel.locator('.routing-route')).toContainText('Chofer browser');

@@ -9,6 +9,7 @@ import type {RoutingProviders} from './routing-providers.ts';
 import {dispatchBoard,orderLines} from './dispatch-board.ts';
 import {prepareAppend,applyAppend} from './dispatch-append.ts';
 import {deliveryBlock} from './delivery-block.ts';
+import {confirmDispatchLocations} from './dispatch-location-review.ts';
 const roles:Actor['role'][]=['ADMIN','OPERATIONS'];
 const inputSchema=z.object({commandId:z.uuid(),reviewedInstructions:z.array(z.object({orderId:z.uuid(),text:z.string().max(4000)})).max(1000).default([]),date:z.iso.date().optional(),startAt:z.iso.datetime({offset:true}).optional(),endAt:z.iso.datetime({offset:true}).optional()}).strict();
 const fingerprint=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -47,7 +48,9 @@ export class ReservedDispatch{
   ensure(queue.date>=queue.today||body.startAt,'VALIDATION_ERROR','Elegí hoy o una fecha futura para la salida. Los pedidos atrasados se incluyen automáticamente.');
   const start=body.startAt??(queue.date===queue.today?new Date().toISOString():morning(queue.date,queue.timezone));
   const end=body.endAt??new Date(Date.parse(start)+10*3600000).toISOString();
-  const locationSuggestions:Row[]=[],pending:Row[]=[],plans:Row[]=[],merges:NonNullable<Awaited<ReturnType<typeof prepareAppend>>>[]=[],usedVehicles=new Set<string>(),usedDrivers=new Set<string>();
+  const locationSuggestions:Row[]=[],pending:Row[]=[],plans:Row[]=[],merges:NonNullable<Awaited<ReturnType<typeof prepareAppend>>>[]=[],proposedRoutes:Row[]=[],usedVehicles=new Set<string>(),usedDrivers=new Set<string>();
+  const planningPoints=new Map<string,{latitude:number;longitude:number}>();
+  const reviews=queue.orders.filter(o=>o.restrictions).map(o=>({orderId:o.id,text:o.restrictions}));
   const groups=new Map<string,Row[]>();
   for(const order of queue.orders){
    const circuit=deliveryBlock(order.delivery_provider);
@@ -58,15 +61,19 @@ export class ReservedDispatch{
   for(const [locationId,group] of groups){
    const orders:Row[]=[],deadline=Date.now()+45000;
    for(const order of group){
+    let locationFailure:Row|null=null;
     let point=await this.db.one("SELECT latitude,longitude FROM routing_points WHERE org_id=? AND entity_kind='ORDER' AND entity_id=? AND address=?",actor.orgId,order.id,order.destination);
-    if(!point&&Date.now()<deadline){try{const matches=await this.routing.search(actor,{address:order.destination});if(matches.length===1&&matches[0].addressRank>=30&&!matches[0].approximate){point=matches[0];await this.routing.point(actor,{commandId:randomUUID(),kind:'ORDER',id:order.id,latitude:matches[0].latitude,longitude:matches[0].longitude});}else{const street=matches.find(m=>m.precision==='STREET'||m.precision==='AREA'&&m.addressRank>=21);if(street)locationSuggestions.push({id:order.id,reference:order.external_id,recipientName:order.recipient_name,destination:order.destination,updatedAt:order.updated_at,label:street.name,latitude:street.latitude,longitude:street.longitude,precision:street.precision});}}catch{/* Leave uncertain destinations pending. */}}
-    if(point)orders.push(order);else pending.push({...order,reason:'Confirmar ubicación del destinatario'});
+    if(!point&&Date.now()<deadline){try{const matches=await this.routing.search(actor,{address:order.destination});const exact=matches.length===1&&matches[0].addressRank>=30&&!matches[0].approximate;const candidate=exact?matches[0]:matches.find(m=>m.precision==='STREET'||m.precision==='AREA'&&m.addressRank>=16);
+     if(candidate){point=await this.db.one('SELECT CAST(? AS REAL) AS latitude,CAST(? AS REAL) AS longitude',candidate.latitude,candidate.longitude);planningPoints.set(order.id,{latitude:point!.latitude,longitude:point!.longitude});locationSuggestions.push({id:order.id,reference:order.external_id,recipientName:order.recipient_name,destination:order.destination,updatedAt:order.updated_at,label:candidate.name,...point,precision:exact?'EXACT':candidate.precision});}
+    }catch(error){if((error as {code?:string}).code!=='VALIDATION_ERROR')locationFailure={reason:'El buscador de ubicaciones no respondió. Reintentá organizar sin modificar la reserva.',reasonCode:'LOCATION_SERVICE_UNAVAILABLE'};}}
+    else if(!point)locationFailure={reason:'La búsqueda de esta ubicación quedó pendiente. Volvé a organizar para continuar.',reasonCode:'LOCATION_SEARCH_PENDING'};
+    if(point)orders.push(order);else pending.push({...order,...(locationFailure??{reason:'No encontramos una referencia cercana; revisá la dirección para incluir este pedido',reasonCode:'MISSING_DELIVERY_LOCATION'})});
    }
    const candidates=await this.db.all("SELECT id,vehicle_id,driver_id FROM routes WHERE org_id=? AND state IN('DRAFT','READY') AND start_at<? AND end_at>? ORDER BY start_at,id",actor.orgId,end,start);
    for(const route of candidates){
     if(!orders.length)break;if(usedVehicles.has(route.vehicle_id)||usedDrivers.has(route.driver_id))continue;
-    const merge=await prepareAppend(this.db,this.routing,actor,route.id,locationId,orders.map(o=>o.id),body.reviewedInstructions);
-    if(merge){merges.push(merge);usedVehicles.add(route.vehicle_id);usedDrivers.add(route.driver_id);for(const accepted of merge.accepted){const i=orders.findIndex(o=>o.id===accepted.id);if(i>=0)orders.splice(i,1);}}
+    const merge=await prepareAppend(this.db,this.routing,actor,route.id,locationId,orders.map(o=>o.id),reviews,planningPoints);
+    if(merge){merges.push(merge);proposedRoutes.push({existingRouteId:merge.routeId,name:merge.name,vehicleId:merge.vehicleId,driverId:merge.driverId,plate:merge.plate,driverName:merge.driverName,stops:merge.accepted.map(o=>({orderId:o.id,reference:o.external_id,recipientName:o.recipient_name,destination:o.destination,instructions:o.restrictions,lines:o.lines})),existingOrders:merge.sequence.length-merge.accepted.length});usedVehicles.add(route.vehicle_id);usedDrivers.add(route.driver_id);for(const accepted of merge.accepted){const i=orders.findIndex(o=>o.id===accepted.id);if(i>=0)orders.splice(i,1);}}
    }
    for(let offset=0;offset<orders.length;offset+=80){
     const batch=orders.slice(offset,offset+80),fleet:Array<{vehicleId:string;driverId:string}>=[];
@@ -79,20 +86,37 @@ export class ReservedDispatch{
      const driver=drivers.find(d=>d.id===preferred&&!fleet.some(f=>f.driverId===d.id))??drivers.find(d=>!fleet.some(f=>f.driverId===d.id));
      if(driver)fleet.push({vehicleId:vehicle.id,driverId:driver.id});
     }
-    if(!fleet.length){pending.push(...batch.map(o=>({...o,reason:'No hay camión y chofer disponibles para esta salida'})));continue;}
-    const plan=await this.routing.suggest(actor,{date:queue.date,locationId,orderIds:batch.map(o=>o.id),reservedOnly:true,reviewedInstructions:body.reviewedInstructions,startAt:start,endAt:end,fleet,allowUnknownCapacity:true});
+    if(!fleet.length){pending.push(...batch.map(o=>({...o,reason:'No hay camión y chofer disponibles para esta salida',reasonCode:'FLEET_UNAVAILABLE'})));continue;}
+    const plan=await this.routing.preview(actor,{date:queue.date,locationId,orderIds:batch.map(o=>o.id),reservedOnly:true,reviewedInstructions:reviews,startAt:start,endAt:end,fleet,allowUnknownCapacity:true},planningPoints);
     pending.push(...plan.pending);
-    if(plan.id&&plan.routes.length){plans.push(plan);for(const route of plan.routes){usedVehicles.add(route.vehicleId);usedDrivers.add(route.driverId);}}
+    if(plan.id&&plan.routes.length){plans.push(plan);for(const route of plan.routes){proposedRoutes.push({...route,planId:plan.id,capacityUnverified:plan.capacityUnverified});usedVehicles.add(route.vehicleId);usedDrivers.add(route.driverId);}}
    }
   }
   return domain.command(actor,'routing.organizeReserved',body,roles,async()=>{
    ensure(fingerprint((await this.queue(actor,queue.date)).orders)===fingerprint(queue.orders),'STALE_PLAN','Cambiaron las reservas mientras se organizaba. Volvé a organizar; no se aplicó una distribución parcial.');
+   const departureDate=new Intl.DateTimeFormat('en-CA',{timeZone:queue.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(start));
+   const nextDay=new Date(Date.parse((departureDate>queue.today?departureDate:queue.today)+'T00:00:00Z')+86400000).toISOString().slice(0,10),nextStart=morning(nextDay,queue.timezone);
+   const nextDeparture=pending.some(p=>p.reason?.includes('Horario de entrega fuera')||p.reasonCode==='DELIVERY_WINDOW_OR_FLEET_LIMIT')?{startAt:nextStart,endAt:new Date(Date.parse(nextStart)+10*3600000).toISOString(),label:new Intl.DateTimeFormat('es-PY',{timeZone:queue.timezone,dateStyle:'short',timeStyle:'short'}).format(new Date(nextStart))}:null;
+   const proposed=proposedRoutes.reduce((n,r)=>n+r.stops.length,0),selected=new Set(proposedRoutes.flatMap(r=>r.stops.map((s:Row)=>s.orderId)));
+   const validUntil=Math.min(Date.now()+30*60000,...merges.map(m=>m.validUntil),...proposedRoutes.filter(r=>!r.existingRouteId).map(r=>Math.min(Date.parse(end)-r.durationSeconds*1000,...r.stops.map((s:Row)=>Date.parse(start)+(s.window[1]-s.arrivalSeconds)*1000))));
+   return {id:body.commandId,date:queue.date,timezone:queue.timezone,queueSignature:fingerprint(queue.orders),validUntil:new Date(validUntil).toISOString(),schedule:{startAt:start,endAt:end},locationSuggestions:locationSuggestions.filter(p=>selected.has(p.id)),nextDeparture,organized:0,routes:[],proposed,proposedRoutes,planIds:plans.map(p=>p.id),merges,pending};
+  });
+ }
+ async approve(actor:Actor,input:unknown){
+  const body=z.object({commandId:z.uuid(),proposalCommandId:z.uuid()}).strict().parse(input),domain=new Logistics(this.db);
+  return domain.command(actor,'routing.approveReserved',body,roles,async()=>{
+   const cached=await this.db.one("SELECT response FROM idempotency WHERE org_id=? AND command_id=? AND actor_id=? AND operation='routing.organizeReserved'",actor.orgId,body.proposalCommandId,actor.id);
+   ensure(cached,'NOT_FOUND','La propuesta no está disponible para tu cuenta. Volvé a organizar.',404);
+   const proposal=JSON.parse(cached.response);
+   const previous=await this.db.all("SELECT response FROM idempotency WHERE org_id=? AND operation='routing.approveReserved' AND response LIKE ?",actor.orgId,'%'+body.proposalCommandId+'%');
+   const applied=previous.map(p=>JSON.parse(p.response)).find(p=>p.proposalCommandId===body.proposalCommandId);if(applied)return applied;
+   ensure(proposal.proposedRoutes?.length&&Date.parse(proposal.validUntil)>Date.now(),'STALE_PLAN','La propuesta venció o no contiene camiones. Volvé a organizar.');
+   ensure(fingerprint((await this.queue(actor,proposal.date)).orders)===proposal.queueSignature,'STALE_PLAN','Cambiaron los pedidos o sus indicaciones. Volvé a organizar antes de aprobar.');
+   if(proposal.locationSuggestions.length)await confirmDispatchLocations(this.db,actor,{commandId:randomUUID(),proposalCommandId:body.proposalCommandId,orderIds:proposal.locationSuggestions.map((p:Row)=>p.id)});
    const routes:Row[]=[];
-   for(const merge of merges)routes.push(await applyAppend(this.db,actor,merge));
-   for(const plan of plans){const applied=await this.routing.apply(actor,{commandId:randomUUID(),planId:plan.id});routes.push(...applied.routes.map((r:Row,i:number)=>({...r,plate:plan.routes[i].plate,driverName:plan.routes[i].driverName,stops:plan.routes[i].stops,capacityUnverified:plan.capacityUnverified})));}
-   const nextDay=new Date(Date.parse(queue.today+'T00:00:00Z')+86400000).toISOString().slice(0,10),nextStart=morning(nextDay,queue.timezone);
-   const nextDeparture=pending.some(p=>p.reason?.includes('Horario de entrega fuera'))?{startAt:nextStart,endAt:new Date(Date.parse(nextStart)+10*3600000).toISOString(),label:new Intl.DateTimeFormat('es-PY',{timeZone:queue.timezone,dateStyle:'short',timeStyle:'short'}).format(new Date(nextStart))}:null;
-   return {id:body.commandId,date:queue.date,locationSuggestions,nextDeparture,organized:routes.reduce((n,r)=>n+(r.newOrders??r.orders),0),routes,pending};
+   for(const merge of proposal.merges)routes.push(await applyAppend(this.db,actor,merge));
+   for(const planId of proposal.planIds){const result=await this.routing.apply(actor,{commandId:randomUUID(),planId},true),selected=proposal.proposedRoutes.filter((r:Row)=>r.planId===planId);routes.push(...result.routes.map((r:Row,i:number)=>({...r,plate:selected[i].plate,driverName:selected[i].driverName,stops:selected[i].stops})));}
+   return {id:body.commandId,proposalCommandId:body.proposalCommandId,organized:proposal.proposed,routes,pending:proposal.pending,readyForLoading:true};
   });
  }
 }
