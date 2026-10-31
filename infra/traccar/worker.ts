@@ -20,7 +20,7 @@ async function api(path,options={}) {
 async function bootstrap() {
   try{await api('/devices');return;}catch{}
   const adminAuth={Authorization:'Basic '+Buffer.from(env.BOOTSTRAP_EMAIL+':'+env.BOOTSTRAP_PASSWORD).toString('base64'),'Content-Type':'application/json'};
-  // Management port is private. Public access is only to OsmAnd/5055.
+  // Bootstrap uses the private management endpoint; keep public registration disabled.
   await fetch(base+'/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Nexora Traccar administración',email:env.BOOTSTRAP_EMAIL,password:env.BOOTSTRAP_PASSWORD}),signal:AbortSignal.timeout(10000)});
   const server=await fetch(base+'/api/server',{headers:adminAuth,signal:AbortSignal.timeout(10000)});
   if(!server.ok)throw new Error('BOOTSTRAP_NO_ACCESS');

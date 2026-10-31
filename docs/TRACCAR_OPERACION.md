@@ -1,5 +1,17 @@
 # Tracking Nexora — entrega del 16/10/2026
 
+## Actualización 28/10/2026: acceso a Traccar Manager
+
+El dominio `https://nexora-traccar-production.up.railway.app` sirve ahora la web y API de Traccar por el **puerto de destino 8082**. Antes apuntaba a OsmAnd/5055: recibía GPS, pero Safari y Manager obtenían HTTP 400 vacío. No agregar `:8082` ni `:5055` a la URL HTTPS.
+
+Traccar 6.16.0 conserva el receptor OsmAnd interno en **5055** y reenvía hacia él los POST a `/` recibidos por el servidor web. Se comprobó recepción de una posición real posterior al cambio, luego su persistencia por el bridge y su lectura por el servicio del mapa del OS. El acceso web exige sesión; el registro público está cerrado y las consultas anónimas de dispositivos/posiciones reciben 401. No se recrearon servicios, bases, dispositivos ni credenciales.
+
+**Traccar Client envía ubicaciones; Traccar Manager las muestra.** En ambos se utiliza la URL anterior. Client usa el identificador que entrega el OS; Manager usa una cuenta de Traccar, distinta de la cuenta del OS o Railway. Las credenciales existentes se conservan únicamente en configuración privada, nunca en este documento ni en GitHub. La cuenta administradora tiene el iPhone seleccionado en su lista del mapa; no hace falta registrarlo otra vez.
+
+Validado: interfaz renderizada en navegador, login con cuenta existente, dispositivo único por identificador, lectura de posición real, 30 archivos JS/CSS y handshake WebSocket. La certificación de segundo plano requiere observar mediciones nuevas durante un intervalo de pantalla bloqueada confirmado por la persona que lleva el iPhone. El estado Online por sí solo no acredita esa prueba.
+
+Para revertir únicamente este cambio de networking: restaurar el targetPort del mismo dominio de 8082 a 5055 y comprobar recepción GPS/bridge. Eso vuelve a dejar Manager sin acceso público; no borrar dispositivos, historial ni volúmenes. Las instrucciones de la entrega original que siguen describen el estado histórico del 16/10 y deben leerse junto con esta actualización.
+
 **Interfaz simplificada:** Tracking abre **Mapa**. El alta y la conexión del teléfono están en **Mi celular → Teléfonos**; elegí **Registrar teléfono** y luego **Conectar celular** para ver los tres pasos y copiar el identificador y el servidor. **Asignar vehículo**, **Clientes** y **Rutas** son tareas separadas dentro de Mi celular. Las operaciones de Universo están en **Universo · QuadMinds**, con una tarea visible por vez. Las referencias a la navegación anterior que sigan en este documento deben interpretarse según estos nombres actuales.
 
 **Corrección de asignaciones:** PostgreSQL convertía a minúsculas los alias sin comillas de vehículo/teléfono, rutas y circuitos; el guardado existía, pero el formulario no lo reconocía al consultar. Los alias camelCase se conservan explícitamente en Traccar y QuadMinds. Asignar vehículo muestra confirmación junto al botón, progreso al guardar y errores locales; al elegir un vehículo vuelve a cargar su teléfono guardado. Validación: 17 tests de tracking/QuadMinds, dos pruebas PostgreSQL con rollback y guardado → recarga → selección en navegador sobre base temporal en memoria. La asignación real existente se verificó mediante lectura, sin modificarla. Evidencia: `evidencias/traccar-asignacion-guardada-demo.png`.
@@ -28,7 +40,7 @@ La web no publica identificadores de teléfono/vehículo, nombres de choferes, h
 
 | Servicio | Función |
 |---|---|
-| nexora-traccar | Traccar 6.16.0; dominio público solo OsmAnd/5055; API y administración 8082 privadas |
+| nexora-traccar | Traccar 6.16.0; HTTPS público hacia web/API 8082 con login y registro cerrado; proxy nativo POST hacia OsmAnd interno 5055 |
 | nexora-traccar-db | MySQL 8.4.8; volumen privado persistente de 500 MB |
 | nexora-gps-bridge | Función Bun; WebSocket privado, recuperación cada 30 s, escritura GPS en Supabase por TLS validado |
 | nexora-traccar-backup | Copia diaria 03:00 Paraguay; volumen privado de 500 MB; depuración por antigüedad de siete días |
