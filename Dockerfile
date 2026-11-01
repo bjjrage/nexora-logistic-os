@@ -13,6 +13,7 @@ COPY server ./server
 COPY api ./api
 COPY scripts ./scripts
 COPY tests ./tests
+COPY docs/rollback-3a6444-schema22.patch ./docs/rollback-3a6444-schema22.patch
 COPY deploy/vercel/vercel.json ./deploy/vercel/vercel.json
 COPY supabase ./supabase
 COPY MANUAL_MAESTRO_NEXORA_OS.html ./
