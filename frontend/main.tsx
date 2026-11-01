@@ -6,6 +6,7 @@ window.addEventListener('error',event=>reportClientError('UI_ERROR','window',und
 window.addEventListener('unhandledrejection',event=>reportClientError('UNHANDLED_REJECTION','window',undefined,sourcePosition(event.reason instanceof Error?event.reason.stack:undefined)));
 import "./fonts.css";
 import "./styles.css";
+import "./surfaces.css";
 
 const rootElement = document.getElementById("root");
 
