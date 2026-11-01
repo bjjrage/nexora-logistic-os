@@ -27,6 +27,7 @@ ENV NODE_ENV=production DATABASE_TARGET=production HOST=0.0.0.0 PORT=8080 ROUTIN
 COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/server ./server
+COPY --from=build --chown=node:node /app/shared ./shared
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node MANUAL_MAESTRO_NEXORA_OS.html ./
 COPY --from=build --chown=node:node /app/MANUAL_WORKFLOWS_NEXORA_PORTATIL.html ./

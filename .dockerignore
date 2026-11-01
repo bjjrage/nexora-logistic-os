@@ -10,6 +10,8 @@
 !manual/**
 !frontend/
 !frontend/**
+!shared/
+!shared/**
 !server/
 !server/**
 !api/
