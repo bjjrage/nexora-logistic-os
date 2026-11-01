@@ -24,6 +24,7 @@ import {reconcileInventory} from './reconciliation.ts';
 import {PasswordRecovery} from './password-recovery.ts';
 import {latestParcelAssignment} from './driver-access.ts';
 import {installBillingRoutes} from './billing.ts';
+import {clientErrorSchema} from '../shared/telemetry.ts';
 export function createApp(store: Database, tracking = new QuadMindsTracking(store), quad = new QuadOperations(store),diagnostics=new Diagnostics()) {
     const app = express(), domain = new Logistics(store);
     const traccar = new TraccarTracking(store);
@@ -69,7 +70,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     app.post('/api/password-recovery/issue',async(req,res)=>{const actor=await auth(req);ensure(recoveryIssues.allow(actor.id),'FORBIDDEN','Demasiados enlaces. Esperá antes de emitir otro.',429);res.json(await recovery.issue(actor,req.body));});
     app.get('/api/preview-identity',(_req,res)=>{if(process.env.NODE_ENV==='production'||!process.env.PREVIEW_INSTANCE_ID)return res.status(404).json({error:{code:'NOT_FOUND',message:'Endpoint no encontrado.'}});res.json({application:'logistics-os-local',previewInstanceId:process.env.PREVIEW_INSTANCE_ID});});
     const telemetryLimit=new WindowLimiter(20,60000);
-    app.post('/api/diagnostics/events',async(req,res)=>{const actor=await auth(req);ensure(telemetryLimit.allow(actor.id),'FORBIDDEN','Demasiados eventos.',429);const body=z.object({kind:z.enum(['UI_ERROR','UNHANDLED_REJECTION','API_ERROR']),component:z.string().regex(/^[a-zA-Z0-9_.-]{1,80}$/),requestId:z.uuid().optional()}).strict().parse(req.body);diagnostics.emit('client.error',body);res.status(202).json({accepted:true});});
+    app.post('/api/diagnostics/events',async(req,res)=>{const actor=await auth(req);ensure(telemetryLimit.allow(actor.id),'FORBIDDEN','Demasiados eventos.',429);const body=clientErrorSchema.parse(req.body);diagnostics.emit('client.error',body);res.status(202).json({accepted:true});});
     app.get('/api/diagnostics',async(req,res)=>{const actor=await auth(req);ensure(actor.role==='ADMIN','FORBIDDEN','Acceso no autorizado.',403);res.json({release:process.env.RELEASE_SHA??'local',events:diagnostics.recent.filter(entry=>entry.orgId===actor.orgId)});});
     app.get('/api/inventory/reconciliation',async(req,res)=>{const actor=await auth(req);const result=await reconcileInventory(store,actor);if(!result.ok)diagnostics.emit('inventory.mismatch',{quantityIssues:result.quantityIssues.length,serialIssues:result.serialIssues.length});res.json(result);});
     app.get('/api/session', async (req, res) => res.json({ user: await actorFromRequest(store, req), setupRequired: !await store.one('SELECT id FROM users LIMIT 1') }));

@@ -8,6 +8,7 @@ import {CompanyAdministration} from '../server/company.ts';
 import {passwordHash,hash,actorFromRequest,type Actor} from '../server/auth.ts';
 import {configureDelivery} from './support/delivery-policy.ts';
 import {reconcileInventory} from '../server/reconciliation.ts';
+import {createAlertingSink} from '../server/alerts.ts';
 
 test('PostgreSQL aislado: revocación, última asignación, capacidad real y reintento explícito',async()=>{
  const connection=process.env.DATABASE_URL??'',url=new URL(connection);
@@ -161,4 +162,65 @@ test('PostgreSQL aislado: sender handover settles quantity and serial inventory 
   }),error=>error===rollback);
   assert.equal(await store.one('SELECT id FROM organizations WHERE id=?',orgId),undefined);
  }finally{await store.close();}
+});
+
+test('PostgreSQL aislado: alert outbox retries after restart, recovers leases, serializes concurrent workers and restricts grants',async()=>{
+ const connection=process.env.DATABASE_URL??'',url=new URL(connection);
+ assert.ok(['localhost','127.0.0.1'].includes(url.hostname)&&url.pathname==='/nexora_test'&&url.port,'Solo nexora_test local con puerto explícito');
+ const storeA=new PostgresStore(connection),storeB=new PostgresStore(connection),requestA=randomUUID(),requestB=randomUUID();
+ let releaseFetch!:()=>void,fetchStarted!:()=>void,concurrentCalls=0,restartCalls=0;
+ const alertPayloads:Record<string,unknown>[]=[],outboxLogs:Record<string,unknown>[]=[];
+ const started=new Promise<void>(resolve=>{fetchStarted=resolve}),blockedFetch=new Promise<void>(resolve=>{releaseFetch=resolve});
+ let firstSink:ReturnType<typeof createAlertingSink>|undefined,restartSink:ReturnType<typeof createAlertingSink>|undefined;
+ let workerA:ReturnType<typeof createAlertingSink>|undefined,workerB:ReturnType<typeof createAlertingSink>|undefined;
+ try{
+  await storeA.verify();
+  const grants=await storeA.one(`SELECT c.relrowsecurity AS rls,
+    has_table_privilege('nexora_runtime','nexora.alert_outbox','SELECT') AS runtime_select,
+    has_table_privilege('nexora_runtime','nexora.alert_outbox','INSERT') AS runtime_insert,
+    has_table_privilege('nexora_runtime','nexora.alert_outbox','UPDATE') AS runtime_update,
+    has_table_privilege('nexora_runtime','nexora.alert_outbox','DELETE') AS runtime_delete,
+    has_table_privilege('anon','nexora.alert_outbox','SELECT') AS anon_select,
+    has_table_privilege('authenticated','nexora.alert_outbox','INSERT') AS authenticated_insert
+   FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='nexora' AND c.relname='alert_outbox'`);
+  assert.equal(grants?.rls,true);assert.equal(grants?.runtime_select,true);assert.equal(grants?.runtime_insert,true);assert.equal(grants?.runtime_update,true);assert.equal(grants?.runtime_delete,true);assert.equal(grants?.anon_select,false);assert.equal(grants?.authenticated_insert,false);
+  assert.equal((await storeA.one("SELECT rolbypassrls FROM pg_roles WHERE rolname='nexora_runtime'"))!.rolbypassrls,false);
+
+  firstSink=createAlertingSink(storeA,entry=>outboxLogs.push(entry),{url:'https://alerts.example.test/hook',autoStart:false,maxAttempts:3,retryDelaysMs:[60_000,60_000],minimumIntervalMs:0,
+   fetcher:async(_url,init)=>{alertPayloads.push(JSON.parse(String(init?.body)));return new Response(null,{status:503});}});
+  firstSink.handle({event:'server.error',requestId:requestA,errorType:'DatabaseError'});
+  await firstSink.flush();
+  let persisted=(await storeA.one('SELECT id,attempts,next_attempt_at,lease_until,delivered_at,failed_at,last_status FROM alert_outbox WHERE request_id=?',requestA))!;
+  assert.equal(persisted.attempts,1);assert.equal(persisted.last_status,503,JSON.stringify({attempts:persisted.attempts,nextAttemptAt:persisted.next_attempt_at,logs:outboxLogs.map(({event,errorType})=>({event,errorType}))}));assert.equal(persisted.lease_until,null);assert.equal(persisted.delivered_at,null);assert.equal(persisted.failed_at,null);
+  firstSink.close();
+
+  // Simulate a process dying after claiming an alert: it has an expired lease and remains durable.
+  await storeA.run('UPDATE alert_outbox SET lease_until=?,next_attempt_at=? WHERE id=?',new Date(0).toISOString(),new Date(0).toISOString(),persisted.id);
+  restartSink=createAlertingSink(storeB,()=>{},{url:'https://alerts.example.test/hook',autoStart:false,maxAttempts:3,retryDelaysMs:[0,0],minimumIntervalMs:0,
+   fetcher:async(_url,init)=>{restartCalls++;alertPayloads.push(JSON.parse(String(init?.body)));return new Response(null,{status:204});}});
+  await restartSink.flush();
+  persisted=(await storeA.one('SELECT attempts,lease_until,delivered_at,failed_at FROM alert_outbox WHERE id=?',persisted.id))!;
+  assert.equal(restartCalls,1);assert.equal(persisted.attempts,2);assert.equal(persisted.lease_until,null);assert.ok(persisted.delivered_at);assert.equal(persisted.failed_at,null);
+  assert.equal(alertPayloads.length,2);const alertId=(await storeA.one('SELECT id FROM alert_outbox WHERE request_id=?',requestA))!.id;
+  assert.ok(alertPayloads.every(payload=>payload.alertId===alertId),'la referencia del outbox permanece estable entre intentos');
+  assert.ok(alertPayloads.every(payload=>payload.requestId===requestA),'la referencia se conserva idéntica entre el POST fallido y el reintento');
+
+  // Two independent pools race on one due row. Only the worker holding its lease may POST.
+  workerA=createAlertingSink(storeA,()=>{},{url:'https://alerts.example.test/hook',autoStart:false,maxAttempts:3,retryDelaysMs:[0,0],minimumIntervalMs:0,
+   fetcher:async()=>{concurrentCalls++;fetchStarted();await blockedFetch;return new Response(null,{status:204});}});
+  workerB=createAlertingSink(storeB,()=>{},{url:'https://alerts.example.test/hook',autoStart:false,maxAttempts:3,retryDelaysMs:[0,0],minimumIntervalMs:0,
+   fetcher:async()=>{concurrentCalls++;return new Response(null,{status:204});}});
+  workerA.handle({event:'server.fatal',requestId:requestB,errorType:'Error'});
+  await started;
+  let leased=(await storeB.one('SELECT attempts,lease_until FROM alert_outbox WHERE request_id=?',requestB))!;
+  assert.equal(leased.attempts,1);assert.ok(leased.lease_until);
+  await workerB.flush();assert.equal(concurrentCalls,1,'el segundo worker no vuelve a reclamar la misma lease activa');
+  releaseFetch();await workerA.flush();
+  leased=(await storeB.one('SELECT attempts,lease_until,delivered_at FROM alert_outbox WHERE request_id=?',requestB))!;
+  assert.equal(concurrentCalls,1);assert.equal(leased.attempts,1);assert.equal(leased.lease_until,null);assert.ok(leased.delivered_at);
+ }finally{
+  releaseFetch();firstSink?.close();restartSink?.close();workerA?.close();workerB?.close();
+  await storeA.run('DELETE FROM alert_outbox WHERE request_id IN (?,?)',requestA,requestB).catch(()=>{});
+  await Promise.all([storeA.close(),storeB.close()]);
+ }
 });

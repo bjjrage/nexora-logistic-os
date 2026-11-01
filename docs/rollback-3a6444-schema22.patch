@@ -1,0 +1,33 @@
+diff --git a/server/postgres.ts b/server/postgres.ts
+index c46e185..e50bfb5 100644
+--- a/server/postgres.ts
++++ b/server/postgres.ts
+@@ -91,7 +91,7 @@ export class PostgresStore implements Database {
+   }
+   async verify() {
+     const versions = await this.all('SELECT version FROM schema_migrations ORDER BY version');
+-    if (versions.map(row => row.version).join(',') !== '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21') throw new Error('La base de Nexora no tiene las migraciones esperadas.');
++    if (!['1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21','1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22'].includes(versions.map(row => row.version).join(','))) throw new Error('La base de Nexora no tiene las migraciones esperadas.');
+   }
+   async close() { await this.pool.end(); }
+ }
+diff --git a/tests/postgres-migration-verification.test.ts b/tests/postgres-migration-verification.test.ts
+index ea4450e..bd378ba 100644
+--- a/tests/postgres-migration-verification.test.ts
++++ b/tests/postgres-migration-verification.test.ts
+@@ -2,12 +2,13 @@ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import { PostgresStore } from '../server/postgres.ts';
+ 
+-test('PostgreSQL startup requires the complete migration set including return dispositions', async () => {
++test('PostgreSQL startup accepts the deployed schema 21 and additive schema 22', async () => {
+   const verify = (versions: number[]) => PostgresStore.prototype.verify.call({
+     all: async () => versions.map(version => ({ version })),
+   } as unknown as PostgresStore);
+   await verify(Array.from({length: 21}, (_, index) => index + 1));
++  await verify(Array.from({length: 22}, (_, index) => index + 1));
+   await assert.rejects(verify(Array.from({length: 20}, (_, index) => index + 1)), /migraciones esperadas/);
+   await assert.rejects(verify([...Array.from({length: 16}, (_, index) => index + 1), 18]), /migraciones esperadas/);
+-  await assert.rejects(verify(Array.from({length: 22}, (_, index) => index + 1)), /migraciones esperadas/);
++  await assert.rejects(verify(Array.from({length: 23}, (_, index) => index + 1)), /migraciones esperadas/);
+ });

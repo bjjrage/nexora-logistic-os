@@ -8,6 +8,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json vite.config.ts index.html ./
 COPY frontend ./frontend
+COPY shared ./shared
 COPY server ./server
 COPY api ./api
 COPY scripts ./scripts
@@ -22,7 +23,7 @@ FROM node:24.20.0-bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
 COPY --from=build /opt/routing /opt/routing
 WORKDIR /app
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=8080 ROUTING_PYTHON=/opt/routing/bin/python
+ENV NODE_ENV=production DATABASE_TARGET=production HOST=0.0.0.0 PORT=8080 ROUTING_PYTHON=/opt/routing/bin/python
 COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/server ./server
