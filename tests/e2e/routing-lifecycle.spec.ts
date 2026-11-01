@@ -33,7 +33,8 @@ test('reserves six orders, approves two distinct crews, then loads, dispatches, 
  const board=page.getByRole('region',{name:'Reservados por organizar'});
  await board.getByRole('button',{name:'Organizar todos los reservados'}).click();
  const proposal=board.getByRole('region',{name:'Propuesta de distribución'});
- await expect(proposal).toContainText('6 pedidos agrupados');
+ // The real OR-Tools child runs its bounded local search before rendering the proposal.
+ await expect(proposal).toContainText('6 pedidos agrupados',{timeout:15000});
  await expect(proposal.getByRole('article')).toHaveCount(2);
  for(let i=1;i<=2;i++){await expect(proposal).toContainText('CICLO-'+i);await expect(proposal).toContainText('Chofer ciclo '+i);}
  const pending=await(await page.request.get('/api/routing/queue')).json();

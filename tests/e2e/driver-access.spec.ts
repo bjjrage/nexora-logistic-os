@@ -10,7 +10,8 @@ test('Flota permite recuperar el acceso de un chofer sin duplicarlo',async({page
  const before=await(await page.request.get('/api/company')).json();
  const original=before.team.find((m:any)=>m.driverId===driver);
  await send('/api/users/'+original.id+'/delete',{});
- await page.goto('/');await page.getByRole('button',{name:'Flota',exact:true}).click();await page.getByRole('button',{name:'Choferes',exact:true}).click();
+ const activeSession=await page.request.get('/api/session');expect(activeSession.ok()).toBeTruthy();expect((await activeSession.json()).user?.role).toBe('ADMIN');
+ await page.goto('/');const fleetNavigation=page.getByRole('button',{name:'Flota',exact:true});await expect(fleetNavigation).toBeVisible();await fleetNavigation.click();await page.getByRole('button',{name:'Choferes',exact:true}).click();
  const row=page.getByRole('row').filter({hasText:name});await row.getByRole('button',{name:'Crear acceso'}).click();
  await page.getByRole('textbox',{name:'Usuario',exact:true}).fill('new-'+suffix);
  await page.getByLabel('Contraseña inicial').last().fill('QA-Driver-2026!');
