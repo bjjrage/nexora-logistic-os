@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from '../support/e2e-test.ts';
 import {randomUUID} from 'node:crypto';
 
 test('orders filter all clients on the server, reset pagination and import into the chosen client',async({page})=>{

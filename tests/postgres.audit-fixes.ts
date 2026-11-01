@@ -7,6 +7,7 @@ import {Inventory} from '../server/inventory.ts';
 import {CompanyAdministration} from '../server/company.ts';
 import {passwordHash,hash,actorFromRequest,type Actor} from '../server/auth.ts';
 import {configureDelivery} from './support/delivery-policy.ts';
+import {reconcileInventory} from '../server/reconciliation.ts';
 
 test('PostgreSQL aislado: revocación, última asignación, capacidad real y reintento explícito',async()=>{
  const connection=process.env.DATABASE_URL??'',url=new URL(connection);
@@ -63,6 +64,101 @@ test('PostgreSQL aislado: revocación, última asignación, capacidad real y rei
    await assert.rejects(()=>inventory.adjust(actor,{...command(),clientId,productId:product,locationId,quantityDelta:1,reason:'QA'}),{code:'INVALID_TRANSITION'});
    throw rollback;
   }),e=>e===rollback);
+  assert.equal(await store.one('SELECT id FROM organizations WHERE id=?',orgId),undefined);
+ }finally{await store.close();}
+});
+
+test('PostgreSQL aislado: sender handover settles quantity and serial inventory atomically',async()=>{
+ const connection=process.env.DATABASE_URL??'',url=new URL(connection);
+ assert.ok(['localhost','127.0.0.1'].includes(url.hostname)&&url.pathname==='/nexora_test','Only local nexora_test is allowed');
+ const store=new PostgresStore(connection),rollback=new Error('ROLLBACK_RETURN_DISPOSITIONS'),orgId=randomUUID(),userId=randomUUID(),command=()=>({commandId:randomUUID()});
+ try{
+  await store.verify();
+  await assert.rejects(store.transaction(async()=>{
+   await store.run('INSERT INTO organizations VALUES(?,?,?)',orgId,'QA return disposition isolated','UTC');
+   await store.run("INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,'ADMIN',NULL)",userId,orgId,'qa-'+userId,'QA admin',passwordHash('QA-Return-2026!'));
+   const actor:Actor={id:userId,orgId,name:'QA admin',role:'ADMIN',driverId:null},domain=new Logistics(store),inventory=new Inventory(store);
+   const clientId=(await domain.createClient(actor,{...command(),name:'QA client'})).id;
+   await configureDelivery(store,actor,clientId);
+   const stock=(await inventory.createLocation(actor,{...command(),code:'QA-STOCK-'+orgId.slice(0,6),name:'QA stock',kind:'STORAGE'})).id;
+   const quarantine=(await inventory.createLocation(actor,{...command(),code:'QA-QRT-'+orgId.slice(0,6),name:'QA quarantine',kind:'QUARANTINE'})).id;
+   const upload=async(parcelId:string,suffix:string)=>{
+    const bytes=Buffer.from([137,80,78,71,13,10,26,10,...Buffer.from(suffix)]);
+    return (await domain.upload(actor,{...command(),parcelId,filename:suffix+'.png',mimeType:'image/png',dataBase64:bytes.toString('base64')})).id as string;
+   };
+   for(const tracking of ['QUANTITY','SERIAL'] as const){
+    const suffix=tracking+'-'+orgId.slice(0,6),product=(await inventory.createProduct(actor,{...command(),clientId,sku:suffix,name:suffix,tracking})).id;
+    const serial=tracking==='SERIAL'?'QA-SERIAL-'+orgId.slice(0,8):undefined;
+    await inventory.receive(actor,{...command(),clientId,productId:product,locationId:stock,quantity:1,...(serial?{serials:[{serial}]}:{})});
+    const order=(await inventory.createOrder(actor,{...command(),clientId,externalId:'QA-'+suffix,orderDate:'2026-10-31',destination:'QA',recipientName:'QA recipient',lines:[{productId:product,quantity:1}]}));
+    const reservation=await inventory.reserveOrder(actor,order.id,{...command(),locationId:stock}),parcelId=reservation.parcels[0].id as string;
+    const driverId=(await domain.createDriver(actor,{...command(),name:'QA driver',username:'qa-'+randomUUID(),password:'QA-Driver-2026!'})).id;
+    const vehicleId=(await domain.createVehicle(actor,{...command(),plate:'QA-'+randomUUID().slice(0,8),capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0})).id;
+    const route=await domain.createRoute(actor,{...command(),name:'QA return',driverId,vehicleId,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()});
+    await domain.assign(actor,route.id,{...command(),expectedVersion:route.version,parcelIds:[parcelId],pickup:false});
+    await inventory.loadOrder(actor,order.id,{...command(),routeId:route.id,expectedVersion:(await domain.route(route.id,actor)).version,codes:[reservation.parcels[0].code]});
+    await domain.ready(actor,route.id,{...command(),expectedVersion:(await domain.route(route.id,actor)).version});
+    await domain.inspect(actor,vehicleId,{...command(),odometer:0,fuelPercent:90,items:[{label:'QA',severity:'OK',note:''}]});
+    await domain.dispatch(actor,route.id,{...command(),expectedVersion:(await domain.route(route.id,actor)).version});
+    await store.run(`INSERT INTO quad_parcel_links(org_id,parcel_id,external_code,poi_id,delivery_date,payload,state,updated_at,provider_result,evidence_state,reported_at,receiver_name)
+     VALUES(?,?,?,?,?,?, 'EXPORTED',?,?,?, ?,?)`,orgId,parcelId,'NX-'+randomUUID(),123,'2026-10-31','{}',new Date().toISOString(),'FAILED','PENDING',new Date().toISOString(),'');
+    const stop=(await store.one("SELECT id FROM stops WHERE org_id=? AND route_id=? AND kind='DELIVERY'",orgId,route.id))!;
+    await domain.attempt(actor,stop.id,{...command(),expectedVersion:(await domain.route(route.id,actor)).version,deliveredParcelIds:[],failedParcelIds:[parcelId],receiverName:'',evidenceIds:[],reasonCode:'ABSENT',nextAction:'Return'});
+    const incident=(await store.one('SELECT id FROM incidents WHERE org_id=? AND parcel_id=?',orgId,parcelId))!;
+    const returned=await domain.authorizeReturn(actor,incident.id,command());
+    await inventory.returnOrder(actor,order.id,{...command(),locationId:quarantine,returns:[{returnId:returned.id,evidenceId:await upload(parcelId,'depot-'+tracking)}]});
+    const foreignOrg=randomUUID(),foreignActor=randomUUID();
+    await store.run('INSERT INTO organizations VALUES(?,?,?)',foreignOrg,'QA foreign org','UTC');
+    await store.run("INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,'ADMIN',NULL)",foreignActor,foreignOrg,'qa-'+foreignActor,'QA foreign actor',passwordHash(randomUUID()));
+    const expectRejectedInsert=(rowOrg:string,rowActor:string)=>store.transaction(()=>store.run(
+     'INSERT INTO return_dispositions(return_id,org_id,disposition,actor_id,command_id,created_at) VALUES(?,?,?,?,?,?)',
+     returned.id,rowOrg,'SENT_TO_SENDER',rowActor,randomUUID(),new Date().toISOString()));
+    await assert.rejects(()=>expectRejectedInsert(orgId,foreignActor),{code:'VALIDATION_ERROR'});
+    await assert.rejects(()=>expectRejectedInsert(foreignOrg,foreignActor),{code:'VALIDATION_ERROR'});
+    assert.ok(await store.one("SELECT tgname FROM pg_trigger WHERE tgrelid='return_dispositions'::regclass AND NOT tgisinternal AND tgname='return_dispositions_append_only'"));
+    assert.ok(await store.one("SELECT tgname FROM pg_trigger WHERE tgrelid='return_dispositions'::regclass AND NOT tgisinternal AND tgname='return_dispositions_no_truncate'"));
+    const senderInput={...command(),receiverName:'QA sender',evidenceId:await upload(parcelId,'sender-'+tracking)};
+    const sent=await domain.sendReturn(actor,returned.id,senderInput);
+    assert.deepEqual(await domain.sendReturn(actor,returned.id,senderInput),sent);
+    assert.equal((await store.one('SELECT disposition FROM return_dispositions WHERE return_id=?',returned.id))!.disposition,'SENT_TO_SENDER');
+    await assert.rejects(()=>store.transaction(()=>store.run("UPDATE return_dispositions SET disposition='RESTOCKED' WHERE return_id=?",returned.id)),{code:'42501'});
+    assert.equal((await store.one("SELECT COUNT(*) AS n FROM inventory_movements WHERE org_id=? AND parcel_id=? AND action='RETURN' AND from_status='QUARANTINE' AND to_status IS NULL",orgId,parcelId))!.n,1);
+    if(serial)assert.equal((await store.one('SELECT status FROM inventory_units WHERE org_id=? AND serial=?',orgId,serial))!.status,'ADJUSTED');
+    assert.equal((await reconcileInventory(store,actor)).ok,true);
+    await assert.rejects(()=>inventory.release(actor,order.id,{...command(),locationId:stock,parcelIds:[parcelId],reason:'Sender already received'}),{code:'INVALID_TRANSITION'});
+   }
+   const restockProduct=(await inventory.createProduct(actor,{...command(),clientId,sku:'PG-RESTOCK-'+orgId.slice(0,6),name:'PG restock quantity',tracking:'QUANTITY'})).id;
+   await inventory.receive(actor,{...command(),clientId,productId:restockProduct,locationId:stock,quantity:1});
+   const restockOrder=await inventory.createOrder(actor,{...command(),clientId,externalId:'PG-RESTOCK-'+orgId,orderDate:'2026-10-31',destination:'QA restock',recipientName:'QA recipient',lines:[{productId:restockProduct,quantity:1}]});
+   const restockReservation=await inventory.reserveOrder(actor,restockOrder.id,{...command(),locationId:stock}),restockParcelId=restockReservation.parcels[0].id as string;
+   const restockDriver=(await domain.createDriver(actor,{...command(),name:'QA restock driver',username:'qa-restock-'+randomUUID(),password:'QA-Return-2026!'})).id;
+   const restockVehicle=(await domain.createVehicle(actor,{...command(),plate:'QA-RS-'+randomUUID().slice(0,8),capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0})).id;
+   const restockRoute=await domain.createRoute(actor,{...command(),name:'QA restock return',driverId:restockDriver,vehicleId:restockVehicle,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()});
+   await domain.assign(actor,restockRoute.id,{...command(),expectedVersion:restockRoute.version,parcelIds:[restockParcelId],pickup:false});
+   await inventory.loadOrder(actor,restockOrder.id,{...command(),routeId:restockRoute.id,expectedVersion:(await domain.route(restockRoute.id,actor)).version,codes:[restockReservation.parcels[0].code]});
+   await domain.ready(actor,restockRoute.id,{...command(),expectedVersion:(await domain.route(restockRoute.id,actor)).version});
+   await domain.inspect(actor,restockVehicle,{...command(),odometer:0,fuelPercent:90,items:[{label:'QA',severity:'OK',note:''}]});
+   await domain.dispatch(actor,restockRoute.id,{...command(),expectedVersion:(await domain.route(restockRoute.id,actor)).version});
+   await store.run(`INSERT INTO quad_parcel_links(org_id,parcel_id,external_code,poi_id,delivery_date,payload,state,updated_at,provider_result,evidence_state,reported_at,receiver_name)
+    VALUES(?,?,?,?,?,?, 'EXPORTED',?,?,?, ?,?)`,orgId,restockParcelId,'NX-'+randomUUID(),124,'2026-10-31','{}',new Date().toISOString(),'FAILED','PENDING',new Date().toISOString(),'');
+   const restockStop=(await store.one("SELECT id FROM stops WHERE org_id=? AND route_id=? AND kind='DELIVERY'",orgId,restockRoute.id))!;
+   await domain.attempt(actor,restockStop.id,{...command(),expectedVersion:(await domain.route(restockRoute.id,actor)).version,deliveredParcelIds:[],failedParcelIds:[restockParcelId],receiverName:'',evidenceIds:[],reasonCode:'ABSENT',nextAction:'Restock disposition'});
+   const restockIncident=(await store.one('SELECT id FROM incidents WHERE org_id=? AND parcel_id=?',orgId,restockParcelId))!;
+   const restockReturn=await domain.authorizeReturn(actor,restockIncident.id,command());
+   const restockEvidence=(await domain.upload(actor,{...command(),parcelId:restockParcelId,filename:'depot-restock.png',mimeType:'image/png',dataBase64:Buffer.from([137,80,78,71,13,10,26,10,...Buffer.from('depot-restock')]).toString('base64')})).id as string;
+   await inventory.returnOrder(actor,restockOrder.id,{...command(),locationId:quarantine,returns:[{returnId:restockReturn.id,evidenceId:restockEvidence}]});
+   assert.equal((await reconcileInventory(store,actor)).ok,true);
+   const releaseInput={...command(),locationId:stock,parcelIds:[restockParcelId],reason:'QA restock disposition'};
+   assert.deepEqual(await inventory.release(actor,restockOrder.id,releaseInput),{id:restockOrder.id,released:1});
+   const restockDisposition=(await store.one("SELECT disposition,command_id FROM return_dispositions WHERE org_id=? AND return_id=?",orgId,restockReturn.id))!;
+   assert.equal(restockDisposition.disposition,'RESTOCKED');
+   const restockState=(await store.one('SELECT state,custody_id,location_id FROM inventory_order_parcels WHERE org_id=? AND parcel_id=?',orgId,restockParcelId))!;
+   assert.equal(restockState.state,'RELEASED');assert.equal(restockState.custody_id,'');assert.equal(restockState.location_id,stock);
+   assert.equal((await store.one("SELECT COUNT(*) AS n FROM inventory_movements WHERE org_id=? AND parcel_id=? AND command_id=? AND action='RELEASE' AND from_status='QUARANTINE' AND to_status='AVAILABLE' AND to_location_id=?",orgId,restockParcelId,restockDisposition.command_id,stock))!.n,1);
+   assert.equal((await reconcileInventory(store,actor)).ok,true);
+   await assert.rejects(()=>domain.sendReturn(actor,restockReturn.id,{...command(),receiverName:'QA sender',evidenceId:randomUUID()}),{code:'INVALID_TRANSITION'});
+   throw rollback;
+  }),error=>error===rollback);
   assert.equal(await store.one('SELECT id FROM organizations WHERE id=?',orgId),undefined);
  }finally{await store.close();}
 });

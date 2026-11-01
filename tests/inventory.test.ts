@@ -37,6 +37,40 @@ const orderBody = (commandId: string, clientId: string, productId: string, exter
 });
 const code = (errorCode: string) => (error: any) => error?.code === errorCode;
 
+async function inventoryReturnStory(f: any, tracking: 'QUANTITY' | 'SERIAL') {
+  const product = tracking === 'SERIAL' ? await f.makeProduct(f.clientId, `RETURN-${randomUUID().slice(0, 8)}`, 'SERIAL') : f.product;
+  const serial = tracking === 'SERIAL' ? `RETURN-SERIAL-${randomUUID()}` : undefined;
+  await f.inventory.receive(f.actor, { ...f.command(), clientId: f.clientId, productId: product.id, locationId: f.locationId, quantity: 1,
+    ...(serial ? { serials: [{ serial }] } : {}) });
+  const order = await f.inventory.createOrder(f.actor, orderBody(randomUUID(), f.clientId, product.id, `RETURN-ORDER-${randomUUID()}`, 1));
+  const reserved = await f.inventory.reserveOrder(f.actor, order.id, { ...f.command(), locationId: f.locationId });
+  const parcelId = reserved.parcels[0].id as string;
+  const driverId = (await f.domain.createDriver(f.actor, { ...f.command(), name: 'Return QA driver', username: `return-${randomUUID()}`, password: 'Password-QA-Return-2026!' })).id;
+  const vehicleId = (await f.domain.createVehicle(f.actor, { ...f.command(), plate: `RET-${randomUUID().slice(0, 8)}`, capacityWeightGrams: 10000, capacityVolumeCm3: 10000, odometer: 0 })).id;
+  const route = await f.domain.createRoute(f.actor, { ...f.command(), name: 'Return QA route', driverId, vehicleId,
+    startAt: new Date(Date.now() - 60000).toISOString(), endAt: new Date(Date.now() + 3600000).toISOString() });
+  await f.domain.assign(f.actor, route.id, { ...f.command(), expectedVersion: route.version, parcelIds: [parcelId], pickup: false });
+  await f.inventory.loadOrder(f.actor, order.id, { ...f.command(), routeId: route.id,
+    expectedVersion: (await f.domain.route(route.id, f.actor)).version, codes: [reserved.parcels[0].code] });
+  await f.domain.ready(f.actor, route.id, { ...f.command(), expectedVersion: (await f.domain.route(route.id, f.actor)).version });
+  await f.domain.inspect(f.actor, vehicleId, { ...f.command(), odometer: 0, fuelPercent: 90, items: [{ label: 'Return QA', severity: 'OK', note: '' }] });
+  await f.domain.dispatch(f.actor, route.id, { ...f.command(), expectedVersion: (await f.domain.route(route.id, f.actor)).version });
+  await f.store.run(`INSERT INTO quad_parcel_links(org_id,parcel_id,external_code,poi_id,delivery_date,payload,state,updated_at,provider_result,evidence_state,reported_at,receiver_name)
+    VALUES(?,?,?,?,?,?, 'EXPORTED',?,?,?, ?,?)`, f.actor.orgId, parcelId, `NX-RETURN-${randomUUID()}`, 123, '2026-10-31', '{}', new Date().toISOString(), 'FAILED', 'PENDING', new Date().toISOString(), '');
+  const stop = await f.store.one("SELECT id FROM stops WHERE route_id=? AND kind='DELIVERY'", route.id);
+  await f.domain.attempt(f.actor, stop!.id, { ...f.command(), expectedVersion: (await f.domain.route(route.id, f.actor)).version,
+    deliveredParcelIds: [], failedParcelIds: [parcelId], receiverName: '', evidenceIds: [], reasonCode: 'ABSENT', nextAction: 'Return to sender' });
+  const incident = await f.store.one('SELECT id FROM incidents WHERE org_id=? AND parcel_id=?', f.actor.orgId, parcelId);
+  const authorized = await f.domain.authorizeReturn(f.actor, incident!.id, f.command());
+  const upload = async (suffix: string) => {
+    const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, ...Buffer.from(suffix)]);
+    return (await f.domain.upload(f.actor, { ...f.command(), parcelId, filename: `${suffix}.png`, mimeType: 'image/png', dataBase64: bytes.toString('base64') })).id as string;
+  };
+  await f.inventory.returnOrder(f.actor, order.id, { ...f.command(), locationId: f.quarantineId,
+    returns: [{ returnId: authorized.id, evidenceId: await upload('depot') }] });
+  return { product, order, parcelId, returnId: authorized.id as string, serial, upload };
+}
+
 test('recepción contabiliza códigos de modelo como cantidad y reintentar el comando no duplica stock', async (t) => {
   const f = await fixture(t);
   const body = { ...f.command(), clientId: f.clientId, productId: f.product.id, locationId: f.locationId, quantity: 7, reference: 'ASN-42', reason: '' };
@@ -371,12 +405,38 @@ test('parcels por unidad enlazan ruta, bloquean cierre manual, entregan parcial 
   assert.equal(returnedToDepot.returns[0].state, 'AT_DEPOT');
   assert.equal((await f.store.one("SELECT SUM(quantity) AS n FROM inventory_balances WHERE product_id=? AND status='VEHICLE' AND custody_id=?", f.product.id, vehicleId))?.n, 0);
   assert.equal((await f.store.one("SELECT SUM(quantity) AS n FROM inventory_balances WHERE product_id=? AND status='QUARANTINE' AND location_id=?", f.product.id, f.quarantineId))?.n, 1);
+  assert.equal((await reconcileInventory(f.store, f.actor)).ok, true);
   const returned = (await f.store.one("SELECT parcel_id FROM inventory_order_parcels WHERE order_id=? AND state='QUARANTINE'", order.id))!.parcel_id;
   const released = await f.inventory.release(f.actor, order.id, { ...f.command(), locationId: f.shelfId, parcelIds: [returned], reason: 'Inspección QA aprobada' });
   assert.equal(released.released, 1);
   assert.equal((await f.store.one("SELECT SUM(quantity) AS n FROM inventory_balances WHERE product_id=? AND status='AVAILABLE'", f.product.id))?.n, 1);
+  const returnedId = (await f.store.one('SELECT id FROM returns WHERE parcel_id=?', returned))!.id;
+  assert.equal((await f.store.one('SELECT disposition FROM return_dispositions WHERE return_id=?', returnedId))?.disposition, 'RESTOCKED');
+  await assert.rejects(() => f.store.run("UPDATE return_dispositions SET disposition='SENT_TO_SENDER' WHERE return_id=?", returnedId), /RETURN_DISPOSITION_APPEND_ONLY/);
+  const movementCount = (await f.store.one('SELECT COUNT(*) AS n FROM inventory_movements WHERE parcel_id=?', returned))!.n;
+  await assert.rejects(() => f.domain.sendReturn(f.actor, returnedId, { ...f.command(), receiverName: 'QA sender', evidenceId: randomUUID() }), code('INVALID_TRANSITION'));
+  assert.equal((await f.store.one('SELECT COUNT(*) AS n FROM inventory_movements WHERE parcel_id=?', returned))!.n, movementCount);
+  assert.equal((await reconcileInventory(f.store, f.actor)).ok, true);
   assert.equal((await f.store.one('SELECT COUNT(*) AS n FROM inventory_movements WHERE action IN (\'LOAD\',\'DELIVER\',\'RETURN\',\'RELEASE\')'))?.n, 7);
   await assert.rejects(() => f.store.run('UPDATE inventory_movements SET reason=?', 'alterado'), /INVENTORY_LEDGER_APPEND_ONLY/);
+
+  const restockCommand = (await f.store.one("SELECT command_id FROM return_dispositions WHERE return_id=?", returnedId))!.command_id;
+  const releaseMovement = (await f.store.one("SELECT id FROM inventory_movements WHERE org_id=? AND parcel_id=? AND command_id=? AND action='RELEASE' AND from_status='QUARANTINE' AND to_status='AVAILABLE'", f.actor.orgId, returned, restockCommand))!;
+  await f.store.run('DROP TRIGGER inventory_movements_no_update');
+  await f.store.run("UPDATE inventory_movements SET to_location_id=? WHERE id=?", f.locationId, releaseMovement.id);
+  const removedFromShelf = await f.store.run("UPDATE inventory_balances SET quantity=quantity-1 WHERE org_id=? AND client_id=? AND product_id=? AND location_id=? AND status='AVAILABLE' AND custody_id='' AND order_id='' AND quantity>0", f.actor.orgId, f.clientId, f.product.id, f.shelfId);
+  assert.equal(Number(removedFromShelf.changes), 1);
+  await f.store.run(`INSERT INTO inventory_balances(id,org_id,client_id,product_id,location_id,status,custody_id,order_id,quantity,updated_at)
+    VALUES(?,?,?,?,?,'AVAILABLE','','',0,?) ON CONFLICT(org_id,client_id,product_id,location_id,status,custody_id,order_id) DO NOTHING`, randomUUID(), f.actor.orgId, f.clientId, f.product.id, f.locationId, new Date().toISOString());
+  await f.store.run("UPDATE inventory_balances SET quantity=quantity+1 WHERE org_id=? AND client_id=? AND product_id=? AND location_id=? AND status='AVAILABLE' AND custody_id='' AND order_id=''", f.actor.orgId, f.clientId, f.product.id, f.locationId);
+  const wrongLocation = await reconcileInventory(f.store, f.actor);
+  assert.equal(wrongLocation.quantityIssues.length, 0);
+  assert.equal(wrongLocation.returnIssues.some(issue => issue.return_id === returnedId), true);
+  await f.store.run('UPDATE inventory_movements SET to_location_id=? WHERE id=?', f.shelfId, releaseMovement.id);
+  await f.store.run("UPDATE inventory_balances SET quantity=quantity-1 WHERE org_id=? AND client_id=? AND product_id=? AND location_id=? AND status='AVAILABLE' AND custody_id='' AND order_id=''", f.actor.orgId, f.clientId, f.product.id, f.locationId);
+  await f.store.run("UPDATE inventory_balances SET quantity=quantity+1 WHERE org_id=? AND client_id=? AND product_id=? AND location_id=? AND status='AVAILABLE' AND custody_id='' AND order_id=''", f.actor.orgId, f.clientId, f.product.id, f.shelfId);
+  await f.store.run("CREATE TRIGGER inventory_movements_no_update BEFORE UPDATE ON inventory_movements BEGIN SELECT RAISE(ABORT,'INVENTORY_LEDGER_APPEND_ONLY'); END");
+  assert.equal((await reconcileInventory(f.store, f.actor)).ok, true);
 });
 
 for (const tracking of ['QUANTITY', 'SERIAL'] as const) test(`carga ${tracking}: el código de modelo no consume el bulto o serie explícito del mismo lote`, async t => {
@@ -469,4 +529,63 @@ test('el snapshot anuncia sus límites y el CSV exporta todos los seriales sin t
   const csv = await f.inventory.exportCsv(f.actor, f.clientId);
   assert.equal(csv.split('\r\n').filter(line => line.startsWith('"SERIAL"')).length, 1001);
   assert(csv.includes('LARGE-1001'));
+});
+
+for (const tracking of ['QUANTITY', 'SERIAL'] as const) test(`sender handover removes ${tracking} inventory exactly once and reconciliation follows custody`, async t => {
+  const f = await fixture(t), story = await inventoryReturnStory(f, tracking);
+  const input = { ...f.command(), receiverName: 'QA sender', evidenceId: await story.upload('sender') };
+  const sent = await f.domain.sendReturn(f.actor, story.returnId, input);
+  assert.equal(sent.state, 'SENT_TO_SENDER');
+  assert.deepEqual(await f.domain.sendReturn(f.actor, story.returnId, input), sent);
+  const terminal = await f.store.one('SELECT disposition,command_id FROM return_dispositions WHERE return_id=?', story.returnId);
+  assert.equal(terminal!.disposition, 'SENT_TO_SENDER'); assert.equal(terminal!.command_id, input.commandId);
+  const parcel = await f.store.one('SELECT state,custody_type,custody_id FROM parcels WHERE id=?', story.parcelId);
+  assert.equal(parcel!.state, 'RETURNED_TO_SENDER'); assert.equal(parcel!.custody_type, 'SENDER'); assert.equal(parcel!.custody_id, f.clientId);
+  assert.equal((await f.store.one('SELECT state FROM inventory_order_parcels WHERE parcel_id=?', story.parcelId))!.state, 'RELEASED');
+  assert.equal((await f.store.one("SELECT COUNT(*) AS n FROM inventory_movements WHERE parcel_id=? AND action='RETURN' AND from_status='QUARANTINE' AND to_status IS NULL AND command_id=?", story.parcelId, input.commandId))!.n, 1);
+  if (tracking === 'QUANTITY') {
+    assert.equal((await f.store.one("SELECT COALESCE(SUM(quantity),0) AS n FROM inventory_balances WHERE product_id=? AND status='QUARANTINE'", story.product.id))!.n, 0);
+    assert.equal((await f.store.one("SELECT COALESCE(SUM(quantity),0) AS n FROM inventory_balances WHERE product_id=? AND status='AVAILABLE'", story.product.id))!.n, 0);
+  } else {
+    assert.equal((await f.store.one('SELECT status FROM inventory_units WHERE serial=?', story.serial!))!.status, 'ADJUSTED');
+  }
+  assert.equal((await reconcileInventory(f.store, f.actor)).ok, true);
+  await f.store.run("UPDATE parcels SET custody_id='wrong-sender' WHERE id=?", story.parcelId);
+  const custodyMismatch = await reconcileInventory(f.store, f.actor);
+  assert.equal(custodyMismatch.ok, false);
+  assert.equal(custodyMismatch.returnIssues[0].parcel_id, story.parcelId);
+  await f.store.run("UPDATE parcels SET custody_id='' WHERE id=?", story.parcelId);
+  assert.equal((await reconcileInventory(f.store, f.actor)).ok, false);
+  await f.store.run('UPDATE parcels SET custody_id=? WHERE id=?', f.clientId, story.parcelId);
+  assert.equal((await reconcileInventory(f.store, f.actor)).ok, true);
+  await assert.rejects(() => f.inventory.release(f.actor, story.order.id, { ...f.command(), locationId: f.shelfId, parcelIds: [story.parcelId], reason: 'Already handed over' }), code('INVALID_TRANSITION'));
+});
+
+test('concurrent quarantine release and sender handover choose one terminal disposition', async t => {
+  const f = await fixture(t), story = await inventoryReturnStory(f, 'QUANTITY');
+  const releaseInput = { ...f.command(), locationId: f.shelfId, parcelIds: [story.parcelId], reason: 'QA disposition race' };
+  const senderInput = { ...f.command(), receiverName: 'QA sender', evidenceId: await story.upload('race-sender') };
+  const results = await Promise.allSettled([
+    f.inventory.release(f.actor, story.order.id, releaseInput),
+    f.domain.sendReturn(f.actor, story.returnId, senderInput),
+  ]);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  const rejected = results.find(result => result.status === 'rejected') as PromiseRejectedResult;
+  assert.equal((rejected.reason as any).code, 'INVALID_TRANSITION');
+  const disposition = await f.store.one('SELECT disposition,command_id FROM return_dispositions WHERE return_id=?', story.returnId);
+  assert(disposition);
+  if (disposition.disposition === 'RESTOCKED') {
+    const completed = results[0].status === 'fulfilled' ? results[0].value : undefined;
+    assert.deepEqual(completed, { id: story.order.id, released: 1 });
+    assert.deepEqual(await f.inventory.release(f.actor, story.order.id, releaseInput), completed);
+    assert.equal((await f.store.one("SELECT SUM(quantity) AS n FROM inventory_balances WHERE product_id=? AND status='AVAILABLE'", story.product.id))!.n, 1);
+  } else {
+    const completed = results[1].status === 'fulfilled' ? results[1].value : undefined;
+    assert.deepEqual(completed, { id: story.returnId, state: 'SENT_TO_SENDER' });
+    assert.deepEqual(await f.domain.sendReturn(f.actor, story.returnId, senderInput), completed);
+    assert.equal((await f.store.one("SELECT COALESCE(SUM(quantity),0) AS n FROM inventory_balances WHERE product_id=? AND status='QUARANTINE'", story.product.id))!.n, 0);
+  }
+  assert.equal((await f.store.one("SELECT COUNT(*) AS n FROM inventory_movements WHERE parcel_id=? AND action IN('RETURN','RELEASE') AND from_status='QUARANTINE'", story.parcelId))!.n, 1);
+  assert.equal((await f.store.one('SELECT COUNT(*) AS n FROM return_dispositions WHERE return_id=?', story.returnId))!.n, 1);
+  assert.equal((await reconcileInventory(f.store, f.actor)).ok, true);
 });

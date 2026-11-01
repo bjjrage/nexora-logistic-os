@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from '../support/e2e-test.ts';
 import {pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
 import {readFileSync} from 'node:fs';

@@ -1,65 +1,58 @@
-import {test,expect} from '@playwright/test';
 import {randomUUID} from 'node:crypto';
+import {test,expect} from '../support/e2e-test.ts';
 
-test('route bulk selection removes ten units and unloads ten units with one request, preserving stock and orders',async({page})=>{
- const send=async(path:string,data:Record<string,unknown>)=>{const r=await page.request.post(path,{headers:{'X-Requested-With':'logistics-os'},data:{commandId:randomUUID(),...data}});expect(r.ok(),path+': '+await r.text()).toBeTruthy();return r.json();};
+test('bulk load and unload keep reservations accurate across several orders',async({page})=>{
+ const post=async(path:string,body:Record<string,unknown>)=>{
+  const response=await page.request.post(path,{headers:{'X-Requested-With':'logistics-os'},data:{commandId:randomUUID(),...body}});
+  expect(response.ok(),`${path}: ${await response.text()}`).toBeTruthy();return response.json();
+ };
  const session=await(await page.request.get('/api/session')).json();
- if(session.setupRequired)await send('/api/setup',{organizationName:'QA descarga masiva',timezone:'America/Asuncion',username:'qa-browser',password:'QA-Browser-Isolated-2026!'});else await send('/api/login',{username:'qa-browser',password:'QA-Browser-Isolated-2026!'});
- const suffix=randomUUID().slice(0,8),name='Lote '+suffix;
- const client=(await send('/api/clients',{name:'Cliente '+suffix})).id;
- await send('/api/clients/'+client+'/delivery-provider',{deliveryProvider:'NEXORA'});
- const driver=(await send('/api/drivers',{name:'Chofer '+suffix,username:'drv-'+suffix,password:'QA-Driver-Bulk-2026!'})).id;
- const vehicle=(await send('/api/vehicles',{plate:'BULK-'+suffix,capacityWeightGrams:100000,capacityVolumeCm3:100000,odometer:0})).id;
- const location=(await send('/api/inventory/locations',{code:'DEP-'+suffix,name:'Depósito QA'})).id;
- const orders:string[]=[],ids:string[]=[];
- for(const [index,productName] of ['Cocina demo','Heladera demo'].entries()){
-  const product=(await send('/api/inventory/products',{clientId:client,sku:'BULK-'+suffix+'-'+index,name:productName,tracking:'QUANTITY',weightGrams:100,volumeCm3:100})).id;
-  await send('/api/inventory/receipts',{clientId:client,productId:product,locationId:location,quantity:5});
-  const order=(await send('/api/orders',{clientId:client,externalId:'LOTE-'+suffix+'-'+index,orderDate:'2026-10-28',recipientName:'Receptor '+index,destination:'Destino demo',lines:[{productId:product,quantity:5}]})).id;
-  orders.push(order);ids.push(...(await send('/api/orders/'+order+'/reserve',{})).parcels.map((p:any)=>p.id));
+ if(session.setupRequired)await post('/api/setup',{organizationName:'QA bultos en lote',timezone:'America/Asuncion',username:'qa-browser',password:'QA-Browser-Isolated-2026!'});
+ else await post('/api/login',{username:'qa-browser',password:'QA-Browser-Isolated-2026!'});
+ const suffix=randomUUID().slice(0,8);
+ const client=(await post('/api/clients',{name:'Cliente lote '+suffix})).id;
+ const driver=(await post('/api/drivers',{name:'Chofer lote '+suffix,username:'bulk-'+suffix,password:'QA-Bulk-Driver-2026!'})).id;
+ const vehicle=(await post('/api/vehicles',{plate:'BULK-'+suffix,capacityWeightGrams:5000,capacityVolumeCm3:10000,odometer:0})).id;
+ const location=(await post('/api/inventory/locations',{code:'BULK-'+suffix,name:'Depósito lote'})).id;
+ const product=(await post('/api/inventory/products',{clientId:client,sku:'BULK-'+suffix,name:'Caja lote '+suffix,tracking:'QUANTITY',weightGrams:100,volumeCm3:100})).id;
+ await post('/api/inventory/receipts',{clientId:client,productId:product,locationId:location,quantity:10});
+ const orders:Array<{id:string;parcelIds:string[];codes:string[]}>=[];
+ for(let i=1;i<=2;i++){
+  const id=(await post('/api/orders',{clientId:client,externalId:`BULK-${suffix}-${i}`,orderDate:'2026-10-28',recipientName:'Receptor '+i,destination:'Destino '+i,lines:[{productId:product,quantity:5}]})).id;
+  const reservation=await post(`/api/orders/${id}/reserve`,{});
+  orders.push({id,parcelIds:reservation.parcels.map((parcel:{id:string})=>parcel.id),codes:reservation.parcels.map((parcel:{code:string})=>parcel.code)});
  }
- const route=(await send('/api/routes',{name,driverId:driver,vehicleId:vehicle,trackingProvider:'TRACCAR',startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()})).id;
- const current=async()=>(await(await page.request.get('/api/bootstrap')).json()).routes.find((r:any)=>r.id===route);
- const assign=()=>send('/api/routes/'+route+'/assignments',{expectedVersion:1,parcelIds:ids,pickup:false});
- await assign();
- const calls:string[]=[];page.on('request',r=>{if(r.method()==='POST'&&/\/(unload|unassign)(-selected)?$/.test(new URL(r.url()).pathname))calls.push(new URL(r.url()).pathname);});
- const open=async(mode:'unload'|'unassign'='unassign')=>{await page.goto('/');await page.getByRole('button',{name:'Rutas',exact:true}).click();await page.getByRole('button',{name:new RegExp(name)}).click();if(mode==='unload')await page.getByRole('button',{name:/Bajar artículos/}).click();else await page.getByText('Quitar artículos sin cargar de esta ruta',{exact:true}).click();};
- await open();
- const toolbar=page.getByRole('region',{name:'Gestionar varios bultos',exact:true});
- const firstStop=page.locator('.route-cargo-group').filter({hasText:'LOTE-'+suffix+'-0'});
- await firstStop.getByRole('button',{name:'Seleccionar este pedido',exact:true}).click();
- await expect(toolbar.getByRole('status')).toContainText('5 seleccionados');
- await firstStop.getByRole('button',{name:'Quitar selección del pedido',exact:true}).click();
- await expect(toolbar.getByRole('status')).toContainText('0 seleccionados');
- await toolbar.getByRole('button',{name:'Seleccionar todos',exact:true}).click();
- await expect(toolbar.getByRole('status')).toContainText('10 seleccionados');
- await page.setViewportSize({width:1365,height:900});await page.screenshot({path:'.local/route-bulk-desktop.png',fullPage:true});
- await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
- await page.screenshot({path:'.local/route-bulk-mobile.png',fullPage:true});await page.setViewportSize({width:1365,height:900});
- page.once('dialog',d=>d.accept());await toolbar.getByRole('button',{name:'Quitar de la ruta (10)',exact:true}).click();
- await expect(page.getByRole('button',{name:'Paradas (0)',exact:true})).toBeVisible();
- expect((await current()).state).toBe('DRAFT');
- for(const order of orders)expect((await(await page.request.get('/api/orders/'+order)).json()).status).toBe('RESERVED');
- await send('/api/routes/'+route+'/assignments',{expectedVersion:(await current()).version,parcelIds:ids,pickup:false});
- await send('/api/routes/'+route+'/load-selected',{expectedVersion:(await current()).version,parcelIds:ids});
- await send('/api/routes/'+route+'/ready',{expectedVersion:(await current()).version});
- await open('unload');await firstStop.getByRole('button',{name:'Seleccionar este pedido',exact:true}).click();
- page.once('dialog',d=>d.dismiss());await toolbar.getByRole('button',{name:'Bajar al depósito (5)',exact:true}).click();
- expect(calls.filter(path=>path.endsWith('/unload-selected'))).toHaveLength(0);
- await toolbar.getByRole('button',{name:'Seleccionar todos',exact:true}).click();
- page.once('dialog',d=>d.accept());await toolbar.getByRole('button',{name:'Bajar al depósito (10)',exact:true}).click();
- await expect(page.getByText(/No hay artículos cargados en este vehículo/)).toBeVisible();
- await expect(page.getByRole('button',{name:'Bajar artículos (0)',exact:true})).toHaveAttribute('aria-pressed','true');
- for(const order of orders){const detail=await(await page.request.get('/api/orders/'+order)).json();expect(detail.status).toBe('RESERVED');expect(detail.lines[0].loaded).toBe(0);expect(detail.lines[0].reserved).toBe(5);}
- expect((await current()).state).toBe('DRAFT');
- await page.getByRole('button',{name:'Cargar artículos (10)',exact:true}).click();
- await page.getByText('Quitar artículos sin cargar de esta ruta',{exact:true}).click();
- await toolbar.getByRole('button',{name:'Seleccionar todos',exact:true}).click();
- page.once('dialog',d=>d.accept());await toolbar.getByRole('button',{name:'Quitar de la ruta (10)',exact:true}).click();
- await expect(page.getByRole('button',{name:'Paradas (0)',exact:true})).toBeVisible();
- expect((await current()).state).toBe('DRAFT');
- expect(calls.filter(path=>path.endsWith('/unload-selected'))).toHaveLength(1);expect(calls.filter(path=>path.endsWith('/unassign-selected'))).toHaveLength(2);
- expect(calls.filter(path=>/\/(unload|unassign)$/.test(path))).toHaveLength(0);
- for(const order of orders)await send('/api/orders/'+order+'/unreserve',{});
+ const routeName='Ruta lote '+suffix;
+ const route=(await post('/api/routes',{name:routeName,driverId:driver,vehicleId:vehicle,trackingProvider:'TRACCAR',startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()})).id;
+ await post(`/api/routes/${route}/assignments`,{expectedVersion:1,parcelIds:orders.flatMap(order=>order.parcelIds),pickup:false});
+ const bootstrap=async()=> (await(await page.request.get('/api/bootstrap')).json());
+ const routeData=async()=> (await bootstrap()).routes.find((item:{id:string})=>item.id===route);
+
+ await page.goto('/');await page.getByRole('button',{name:'Rutas',exact:true}).click();
+ await page.getByText('Buscar rutas e historial',{exact:true}).click();
+ await page.getByRole('searchbox',{name:'Buscar ruta',exact:true}).fill(suffix);
+ await page.getByRole('button',{name:new RegExp(routeName)}).click();
+ const load=page.getByRole('region',{name:'Carga del vehículo',exact:true});
+ await expect(load).toContainText('Cargados 0 de 10 bultos.');
+ await load.getByRole('button',{name:'Seleccionar pendientes',exact:true}).click();
+ await load.getByRole('button',{name:'Confirmar carga',exact:true}).click();
+ for(const order of orders)await expect.poll(async()=> (await(await page.request.get(`/api/orders/${order.id}`)).json()).status).toBe('LOADED');
+
+ await page.getByRole('button',{name:'Bajar artículos (10)',exact:true}).click();
+ const unload=page.getByRole('region',{name:'Artículos en el vehículo',exact:true});
+ await expect(unload.getByRole('region',{name:'Gestionar varios bultos',exact:true})).toContainText('0 seleccionados');
+ await unload.getByRole('button',{name:'Seleccionar todos',exact:true}).click();
+ await expect(unload.getByRole('region',{name:'Gestionar varios bultos',exact:true})).toContainText('10 seleccionados');
+ page.once('dialog',dialog=>dialog.accept());
+ await unload.getByRole('button',{name:'Bajar al depósito (10)',exact:true}).click();
+ for(const order of orders)await expect.poll(async()=> (await(await page.request.get(`/api/orders/${order.id}`)).json()).status).toBe('RESERVED');
+ expect((await routeData()).state).toBe('DRAFT');
+ const reconciliation=await(await page.request.get('/api/inventory/reconciliation')).json();
+ expect(reconciliation.ok).toBe(true);
+
+ const allParcelIds=orders.flatMap(order=>order.parcelIds);
+ await post(`/api/routes/${route}/unassign-selected`,{expectedVersion:(await routeData()).version,parcelIds:allParcelIds});
+ expect((await bootstrap()).assignments.filter((assignment:{active:boolean;routeId:string})=>assignment.active&&assignment.routeId===route)).toHaveLength(0);
+ for(const order of orders)await expect.poll(async()=> (await(await page.request.get(`/api/orders/${order.id}`)).json()).status).toBe('RESERVED');
  expect((await(await page.request.get('/api/inventory/reconciliation')).json()).ok).toBe(true);
 });

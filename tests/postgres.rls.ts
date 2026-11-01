@@ -20,7 +20,7 @@ test('isolated PostgreSQL: direct portal RLS denies foreign tenants, membership 
  const denied=async(sql:string,args:unknown[]=[])=>{await db.query('SAVEPOINT denial');try{await assert.rejects(db.query(sql,args),(e:any)=>e.code==='42501');}finally{await db.query('ROLLBACK TO SAVEPOINT denial');}};
  await denied("UPDATE public.portal_memberships SET company_id=$1 WHERE user_id=$2",[ca,b]);
  await denied("UPDATE nexora.users SET role='ADMIN'");
- await denied('SELECT * FROM nexora.client_profiles');await denied('SELECT * FROM nexora.password_recovery');await denied('SELECT * FROM nexora.org_owners');
+ await denied('SELECT * FROM nexora.client_profiles');await denied('SELECT * FROM nexora.password_recovery');await denied('SELECT * FROM nexora.org_owners');await denied('SELECT * FROM nexora.return_dispositions');
  await denied(`INSERT INTO public.portal_shipping_requests(id,company_id,reference,origin_text,destination_text,recipient_name,parcel_count) VALUES($1,$2,'QA-CROSS','A','B','QA',1)`,[randomUUID(),ca]);
  await denied(`DELETE FROM public.portal_shipping_requests WHERE id=$1`,[ra]);
  await denied("SELECT nexora.portal_registered_user('rls-a@example.test')");

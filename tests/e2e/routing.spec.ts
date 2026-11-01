@@ -1,11 +1,5 @@
-import {test as base,expect} from '@playwright/test';
+import {test,expect} from '../support/routing-test.ts';
 import {randomUUID} from 'node:crypto';
-import {startRoutingTestServer} from '../support/routing-server.ts';
-const test=base.extend<{}, {routingServer:Awaited<ReturnType<typeof startRoutingTestServer>>}>({
- routingServer:[async({},use)=>{const server=await startRoutingTestServer();try{await use(server);}finally{await server.close();}},{scope:'worker'}],
- baseURL:async({routingServer},use)=>{await use(routingServer.origin);}
-});
-test.skip(!process.env.ROUTING_E2E,'Usar playwright.routing.config.ts para los servicios de mapas aislados.');
 test('confirm reservation without maps, automatically organize in Routes and load the assigned truck once',async({page})=>{
  const send=async(path:string,data:Record<string,unknown>)=>{const r=await page.request.post(path,{headers:{'X-Requested-With':'logistics-os'},data:{commandId:randomUUID(),...data}});expect(r.ok(),path+': '+await r.text()).toBeTruthy();return r.json();};
  await send('/api/setup',{organizationName:'Routing browser QA',timezone:'UTC',username:'qa-routing',password:'Routing-Browser-2026!'});
@@ -90,8 +84,13 @@ test('confirm reservation without maps, automatically organize in Routes and loa
 
 test('two batches remain visible after the second calculation and reload, then can be approved separately',async({page})=>{
  const send=async(path:string,data:Record<string,unknown>)=>{const r=await page.request.post(path,{headers:{'X-Requested-With':'logistics-os'},data:{commandId:randomUUID(),...data}});expect(r.ok(),path+': '+await r.text()).toBeTruthy();return r.json();};
- await send('/api/login',{username:'qa-routing',password:'Routing-Browser-2026!'});const boot=await(await page.request.get('/api/bootstrap')).json(),inventory=await(await page.request.get('/api/inventory')).json(),client=boot.clients[0].id,location=inventory.locations[0].id,product=inventory.products[0].id;
- await send('/api/vehicles',{plate:'BATCH-SECOND',capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0});await send('/api/drivers',{name:'Chofer segundo lote',username:'driver-second-batch',password:'Routing-Driver-2026!'});
+ await send('/api/setup',{organizationName:'QA lotes independientes',timezone:'UTC',username:'qa-batches',password:'Routing-Batches-2026!'});
+ const client=(await send('/api/clients',{name:'Cliente lotes'})).id;
+ const location=(await send('/api/inventory/locations',{code:'BATCH-BASE',name:'Base de prueba'})).id;
+ const product=(await send('/api/inventory/products',{clientId:client,sku:'BATCH-SKU',name:'Producto de lote',tracking:'QUANTITY',weightGrams:100,volumeCm3:100})).id;
+ await send('/api/inventory/receipts',{clientId:client,productId:product,locationId:location,quantity:2});
+ await send('/api/routing/points',{kind:'LOCATION',id:location,latitude:-25.3,longitude:-57.6});
+ for(let i=1;i<=2;i++){await send('/api/vehicles',{plate:'BATCH-'+i,capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0});await send('/api/drivers',{name:'Chofer lote '+i,username:'driver-batch-'+i,password:'Routing-Driver-2026!'});}
  const ids=[];for(const ref of ['LOTE-A','LOTE-B']){const id=(await send('/api/orders',{clientId:client,externalId:ref,orderDate:'2026-10-29',recipientName:ref,destination:ref,lines:[{productId:product,quantity:1}]})).id;ids.push(id);await send('/api/orders/'+id+'/reserve',{});await send('/api/routing/points',{kind:'ORDER',id,latitude:-25.32,longitude:-57.6});}
  const first=await send('/api/routing/organize',{orderIds:[ids[0]]});await page.goto('/');await page.getByRole('button',{name:'Rutas',exact:true}).click();let board=await(await page.request.get('/api/routing/queue')).json(),a=board.batches.find((b:any)=>b.id===first.id);const firstRegion=page.getByRole('region',{name:'Propuesta de reparto '+a.batchNumber,exact:true});await expect(firstRegion).toContainText('LOTE-A');
  await page.getByRole('button',{name:'Organizar todos los reservados',exact:true}).click();await expect(firstRegion).toContainText('LOTE-A');await expect.poll(async()=>{board=await(await page.request.get('/api/routing/queue')).json();return board.batches.filter((b:any)=>b.status==='PENDING').length;}).toBe(2);
@@ -101,8 +100,7 @@ test('two batches remain visible after the second calculation and reload, then c
  await secondRegion.getByLabel('Revisé la distribución, las ubicaciones y las indicaciones de entrega').check();await secondRegion.getByRole('button',{name:'Aprobar distribución y crear rutas'}).click();await expect.poll(async()=>{const board=await(await page.request.get('/api/routing/queue')).json();return board.orders.length;}).toBe(0);expect((await(await page.request.get('/api/inventory/reconciliation')).json()).ok).toBe(true);
 });
 
-test('one review shows six orders distributed across two distinct crews, with old calculations hidden in history',async({page})=>{
- const isolated=await startRoutingTestServer();try{
+test('one review shows six orders distributed across two distinct crews, with old calculations hidden in history',async({page,routingServer:isolated})=>{
  const send=async(path:string,data:Record<string,unknown>)=>{const r=await page.request.post(isolated.origin+path,{headers:{'X-Requested-With':'logistics-os'},data:{commandId:randomUUID(),...data}});expect(r.ok(),path+': '+await r.text()).toBeTruthy();return r.json();};
  await send('/api/setup',{organizationName:'Dos camiones QA',timezone:'UTC',username:'two-crews',password:'Two-Crews-2026!'});
  const client=(await send('/api/clients',{name:'Cliente dos camiones'})).id,location=(await send('/api/inventory/locations',{code:'BASE',name:'Base QA'})).id,product=(await send('/api/inventory/products',{clientId:client,sku:'TWO-SKU',name:'Producto de prueba',tracking:'QUANTITY',weightGrams:100,volumeCm3:100})).id;
@@ -124,5 +122,4 @@ test('one review shows six orders distributed across two distinct crews, with ol
  expect(await history.evaluate(e=>(e as HTMLDetailsElement).open)).toBe(false);await expect(board.getByText(/^Lote \d/)).toHaveCount(0);await history.locator('summary').click();await expect(history.getByText('Aprobación registrada',{exact:false})).toBeVisible();await history.locator('summary').click();
  await page.screenshot({path:'.local/two-crews-board-desktop.png',fullPage:true});
  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:'.local/two-crews-board-mobile.png',fullPage:true});
- }finally{await isolated.close();}
 });

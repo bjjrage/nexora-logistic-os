@@ -4,6 +4,7 @@ import {authorize,passwordHash,type Actor} from './auth.ts';
 import {randomUUID} from 'node:crypto';
 import {Logistics} from './domain.ts';
 import {ensure} from './errors.ts';
+import {accountCredentialFields} from './credential-contract.ts';
 
 const DELETED_HASH='!deleted';
 export class CompanyAdministration {
@@ -22,7 +23,7 @@ export class CompanyAdministration {
       team:(await this.store.all('SELECT u.id,u.name,u.username,u.role,u.enabled,u.driver_id,CASE WHEN EXISTS(SELECT 1 FROM org_owners o WHERE o.org_id=u.org_id AND o.user_id=u.id) THEN 1 ELSE 0 END AS is_super_admin FROM users u WHERE u.org_id=? AND u.password_hash<>? ORDER BY u.name',actor.orgId,DELETED_HASH)).map(user=>({id:String(user.id),name:String(user.name),username:String(user.username),role:String(user.role),enabled:user.enabled,driverId:user.driver_id,isSuperAdmin:!!user.is_super_admin}))};
   }
   async createDriverAccess(actor:Actor,driverId:string,input:unknown){
-    const body=z.object({commandId:z.uuid(),username:z.string().trim().min(3).max(100),password:z.string().min(6).max(200)}).strict().parse(input);
+    const body=z.object({commandId:z.uuid(),...accountCredentialFields}).strict().parse(input);
     return new Logistics(this.store).command(actor,`drivers.${driverId}.access.create`,body,['ADMIN'],async()=>{
       const driver=await this.store.one('SELECT id,name FROM drivers WHERE id=? AND org_id=?',driverId,actor.orgId);
       ensure(driver,'NOT_FOUND','Chofer no encontrado.',404);

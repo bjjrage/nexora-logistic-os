@@ -156,7 +156,7 @@ test('QuadMinds: migración v3 y última posición sobreviven al reinicio', asyn
     const path = join(directory, 'test.sqlite');
     let store: Store | null = new Store(path);
     try {
-        const ids = await setup(store, { organizationName: 'QA persistencia', timezone: 'UTC', username: 'qa', password: 'QA-Persistence-2026!' });
+        const ids = await setup(store, { organizationName: 'QA persistencia', timezone: 'UTC', username: 'qa-persist', password: 'QA-Persistence-2026!' });
         const actor: Actor = { id: ids.userId, orgId: ids.orgId, name: 'QA', role: 'ADMIN', driverId: null };
         const domain = new Logistics(store), cmd = () => ({ commandId: randomUUID() });
         const driver = await domain.createDriver(actor, { ...cmd(), name: 'QA', username: 'qa-driver', password: 'QA-Driver-Persistence-2026!' });

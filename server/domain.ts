@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import {routeCollections} from './route-detail.ts';
 import { camel, type Row } from './db.ts';
 import type { Database } from './database.ts';
 import { authorize, hash, passwordHash, type Actor, type Role } from './auth.ts';
@@ -80,6 +81,7 @@ export class Logistics {
         });
     }
     async createDriver(actor: Actor, b: Row) {
+        b=schemas.driver.parse(b);
         return await this.command(actor, 'drivers.create', b, OPS, async () => {
             ensure(!await this.store.one('SELECT id FROM users WHERE lower(username)=lower(?)',b.username)&&!await this.store.one('SELECT id FROM customer_accounts WHERE lower(username)=lower(?)',b.username),'VALIDATION_ERROR','El nombre de usuario ya existe, aunque cambien las mayúsculas.',409);
             const id = randomUUID();
@@ -89,6 +91,7 @@ export class Logistics {
         });
     }
     async createUser(actor: Actor, b: Row) {
+        b=schemas.user.parse(b);
         return await this.command(actor, 'users.create', b, ['ADMIN'], async () => {
             ensure(!await this.store.one('SELECT id FROM users WHERE lower(username)=lower(?)',b.username)&&!await this.store.one('SELECT id FROM customer_accounts WHERE lower(username)=lower(?)',b.username),'VALIDATION_ERROR','El nombre de usuario ya existe, aunque cambien las mayúsculas.',409);
             const id = randomUUID();
@@ -522,14 +525,19 @@ export class Logistics {
     async sendReturn(actor: Actor, id: string, b: Row) {
         return await this.command(actor, `returns.${id}.sender`, b, DEPOT, async () => {
             const item = await this.record('returns', id, actor), p = await this.parcel(item.parcel_id, actor);
+            ensure(!await this.store.one('SELECT return_id FROM return_dispositions WHERE return_id=? AND org_id=?', id, actor.orgId), 'INVALID_TRANSITION', 'La devolucion ya tiene una disposicion final.');
+            const inventory = await this.store.one('SELECT state,location_id FROM inventory_order_parcels WHERE org_id=? AND parcel_id=?', actor.orgId, p.id);
+            if (inventory) ensure(inventory.state === 'QUARANTINE' && inventory.location_id === p.custody_id, 'INVALID_TRANSITION', 'El inventario ya no esta en cuarentena o no coincide con la custodia del bulto.');
             ensure(item.state === 'AT_DEPOT' && p.state === 'RETURNED_TO_DEPOT' && p.custody_type === 'DEPOT', 'INVALID_TRANSITION', 'La devolución todavía no se recibió en depósito.');
             const proof = await this.verifyEvidence(actor, b.evidenceId, p.id);
             const depot = await this.store.one("SELECT e.sha256 FROM return_evidence re JOIN evidence e ON e.id=re.evidence_id WHERE re.return_id=? AND re.stage='DEPOT'", id);
             ensure(depot, 'EVIDENCE_REQUIRED', 'Falta evidencia de la recepción en depósito. Operaciones debe subsanar el registro.');
             ensure(depot.sha256 !== proof.sha256, 'EVIDENCE_REQUIRED', 'La entrega al remitente requiere una foto distinta a la recepción en depósito.');
             await this.store.run('INSERT INTO return_evidence VALUES(?,?,?,?,?,?,?,?)', id, actor.orgId, 'SENDER', b.evidenceId, actor.id, now(), 'SENDER_HANDOVER', null);
+            await this.store.run('INSERT INTO return_dispositions(return_id,org_id,disposition,actor_id,command_id,created_at) VALUES(?,?,?,?,?,?)', id, actor.orgId, 'SENT_TO_SENDER', actor.id, b.commandId, now());
             await this.move(p, actor, 'RETURNED_TO_SENDER', 'SENDER', (await this.record('shipments', p.shipment_id, actor)).client_id, 'RETURNED_TO_SENDER', b.commandId);
-            await this.store.run("UPDATE returns SET state='SENT_TO_SENDER',sender_evidence_id=?,receiver_name=? WHERE id=?", b.evidenceId, b.receiverName, id);
+            const closed = await this.store.run("UPDATE returns SET state='SENT_TO_SENDER',sender_evidence_id=?,receiver_name=? WHERE id=? AND org_id=? AND state='AT_DEPOT'", b.evidenceId, b.receiverName, id, actor.orgId);
+            ensure(Number(closed.changes) === 1, 'INVALID_TRANSITION', 'La devolucion cambio antes de registrar la entrega al remitente.');
             await this.store.run("UPDATE incidents SET state='RESOLVED' WHERE id=?", item.incident_id);
             return { id, state: 'SENT_TO_SENDER' };
         });
@@ -609,31 +617,34 @@ export class Logistics {
             return { id, state: 'STORED' };
         });
     }
-    async bootstrap(actor: Actor) {
+    async bootstrap(actor: Actor, routeId?:string) {
+        const scopedRoute=routeId?(authorize(actor,['ADMIN','OPERATIONS','DEPOT','DRIVER']),await this.route(routeId,actor)):null;
         const s=this.store, cap=500;
         const tables=['clients','drivers','vehicles','shipments','parcels','routes','stops','route_assignments','incidents','returns','defects','vehicle_documents','driver_documents','inspections','maintenance','attempts','custody_events','audit'];
         const driver=actor.role==='DRIVER';
         const ownParcels=`(SELECT a.parcel_id FROM route_assignments a JOIN routes r ON r.id=a.route_id AND r.org_id=a.org_id WHERE r.driver_id=? AND ${latestParcelAssignment})`;
         const driverFilters:Record<string,string>={
-            routes:'AND driver_id=?',drivers:'AND id=?',route_assignments:'AND route_id IN(SELECT id FROM routes WHERE driver_id=?)',
+            routes:'AND driver_id=?',drivers:'AND id=?',route_assignments:'AND route_id IN(SELECT id FROM routes WHERE driver_id=?) AND '+latestParcelAssignment.replace(/\ba\./g,'route_assignments.'),
             stops:'AND route_id IN(SELECT id FROM routes WHERE driver_id=?)',incidents:'AND route_id IN(SELECT id FROM routes WHERE driver_id=?)',returns:'AND route_id IN(SELECT id FROM routes WHERE driver_id=?)',
             parcels:`AND id IN ${ownParcels}`,shipments:`AND id IN(SELECT p.shipment_id FROM parcels p WHERE p.id IN ${ownParcels})`,
             vehicles:'AND id IN(SELECT vehicle_id FROM routes WHERE driver_id=?)',driver_documents:'AND driver_id=?',
             attempts:'AND stop_id IN(SELECT s.id FROM stops s JOIN routes r ON r.id=s.route_id AND r.org_id=s.org_id WHERE r.driver_id=?)',
             custody_events:`AND parcel_id IN ${ownParcels}`
         };
-        const collections=Object.fromEntries(await Promise.all(tables.map(async table=>{const filter=driver?driverFilters[table]:undefined;const order=table==='routes'?"CASE state WHEN 'IN_PROGRESS' THEN 0 WHEN 'READY' THEN 1 WHEN 'DRAFT' THEN 2 ELSE 3 END, rowid DESC":'rowid DESC';const activeParcel=table==='parcels'?" AND NOT EXISTS(SELECT 1 FROM inventory_movements m WHERE m.org_id=parcels.org_id AND m.parcel_id=parcels.id AND m.action='RELEASE' AND m.from_status='RESERVED')":'';return [table,await s.all('SELECT * FROM '+table+' WHERE org_id=? '+(filter??'')+activeParcel+' ORDER BY '+order+' LIMIT ?',actor.orgId,...(filter?[actor.driverId!]:[]),cap)];}))) as Record<string,Row[]>;
-        const totals=await s.all(tables.concat('evidence').map(table=>"SELECT '"+table+"' AS collection,COUNT(*) AS n FROM "+table+' WHERE org_id=?').join(' UNION ALL '),...tables.concat('evidence').map(()=>actor.orgId));
+        const collections=scopedRoute?await routeCollections(s,actor,scopedRoute):Object.fromEntries(await Promise.all(tables.map(async table=>{const filter=driver?driverFilters[table]:undefined;const order=table==='routes'?"CASE state WHEN 'IN_PROGRESS' THEN 0 WHEN 'READY' THEN 1 WHEN 'DRAFT' THEN 2 ELSE 3 END, rowid DESC":'rowid DESC';const activeParcel=table==='parcels'?" AND NOT EXISTS(SELECT 1 FROM inventory_movements m WHERE m.org_id=parcels.org_id AND m.parcel_id=parcels.id AND m.action='RELEASE' AND m.from_status='RESERVED')":'';return [table,await s.all('SELECT * FROM '+table+' WHERE org_id=? '+(filter??'')+activeParcel+' ORDER BY '+order+' LIMIT ?',actor.orgId,...(filter?[actor.driverId!]:[]),cap)];}))) as Record<string,Row[]>;
+        const totals=scopedRoute?[]:await s.all(tables.concat('evidence').map(table=>"SELECT '"+table+"' AS collection,COUNT(*) AS n FROM "+table+' WHERE org_id=?').join(' UNION ALL '),...tables.concat('evidence').map(()=>actor.orgId));
         const limitedCollections=totals.filter(row=>row.n>cap);
         const all=(table:string)=>collections[table];
-        const [summaries,returnProofs,attemptItems,evidence]=await Promise.all([
+        const [summaries,returnProofs,attemptItems,evidence,dispositions]=await Promise.all([
             s.all("SELECT shipment_id,COUNT(*) AS expected,SUM(CASE WHEN state<>'EXPECTED' THEN 1 ELSE 0 END) AS received,SUM(CASE WHEN state='DELIVERED' THEN 1 ELSE 0 END) AS delivered,SUM(CASE WHEN state NOT IN('DELIVERED','RETURNED_TO_SENDER') THEN 1 ELSE 0 END) AS pending,SUM(CASE WHEN state='RETURNED_TO_SENDER' THEN 1 ELSE 0 END) AS returned,SUM(CASE WHEN state='EXPECTED' THEN 1 ELSE 0 END) AS missing FROM parcels WHERE org_id=? AND NOT EXISTS(SELECT 1 FROM inventory_movements m WHERE m.org_id=parcels.org_id AND m.parcel_id=parcels.id AND m.action='RELEASE' AND m.from_status='RESERVED') AND shipment_id IN("+(collections.shipments.length?collections.shipments.map(()=>'?').join(','):'NULL')+") GROUP BY shipment_id",actor.orgId,...collections.shipments.map(x=>x.id)),
             s.all("SELECT return_id,evidence_id FROM return_evidence WHERE org_id=? AND stage='DEPOT' AND return_id IN("+(collections.returns.length?collections.returns.map(()=>'?').join(','):'NULL')+")",actor.orgId,...collections.returns.map(x=>x.id)),
-            s.all('SELECT ai.* FROM attempt_items ai WHERE attempt_id IN(SELECT id FROM attempts WHERE org_id=? ORDER BY rowid DESC LIMIT ?)',actor.orgId,cap),
-            s.all('SELECT id,org_id,parcel_id,actor_id,filename,mime_type,created_at FROM evidence WHERE org_id=? ORDER BY rowid DESC LIMIT ?',actor.orgId,cap)
+            scopedRoute?s.all('SELECT ai.* FROM attempt_items ai JOIN attempts a ON a.id=ai.attempt_id WHERE a.org_id=? AND a.stop_id IN(SELECT id FROM stops WHERE org_id=? AND route_id=?)',actor.orgId,actor.orgId,routeId!):s.all('SELECT ai.* FROM attempt_items ai WHERE attempt_id IN(SELECT id FROM attempts WHERE org_id=? ORDER BY rowid DESC LIMIT ?)',actor.orgId,cap),
+            scopedRoute?s.all('SELECT id,org_id,parcel_id,actor_id,filename,mime_type,created_at FROM evidence WHERE org_id=? AND parcel_id IN(SELECT parcel_id FROM route_assignments WHERE org_id=? AND route_id=?) ORDER BY rowid DESC',actor.orgId,actor.orgId,routeId!):s.all('SELECT id,org_id,parcel_id,actor_id,filename,mime_type,created_at FROM evidence WHERE org_id=? ORDER BY rowid DESC LIMIT ?',actor.orgId,cap),
+            s.all('SELECT return_id,disposition FROM return_dispositions WHERE org_id=? AND return_id IN('+(collections.returns.length?collections.returns.map(()=>'?').join(','):'NULL')+')',actor.orgId,...collections.returns.map(x=>x.id))
         ]);
         const countMap=new Map(summaries.map(({shipment_id,...counts})=>[shipment_id,counts]));
         const proofMap=new Map(returnProofs.map(row=>[row.return_id,row.evidence_id]));
+        const dispositionMap=new Map(dispositions.map(row=>[row.return_id,row.disposition]));
         let routes=all('routes'),shipments=all('shipments'),parcels=all('parcels'),drivers=all('drivers'),vehicles=all('vehicles'),clients=all('clients');
         if(actor.role==='DRIVER') {
             routes=routes.filter(r=>r.driver_id===actor.driverId);
@@ -653,9 +664,9 @@ export class Logistics {
             clientProfilesEnabled:true,
             organization:{...camel((await s.one('SELECT * FROM organizations WHERE id=?',actor.orgId))!),testMode:(await s.one('SELECT enabled FROM organization_test_mode WHERE org_id=?',actor.orgId))?.enabled===1,supportContacts:await s.all("SELECT name,role FROM users WHERE org_id=? AND enabled=1 AND role IN('ADMIN','OPERATIONS') ORDER BY name",actor.orgId)},user:actor,
             clients:clients.map((client):Row=>({...camel(client),...profileMap.get(client.id)})),drivers:drivers.map(x=>({...camel(x),available:!!x.available})),vehicles:vehicles.map(x=>({...camel(x),available:!!x.available})),
-            shipments:shipments.map((x):Row=>({...camel(x),counts:countMap.get(x.id)??{expected:0,received:0,delivered:0,pending:0,returned:0,missing:0}})),parcels:parcels.map(x=>({...camel(x),product:parcelProducts.get(x.id)??null})),routes:routes.map(camel),stops:stops.map(camel),
-            assignments:all('route_assignments').filter(x=>routeIds.has(x.route_id)).map(x=>({...camel(x),active:!!x.active,pickup:!!x.pickup})),
-            incidents:all('incidents').filter(x=>routeIds.has(x.route_id)).map(camel),returns:all('returns').filter(x=>routeIds.has(x.route_id)).map(x=>({...camel(x),depotEvidenceId:proofMap.get(x.id)??null})),
+            shipments:shipments.map((x):Row=>({...camel(x),counts:countMap.get(x.id)??{expected:0,received:0,delivered:0,pending:0,returned:0,missing:0}})),parcels:parcels.map((x):Row=>({...camel(x),product:parcelProducts.get(x.id)??null})),routes:routes.map(camel),stops:stops.map(camel),
+            assignments:all('route_assignments').filter(x=>routeIds.has(x.route_id)).map((x):Row=>({...camel(x),active:!!x.active,pickup:!!x.pickup})),
+            incidents:all('incidents').filter(x=>routeIds.has(x.route_id)).map(camel),returns:all('returns').filter(x=>routeIds.has(x.route_id)).map(x=>({...camel(x),state:dispositionMap.get(x.id)??x.state,depotEvidenceId:proofMap.get(x.id)??null})),
             driverDocuments:all('driver_documents').filter(x=>drivers.some(d=>d.id===x.driver_id)).map(x=>({...camel(x),blocksDispatch:!!x.blocks_dispatch})),
             defects:all('defects').filter(x=>vehicleIds.has(x.vehicle_id)).map(camel),documents:all('vehicle_documents').filter(x=>vehicleIds.has(x.vehicle_id)).map(x=>({...camel(x),blocksDispatch:!!x.blocks_dispatch})),
             inspections:all('inspections').filter(x=>vehicleIds.has(x.vehicle_id)).map(x=>({...camel(x),items:JSON.parse(x.items)})),maintenance:all('maintenance').filter(x=>vehicleIds.has(x.vehicle_id)).map(camel),

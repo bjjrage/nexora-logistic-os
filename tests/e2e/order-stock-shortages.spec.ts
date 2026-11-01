@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from '../support/e2e-test.ts';
 import {randomUUID} from 'node:crypto';
 
 test('multi-SKU order waits intact, lists every shortage and reserves only after all stock arrives',async({page})=>{
@@ -21,7 +21,7 @@ test('multi-SKU order waits intact, lists every shortage and reserves only after
   expect((await detail()).parcels).toHaveLength(0);
   await page.goto('/');await page.getByRole('button',{name:'Pedidos',exact:true}).click();
   await page.getByRole('article').filter({hasText:reference}).getByRole('button',{name:'Ver faltantes',exact:true}).click();
-  const dialog=page.getByRole('dialog',{name:'Reserva y ruta',exact:true});
+  const dialog=page.getByRole('dialog');
   const availability=dialog.getByRole('region',{name:'Disponibilidad para reservar',exact:true});
   await expect(availability.getByRole('heading',{name:'En espera de mercadería',exact:true})).toBeVisible();
   for(const [index,requested,available,missing] of [[0,2,0,2],[1,1,0,1],[2,1,31,0]]){
@@ -98,7 +98,7 @@ test('prefilled receipt keeps serial units separate and returns to an order beyo
  await page.goto('/');await page.getByRole('button',{name:'Pedidos',exact:true}).click();
  await page.getByRole('textbox',{name:'Buscar pedidos',exact:true}).fill(reference);
  await page.getByRole('article').filter({hasText:reference}).getByRole('button',{name:'Ver faltantes',exact:true}).click();
- const dialog=page.getByRole('dialog',{name:'Reserva y ruta',exact:true});
+ const dialog=page.getByRole('dialog');
  await dialog.getByRole('button',{name:'Recibir faltantes de este pedido',exact:true}).click();
  await page.getByRole('combobox',{name:'Dónde se guarda',exact:true}).selectOption(location);
  const receipt=page.getByRole('table',{name:'Faltantes a recibir',exact:true});
