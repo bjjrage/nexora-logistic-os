@@ -33,12 +33,13 @@ function stateLabel(state: string): string {
     AUTHORIZED: "Autorizada",
     AT_DEPOT: "En depósito",
     SENT_TO_SENDER: "Entregada al remitente",
+    RESTOCKED: "Reintegrada al stock",
   };
   return labels[state] ?? state.replaceAll("_", " ");
 }
 
 function stateBadgeClass(state: string): string {
-  if (state === "SENT_TO_SENDER") return "badge-success";
+  if (state === "SENT_TO_SENDER" || state === "RESTOCKED") return "badge-success";
   if (state === "AT_DEPOT") return "badge-neutral";
   if (state === "AUTHORIZED") return "badge-warning";
   return "badge-neutral";

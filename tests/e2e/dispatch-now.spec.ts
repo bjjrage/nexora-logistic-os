@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from '../support/e2e-test.ts';
 import {randomUUID} from 'node:crypto';
 
 test('loaded route must be confirmed before it can dispatch now, with checklist and future schedule',async({page})=>{
@@ -25,7 +25,7 @@ test('loaded route must be confirmed before it can dispatch now, with checklist 
  await send('/api/routes/'+route+'/load-selected',{expectedVersion:(await routeDetail()).version,parcelIds:[parcel.id]});
  const readyRequests:string[]=[];
  page.on('request',request=>{if(new URL(request.url()).pathname==='/api/routes/'+route+'/ready')readyRequests.push(request.url());});
- await page.goto('/');await page.getByRole('button',{name:'Rutas',exact:true}).click();
+ await page.goto('/');await page.getByRole('button',{name:'Rutas',exact:true}).click();await page.getByText('Buscar rutas e historial',{exact:true}).click();
  await page.getByRole('searchbox',{name:'Buscar ruta',exact:true}).fill(suffix);
  await page.getByRole('button',{name:new RegExp(routeName)}).click();
  await expect(page.getByRole('button',{name:'Despachar ahora',exact:true})).toHaveCount(0);
@@ -65,7 +65,7 @@ test('loaded route must be confirmed before it can dispatch now, with checklist 
  await page.getByRole('button',{name:'Empresa y equipo',exact:true}).click();
  await page.getByRole('button',{name:'Activar modo de prueba',exact:true}).click();
  await expect(page.getByText(/MODO DE PRUEBA ACTIVO/)).toBeVisible();
- await page.getByRole('button',{name:'Rutas',exact:true}).click();
+ await page.getByRole('button',{name:'Rutas',exact:true}).click();await page.getByText('Buscar rutas e historial',{exact:true}).click();
  await page.getByRole('searchbox',{name:'Buscar ruta',exact:true}).fill(suffix);
  await page.getByRole('button',{name:new RegExp(routeName)}).click();
  await page.getByRole('button',{name:'Registrar resultado de entrega',exact:true}).click();

@@ -840,18 +840,38 @@ function ShipmentsView({ data, action, busy, uploadEvidence, role, initialShipme
   );
 }
 
-function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,uploadEvidence, driverId, role, onConfigureDepot, initialRouteId = "" }: {
+function RoutesView({ data:summaryData, action, busy:operationBusy, operationError,onClearError,onRefresh,uploadEvidence, driverId, role, onConfigureDepot, initialRouteId = "" }: {
   data: Bootstrap; action: Action; busy: boolean; operationError:string;onClearError:()=>void;onRefresh:()=>Promise<void>;uploadEvidence: EvidenceUpload; driverId: string | null; role: Role; onConfigureDepot?:()=>void; initialRouteId?: string;
 }) {
   const canPlan = isOpsRole(role);
   const canLoad = canDepotRole(role);
   const canOperateRoad = canRoadRole(role);
   const canReceiveReturns = canDepotRole(role);
+  const [selectedRouteId, setSelectedRouteId] = useState(initialRouteId);
+  const [detail,setDetail]=useState<{routeId:string;source:Bootstrap;value:Bootstrap}|null>(null);
+  const [detailError,setDetailError]=useState('');
+  const needsDetail=Boolean(selectedRouteId&&selectedRouteId!=='new');
+  const detailReady=!needsDetail||detail?.routeId===selectedRouteId&&detail.source===summaryData;
+  const busy=operationBusy||needsDetail&&!detailReady;
+  const data=useMemo(()=>{
+    if(!detail||detail.routeId!==selectedRouteId)return summaryData;
+    const merged={...summaryData};
+    const keys=['clients','drivers','vehicles','shipments','parcels','routes','stops','assignments','attempts','custodyEvents','incidents','returns','defects','documents','driverDocuments','inspections','maintenance','evidence','audit'] as const;
+    for(const key of keys){const scoped=detail.value[key],ids=new Set(scoped.map(row=>row.id));Object.assign(merged,{[key]:[...scoped,...summaryData[key].filter(row=>!ids.has(row.id))]});}
+    return merged;
+  },[summaryData,detail,selectedRouteId]);
+  useEffect(()=>{
+    if(!needsDetail){setDetail(null);setDetailError('');return;}
+    const controller=new AbortController();setDetailError('');
+    void api<Bootstrap>('/api/routes/'+encodeURIComponent(selectedRouteId)+'/detail',{signal:controller.signal})
+      .then(value=>{if(!controller.signal.aborted)setDetail({routeId:selectedRouteId,source:summaryData,value:emptyBootstrap(value)});})
+      .catch(error=>{if(!controller.signal.aborted)setDetailError(errorMessage(error));});
+    return()=>controller.abort();
+  },[summaryData,selectedRouteId,needsDetail]);
   const [justCreated,setJustCreated]=useState<Route|null>(null);
   const [createError,setCreateError]=useState(''),[refreshing,setRefreshing]=useState(false);
   const availableRoutes=justCreated&&!data.routes.some(route=>route.id===justCreated.id)?[justCreated,...data.routes]:data.routes;
   const visibleRoutes = driverId ? availableRoutes.filter((route) => route.driverId === driverId) : availableRoutes;
-  const [selectedRouteId, setSelectedRouteId] = useState(initialRouteId);
   const [showCreate, setShowCreate] = useState(initialRouteId==='new');
   const [editRouteId,setEditRouteId]=useState('');
   const [routeTab, setRouteTab] = useState(()=>{
@@ -895,7 +915,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
   const pendingLoadCount=depotLoadParcels.filter(p=>!(p.state==='LOADED'&&p.custodyType==='VEHICLE'&&p.custodyId===selectedRoute?.vehicleId)).length;
   const capacityIncomplete = routeParcels.some((parcel) => parcel.weightGrams == null || parcel.volumeCm3 == null);
   const activeAssignmentIds = new Set(data.assignments.filter((assignment) => assignment.active).map((assignment) => assignment.parcelId));
-  const pendingReturnParcelIds = new Set(data.returns.filter(item => item.state !== 'SENT_TO_SENDER').map(item => item.parcelId));
+  const pendingReturnParcelIds = new Set(data.returns.filter(item => !['SENT_TO_SENDER','RESTOCKED'].includes(item.state)).map(item => item.parcelId));
   const assignableParcels = data.parcels.filter((parcel) => !activeAssignmentIds.has(parcel.id) && !pendingReturnParcelIds.has(parcel.id) && (pickupMode
     ? parcel.state === "EXPECTED" && parcel.custodyType === "SENDER"
     : !parcel.product && isReceivedAndAtDepot(parcel)));
@@ -974,6 +994,7 @@ function RoutesView({ data, action, busy, operationError,onClearError,onRefresh,
     <>
       <SectionTitle eyebrow="PLANIFICACIÓN Y CALLE" title={showCreate ? 'Nueva ruta' : selectedRoute?.name ?? (driverId ? 'Mis rutas' : 'Rutas')} description={selectedRoute && !showCreate ? `Chofer: ${data.drivers.find(item=>item.id===selectedRoute.driverId)?.name ?? selectedRoute.driverId} · Vehículo: ${data.vehicles.find(item=>item.id===selectedRoute.vehicleId)?.plate ?? selectedRoute.vehicleId}` : showCreate ? undefined : driverId ? 'Tus recorridos asignados.' : 'Organizá los pedidos reservados y revisá la carga de cada camión.'} action={<div className="heading-actions">{(selectedRoute || showCreate) && <button type="button" className="button button-secondary" disabled={busy} onClick={backToRoutes}>← Volver a rutas</button>}<button className="button button-secondary" disabled={busy||refreshing} onClick={()=>void refreshRoutes()}>{refreshing?'Actualizando…':'Actualizar'}</button>{canPlan&&!selectedRoute&&!showCreate&&<button className="button button-secondary" disabled={busy} onClick={()=>{resetRouteTask();setShowCreate(true);setCreateError('');}}><Plus aria-hidden="true" />Nueva ruta</button>}</div>} />
       {createError&&<p className="notice error" role="alert">{createError}</p>}
+      {detailError&&<p className="notice error" role="alert">{detailError}<button type="button" className="button button-secondary" onClick={()=>void onRefresh()}>Actualizar</button><button type="button" className="button button-secondary" onClick={backToRoutes}>Volver a rutas</button></p>}
       {canPlan&&!selectedRoute&&!showCreate&&<ReservedDispatch revision={data} onConfigureDepot={onConfigureDepot} onRefresh={onRefresh} onOpen={id=>{resetRouteTask();setSelectedRouteId(id);setRouteTab(data.routes.find(r=>r.id===id)?.state==="IN_PROGRESS"?"stops":"loading");}}/>}
       {canPlan && showCreate && <Panel title="Nueva ruta"><RouteSetup drivers={data.drivers} vehicles={data.vehicles} action={action} busy={busy} operationError={operationError} onCancel={()=>setShowCreate(false)} onSaved={result=>{if(typeof result.id==='string'){setJustCreated({...result,id:result.id,state:'DRAFT',version:Number(result.version??1)} as Route);setSelectedRouteId(result.id);setRouteTab('loading');setShowCreate(false);}}}/></Panel>}
       {!showCreate && <div className={"routes-layout " + (!selectedRoute ? "routes-layout--list" : "routes-layout--detail")}>
@@ -1287,7 +1308,7 @@ function FleetView({ data, action, busy, uploadEvidence, role,onPrepareRoute }: 
           <button className="button button-primary" disabled={busy || !selectedDefectId || !defectEvidenceId} onClick={() => void resolveDefect()}>Guardar resolución</button>
         </div>}
       </Panel>}
-      {fleetTab === "drivers" && <Panel title="Choferes">{accountError&&<p role="alert" className="notice error">{accountError}</p>}<div className="table-wrap"><table className="table"><thead><tr><th>Nombre</th><th>Disponibilidad</th>{role==='ADMIN'&&<th>Acceso al OS</th>}</tr></thead><tbody>{data.drivers.map((driver) => {const account=driverAccounts.find(item=>item.driverId===driver.id);return <tr key={driver.id}><td>{driver.name}</td><td><StateBadge value={availabilityLabel(driver.available)} /></td>{role==='ADMIN'&&<td>{accountsLoading?'Consultando acceso…':accountError?'No disponible':account?<span className="inventory-actions"><span>{account.username} · {account.enabled?'Activo':'Suspendido'}</span>{account.enabled&&<AccountRecovery id={account.id}/>}<button type="button" className="button button-secondary" disabled={busy} onClick={async()=>{if(await action('/api/users/'+encodeURIComponent(account.id)+'/access',{enabled:!account.enabled},account.enabled?'Acceso suspendido.':'Acceso activado.'))setAccountsRevision(v=>v+1);}}>{account.enabled?'Suspender':'Activar'}</button></span>:<button type="button" className="button button-secondary" disabled={busy} onClick={()=>{setAccessDriverId(driver.id);setAccessUsername('');setAccessPassword('');}}>Crear acceso</button>}</td>}</tr>})}</tbody></table></div>{accessDriverId&&<form className="stack form-divider" onSubmit={createDriverAccess}><h3>Crear acceso para {data.drivers.find(d=>d.id===accessDriverId)?.name}</h3><p>El chofer conserva sus rutas y su historial.</p><div className="form-grid"><Field label="Usuario"><input required minLength={3} maxLength={100} value={accessUsername} onChange={e=>setAccessUsername(e.target.value)} autoComplete="off" /></Field><Field label="Contraseña inicial" hint="Mínimo 6 caracteres."><input required minLength={6} maxLength={200} type="password" value={accessPassword} onChange={e=>setAccessPassword(e.target.value)} autoComplete="new-password" /></Field></div><div className="inventory-actions"><button className="button button-primary" disabled={busy}>Crear acceso</button><button type="button" className="button button-secondary" disabled={busy} onClick={()=>{setAccessDriverId('');setAccessPassword('');}}>Cancelar</button></div></form>}</Panel>}
+      {fleetTab === "drivers" && <Panel title="Choferes">{accountError&&<p role="alert" className="notice error">{accountError}</p>}<div className="table-wrap"><table className="table"><thead><tr><th>Nombre</th><th>Disponibilidad</th>{role==='ADMIN'&&<th>Acceso al OS</th>}</tr></thead><tbody>{data.drivers.map((driver) => {const account=driverAccounts.find(item=>item.driverId===driver.id);return <tr key={driver.id}><td>{driver.name}</td><td><StateBadge value={availabilityLabel(driver.available)} /></td>{role==='ADMIN'&&<td>{accountsLoading?'Consultando acceso…':accountError?'No disponible':account?<span className="inventory-actions"><span>{account.username} · {account.enabled?'Activo':'Suspendido'}</span>{account.enabled&&<AccountRecovery id={account.id}/>}<button type="button" className="button button-secondary" disabled={busy} onClick={async()=>{if(await action('/api/users/'+encodeURIComponent(account.id)+'/access',{enabled:!account.enabled},account.enabled?'Acceso suspendido.':'Acceso activado.'))setAccountsRevision(v=>v+1);}}>{account.enabled?'Suspender':'Activar'}</button></span>:<button type="button" className="button button-secondary" disabled={busy} onClick={()=>{setAccessDriverId(driver.id);setAccessUsername('');setAccessPassword('');}}>Crear acceso</button>}</td>}</tr>})}</tbody></table></div>{accessDriverId&&<form className="stack form-divider" onSubmit={createDriverAccess}><h3>Crear acceso para {data.drivers.find(d=>d.id===accessDriverId)?.name}</h3><p>El chofer conserva sus rutas y su historial.</p><div className="form-grid"><Field label="Usuario"><input required minLength={3} maxLength={80} value={accessUsername} onChange={e=>setAccessUsername(e.target.value)} autoComplete="off" /></Field><Field label="Contraseña inicial" hint="Mínimo 6 caracteres."><input required minLength={6} maxLength={128} type="password" value={accessPassword} onChange={e=>setAccessPassword(e.target.value)} autoComplete="new-password" /></Field></div><div className="inventory-actions"><button className="button button-primary" disabled={busy}>Crear acceso</button><button type="button" className="button button-secondary" disabled={busy} onClick={()=>{setAccessDriverId('');setAccessPassword('');}}>Cancelar</button></div></form>}</Panel>}
       {fleetTab === "documents" && documentTarget === "drivers" && <DriverDocumentsPanel drivers={data.drivers} documents={data.driverDocuments} timezone={data.organization.timezone} canManage={canManage} busy={busy} action={action} />}
       {fleetTab === "maintenance" && <MaintenancePanel vehicles={vehicles} maintenance={data.maintenance} timezone={data.organization.timezone} canManage={canManage} busy={busy} action={action} uploadEvidence={uploadEvidence} />}
     </>

@@ -4,7 +4,7 @@ import {createApp} from '../../server/app.ts';
 const listening=(server:Server)=>new Promise<void>((resolve,reject)=>{server.once('listening',resolve);server.once('error',reject);});
 const close=(server:Server)=>{const closed=new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));server.closeAllConnections();return closed;};
 /** Own the fixtures in the Playwright worker so teardown also finishes on Windows. */
-export async function startRoutingTestServer(){
+export async function startRoutingTestServer(osPort?:number){
  if(!process.env.ROUTING_PYTHON)throw Error('OR-Tools es obligatorio en el E2E de ruteo');
  process.env.NODE_ENV='test';delete process.env.DATABASE_URL;delete process.env.TRACCAR_GATEWAY_SECRET;process.env.TRACCAR_ENABLED='false';process.env.QUADMINDS_ENABLED='false';
  const maps=createServer((req,res)=>{
@@ -14,6 +14,6 @@ export async function startRoutingTestServer(){
   else{const n=(req.url?.split('/driving/')[1]?.split('?')[0]??'').split(';').length;res.end(JSON.stringify({code:'Ok',durations:Array.from({length:n},(_,i)=>Array.from({length:n},(_,j)=>i===j?0:60))}));}
  }).listen(0,'127.0.0.1');await listening(maps);
  const port=(maps.address() as {port:number}).port;process.env.ROUTING_OSRM_URL=`http://127.0.0.1:${port}`;process.env.ROUTING_NOMINATIM_URL=process.env.ROUTING_OSRM_URL;
- const store=new Store(':memory:'),server=createApp(store).listen(0,'127.0.0.1');await listening(server);
+ const store=new Store(':memory:'),server=createApp(store).listen(osPort??0,'127.0.0.1');await listening(server);
  return {origin:`http://127.0.0.1:${(server.address() as {port:number}).port}`,close:async()=>{await close(server);await close(maps);await store.close();}};
 }

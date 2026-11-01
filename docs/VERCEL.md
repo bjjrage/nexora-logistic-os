@@ -24,4 +24,6 @@ El empaquetado copia solamente el sitio compilado y la guía; excluye código de
 
 Una actualización de `main` construye ambos destinos. No se consideran sincronizados hasta que ambos hayan publicado el mismo commit. Railway permanece disponible durante esta publicación; no se eliminan servicios del GPS ni de backup.
 
+Desde la estabilización del 31/10/2026, `main` exige el check `validate` y Railway espera el CI antes de desplegar. Vercel exige en producción `validate` y `resilient-contentment - nexora-logistic` antes de promover el frontend. No usar Force Promote ni saltar estas comprobaciones para una publicación normal. Las pruebas de navegador generales y las dedicadas al ruteo se ejecutan en el CI, con fixtures aisladas y OR-Tools real.
+
 La web pública de marketing y seguimiento en Netlify es otro repositorio y no se modifica con este despliegue.

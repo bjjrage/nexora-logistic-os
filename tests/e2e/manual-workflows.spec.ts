@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from '../support/e2e-test.ts';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 const key='nexora.workflows.v3';

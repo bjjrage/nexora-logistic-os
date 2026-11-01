@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from '../support/e2e-test.ts';
 import {randomUUID} from 'node:crypto';
 
 test('reserve → assign → route load → inspection → delivery stays in the route; order never asks for a second load',async({page})=>{
@@ -29,14 +29,25 @@ test('reserve → assign → route load → inspection → delivery stays in the
  await page.goto('/');await page.getByRole('button',{name:'Pedidos',exact:true}).click();
  await page.getByRole('textbox',{name:'Buscar pedidos',exact:true}).fill('FLOW-'+suffix);
  await page.getByRole('article').filter({hasText:'FLOW-'+suffix}).getByRole('button',{name:'Reservar pedido',exact:true}).click();
- const dialog=page.getByRole('dialog',{name:'Reserva y ruta'});
+ const dialog=page.getByRole('dialog');
+ await expect(dialog.getByRole('combobox')).toHaveCount(0);
  await dialog.getByRole('button',{name:'Reservar stock',exact:true}).click();
  await expect(dialog.getByRole('button',{name:'Confirmar carga',exact:true})).toHaveCount(0);
- await dialog.getByRole('combobox',{name:'Ruta para este pedido',exact:true}).selectOption(route);
- await dialog.getByRole('button',{name:'Asignar e ir a cargar',exact:true}).click();
+ await expect(dialog.getByText('Stock reservado. El siguiente paso es asignar este pedido a un reparto.')).toBeVisible();
+ await expect(dialog.getByRole('button',{name:'Ir a Rutas',exact:true})).toBeVisible();
+ const reserved=await orderDetail();const routeVersion=(await(await page.request.get('/api/bootstrap')).json()).routes.find((item:any)=>item.id===route).version;
+ await send('/api/routes/'+route+'/assignments',{expectedVersion:routeVersion,parcelIds:reserved.parcels.map((parcel:any)=>parcel.id),pickup:false});
+ await dialog.getByRole('button',{name:'Ir a Rutas',exact:true}).click();
+ await expect(page.getByRole('region',{name:'Reservados por organizar'})).toBeVisible();
+ const automaticDetailResponse=page.waitForResponse(response=>{const url=new URL(response.url());return url.pathname==='/api/routes/'+route+'/detail';});
+ await page.getByRole('region',{name:'Pedidos organizados por camión'}).getByRole('article',{name:new RegExp(routeName)}).getByRole('button',{name:'Cargar este camión',exact:true}).click();
+ const automaticResponse=await automaticDetailResponse,automaticDetail=await automaticResponse.json();
+ expect(automaticDetail.routes.map((item:any)=>item.id)).toContain(route);
+ expect(automaticDetail.assignments.filter((item:any)=>item.active&&item.routeId===route)).toHaveLength(2);
+ expect(automaticDetail.parcels.filter((item:any)=>automaticDetail.assignments.some((assignment:any)=>assignment.active&&assignment.routeId===route&&assignment.parcelId===item.id))).toHaveLength(2);
  await expect(page.getByRole('heading',{name:routeName,exact:true})).toBeVisible();
  await expect(page.getByRole('dialog')).toHaveCount(0);
- await expect(page.getByRole('button',{name:/Cargar artículos \(2\)/})).toHaveAttribute('aria-pressed','true');
+ await expect(page.getByRole('button',{name:/Cargar artículos \(2\)/})).toHaveAttribute('aria-pressed','true',{timeout:10000});
  await expect(page.getByRole('button',{name:'Preparar ruta',exact:true})).toHaveCount(0);
  await expect(page.getByRole('button',{name:'Confirmar ruta',exact:true})).toBeDisabled();
  await expect(page.getByRole('button',{name:'Despachar ahora',exact:true})).toHaveCount(0);

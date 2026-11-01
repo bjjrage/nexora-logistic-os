@@ -800,9 +800,30 @@ export class Inventory {
     });
   }
 
+  private async transferReturnedToSender(actor: InventoryActor, item: Row, commandId: string) {
+    const product = await this.product(actor, item.product_id, item.client_id);
+    if (item.serial_id) {
+      const unit = await this.store.one('SELECT * FROM inventory_units WHERE id=? AND org_id=? AND client_id=?', item.serial_id, actor.orgId, item.client_id);
+      ensure(unit && unit.status === 'QUARANTINE' && unit.location_id === item.location_id && unit.order_id === item.order_id && unit.parcel_id === item.parcel_id,
+        'INVENTORY_CONFLICT', 'La serie no coincide con la unidad recibida en cuarentena.');
+      const changed = await this.store.run("UPDATE inventory_units SET status='ADJUSTED',custody_id='',order_id='',updated_at=? WHERE id=? AND org_id=? AND status='QUARANTINE' AND location_id=? AND order_id=? AND parcel_id=?",
+        now(), item.serial_id, actor.orgId, item.location_id, item.order_id, item.parcel_id);
+      ensure(Number(changed.changes) === 1, 'INVENTORY_CONFLICT', 'La serie enviada al remitente cambio.');
+    } else {
+      await this.changeBalance(actor, { clientId: item.client_id, productId: item.product_id, locationId: item.location_id, status: 'QUARANTINE', orderId: item.order_id, delta: -1 });
+    }
+    const updated = await this.store.run("UPDATE inventory_order_parcels SET state='RELEASED',custody_id='',updated_at=? WHERE id=? AND org_id=? AND state='QUARANTINE'",
+      now(), item.id, actor.orgId);
+    ensure(Number(updated.changes) === 1, 'INVENTORY_CONFLICT', 'La unidad en cuarentena enviada al remitente cambio.');
+    await this.appendMovement(actor, { clientId: item.client_id, productId: product.id, quantity: 1, serialId: item.serial_id,
+      fromLocationId: item.location_id, fromStatus: 'QUARANTINE', orderId: item.order_id, parcelId: item.parcel_id,
+      action: 'RETURN', reference: item.order_id, reason: 'Entrega al remitente desde cuarentena', commandId });
+    await this.recomputeOrder(actor, item.order_id);
+  }
+
   async syncParcelTransition(actor: InventoryActor, parcelId: string, fromState: string, toState: string, custodyType: string, custodyId: string, commandId: string) {
     ensure(actor.role !== 'CUSTOMER', 'FORBIDDEN', 'El cliente no puede modificar la custodia.', 403);
-    const transition = toState === 'LOADED' || toState === 'IN_TRANSIT' ? 'VEHICLE' : toState === 'DELIVERED' ? 'DELIVERED' : toState === 'RETURNED_TO_DEPOT' ? 'QUARANTINE' : fromState === 'LOADED' && toState === 'RECEIVED' ? 'RESERVED' : null;
+    const transition = toState === 'LOADED' || toState === 'IN_TRANSIT' ? 'VEHICLE' : toState === 'DELIVERED' ? 'DELIVERED' : toState === 'RETURNED_TO_DEPOT' ? 'QUARANTINE' : toState === 'RETURNED_TO_SENDER' ? 'SENT_TO_SENDER' : fromState === 'LOADED' && toState === 'RECEIVED' ? 'RESERVED' : null;
     if (!transition || toState === 'IN_TRANSIT') {
       if (toState === 'IN_TRANSIT') {
         const found = await this.store.one('SELECT order_id FROM inventory_order_parcels WHERE org_id=? AND parcel_id=?', actor.orgId, parcelId);
@@ -815,7 +836,15 @@ export class Inventory {
       if (!item) return { synced: false };
       const wanted = transition;
       if (item.state === wanted) return { synced: true, alreadySynced: true, orderId: item.order_id };
-      ensure(item.state === (wanted === 'VEHICLE' ? 'RESERVED' : 'VEHICLE'), 'INVALID_TRANSITION', `La unidad tiene estado ${item.state}; no se puede sincronizar ${fromState} → ${toState}.`);
+      const expectedState = wanted === 'VEHICLE' ? 'RESERVED' : wanted === 'SENT_TO_SENDER' ? 'QUARANTINE' : 'VEHICLE';
+      ensure(item.state === expectedState, 'INVALID_TRANSITION', `La unidad tiene estado ${item.state}; no se puede sincronizar ${fromState} → ${toState}.`);
+      if (wanted === 'QUARANTINE') ensure(!await this.store.one('SELECT d.return_id FROM return_dispositions d JOIN returns r ON r.id=d.return_id AND r.org_id=d.org_id WHERE r.org_id=? AND r.parcel_id=?', actor.orgId, parcelId), 'INVALID_TRANSITION', 'La devolucion ya tiene una disposicion final.');
+      if (wanted === 'SENT_TO_SENDER') {
+        ensure(fromState === 'RETURNED_TO_DEPOT' && toState === 'RETURNED_TO_SENDER' && custodyType === 'SENDER', 'INVALID_TRANSITION', 'La entrega al remitente requiere un bulto recibido en deposito.');
+        ensure(await this.store.one("SELECT d.return_id FROM return_dispositions d JOIN returns r ON r.id=d.return_id AND r.org_id=d.org_id WHERE r.org_id=? AND r.parcel_id=? AND r.state='AT_DEPOT' AND d.disposition='SENT_TO_SENDER' AND d.command_id=?", actor.orgId, parcelId, commandId), 'INVALID_TRANSITION', 'Registre la disposicion final antes de retirar el inventario devuelto.');
+        await this.transferReturnedToSender(actor, item, commandId);
+        return { synced: true, orderId: item.order_id, parcelId };
+      }
       if (wanted === 'DELIVERED') {
         const policy=await this.store.one('SELECT c.delivery_provider FROM inventory_orders o LEFT JOIN client_delivery_policies c ON c.org_id=o.org_id AND c.client_id=o.client_id WHERE o.id=? AND o.org_id=?',item.order_id,actor.orgId);
         const link = await this.store.one("SELECT provider_result,evidence_state FROM quad_parcel_links WHERE org_id=? AND parcel_id=?", actor.orgId, parcelId);
@@ -852,6 +881,7 @@ export class Inventory {
         const returned = await this.record('returns', entry.returnId, actor);
         const item = await this.store.one('SELECT op.*,p.state AS parcel_state,p.custody_type,p.custody_id FROM inventory_order_parcels op JOIN parcels p ON p.id=op.parcel_id WHERE op.org_id=? AND op.order_id=? AND op.parcel_id=?', actor.orgId, order.id, returned.parcel_id);
         ensure(item && returned.state === 'AUTHORIZED' && item.parcel_state === 'RETURN_PENDING' && item.custody_type === 'VEHICLE', 'INVALID_TRANSITION', 'El retorno autorizado no pertenece a este pedido o ya fue recibido.');
+        ensure(!await this.store.one('SELECT return_id FROM return_dispositions WHERE return_id=? AND org_id=?', returned.id, actor.orgId), 'INVALID_TRANSITION', 'La devolucion ya tiene una disposicion final.');
         const evidence = await this.store.one('SELECT id FROM evidence WHERE id=? AND org_id=? AND parcel_id=?', entry.evidenceId, actor.orgId, returned.parcel_id);
         ensure(evidence, 'EVIDENCE_REQUIRED', 'La foto de recepción debe corresponder al bulto.');
         await this.store.run('INSERT INTO return_evidence VALUES(?,?,?,?,?,?,?,?)', returned.id, actor.orgId, 'DEPOT', entry.evidenceId, actor.id, now(), 'RECEIPT', null);
@@ -877,22 +907,37 @@ export class Inventory {
       await this.client(actor, order.client_id);
       const target = await this.location(actor, b.locationId);
       ensure(target.active && target.kind !== 'QUARANTINE', 'INVALID_TRANSITION', 'Seleccioná una ubicación disponible para el stock liberado.');
-      const items = await this.store.all(`SELECT op.*,u.serial FROM inventory_order_parcels op LEFT JOIN inventory_units u ON u.id=op.serial_id AND u.org_id=op.org_id WHERE op.org_id=? AND op.order_id=? AND op.state='QUARANTINE'
+      const items = await this.store.all(`SELECT op.*,u.serial,p.state AS parcel_state,p.custody_type AS parcel_custody_type,p.custody_id AS parcel_custody,r.id AS return_id,r.incident_id FROM inventory_order_parcels op
+        JOIN parcels p ON p.id=op.parcel_id AND p.org_id=op.org_id
+        JOIN returns r ON r.parcel_id=op.parcel_id AND r.org_id=op.org_id AND r.state='AT_DEPOT'
+        LEFT JOIN return_dispositions rd ON rd.return_id=r.id AND rd.org_id=r.org_id
+        LEFT JOIN inventory_units u ON u.id=op.serial_id AND u.org_id=op.org_id
+        WHERE op.org_id=? AND op.order_id=? AND op.state='QUARANTINE' AND rd.return_id IS NULL
+          AND p.state='RETURNED_TO_DEPOT' AND p.custody_type='DEPOT' AND p.custody_id=op.location_id
         ${b.parcelIds?.length ? `AND op.parcel_id IN (${b.parcelIds.map(() => '?').join(',')})` : ''} ORDER BY op.created_at,op.id`, actor.orgId, order.id, ...(b.parcelIds ?? []));
       const selected = b.serials?.length ? items.filter(item => b.serials!.includes(item.serial)) : items;
       if (b.serials?.length) ensure(selected.length === b.serials.length, 'NOT_FOUND', 'Alguna serie indicada no está en cuarentena.', 404);
       let count = 0;
       for (const item of selected) {
+        ensure(item.parcel_state === 'RETURNED_TO_DEPOT' && item.parcel_custody_type === 'DEPOT' && item.parcel_custody === item.location_id,
+          'INVALID_TRANSITION', 'La custodia del bulto no coincide con la cuarentena.');
+        await this.store.run('INSERT INTO return_dispositions(return_id,org_id,disposition,actor_id,command_id,created_at) VALUES(?,?,?,?,?,?)', item.return_id, actor.orgId, 'RESTOCKED', actor.id, b.commandId, now());
+        await this.store.run("UPDATE incidents SET state='RESOLVED' WHERE id=? AND org_id=?", item.incident_id, actor.orgId);
         if (item.serial_id) {
-          const unit = await this.store.one('SELECT * FROM inventory_units WHERE id=? AND org_id=? AND status=\'QUARANTINE\'', item.serial_id, actor.orgId);
+          const unit = await this.store.one('SELECT * FROM inventory_units WHERE id=? AND org_id=? AND status=\'QUARANTINE\' AND location_id=? AND order_id=? AND parcel_id=?', item.serial_id, actor.orgId, item.location_id, item.order_id, item.parcel_id);
           ensure(unit, 'INVENTORY_CONFLICT', 'La serie ya no está en cuarentena.');
-          const changed = await this.store.run("UPDATE inventory_units SET status='AVAILABLE',custody_id='',order_id='',location_id=?,updated_at=? WHERE id=? AND status='QUARANTINE'", target.id, now(), unit.id);
+          const changed = await this.store.run("UPDATE inventory_units SET status='AVAILABLE',custody_id='',order_id='',location_id=?,updated_at=? WHERE id=? AND org_id=? AND status='QUARANTINE' AND location_id=? AND order_id=? AND parcel_id=?", target.id, now(), unit.id, actor.orgId, item.location_id, item.order_id, item.parcel_id);
           ensure(Number(changed.changes) === 1, 'INVENTORY_CONFLICT', 'Cambió la custodia de una serie.');
         } else {
           await this.changeBalance(actor, { clientId: order.client_id, productId: item.product_id, locationId: item.location_id, status: 'QUARANTINE', orderId: order.id, delta: -1 });
           await this.changeBalance(actor, { clientId: order.client_id, productId: item.product_id, locationId: target.id, status: 'AVAILABLE', delta: 1 });
         }
-        await this.store.run("UPDATE inventory_order_parcels SET state='RELEASED',location_id=?,custody_id='',updated_at=? WHERE id=? AND org_id=? AND state='QUARANTINE'", target.id, now(), item.id, actor.orgId);
+        const itemChanged = await this.store.run("UPDATE inventory_order_parcels SET state='RELEASED',location_id=?,custody_id='',updated_at=? WHERE id=? AND org_id=? AND state='QUARANTINE'", target.id, now(), item.id, actor.orgId);
+        ensure(Number(itemChanged.changes) === 1, 'INVENTORY_CONFLICT', 'La unidad ya no esta en cuarentena.');
+        const parcelChanged = await this.store.run("UPDATE parcels SET custody_id=? WHERE id=? AND org_id=? AND state='RETURNED_TO_DEPOT' AND custody_type='DEPOT' AND custody_id=?", target.id, item.parcel_id, actor.orgId, item.parcel_custody);
+        ensure(Number(parcelChanged.changes) === 1, 'INVENTORY_CONFLICT', 'La custodia del bulto cambio durante la liberacion.');
+        await this.store.run('INSERT INTO custody_events VALUES(?,?,?,?,?,?,?,?,?,?,?)', randomUUID(), actor.orgId, item.parcel_id, actor.id,
+          'DEPOT', item.parcel_custody, 'DEPOT', target.id, 'RETURN_RESTOCKED', now(), b.commandId);
         await this.appendMovement(actor, { clientId: order.client_id, productId: item.product_id, quantity: 1, serialId: item.serial_id, fromLocationId: item.location_id, toLocationId: target.id, fromStatus: 'QUARANTINE', toStatus: 'AVAILABLE', orderId: order.id, parcelId: item.parcel_id, action: 'RELEASE', reason: b.reason, commandId: b.commandId });
         count++;
       }

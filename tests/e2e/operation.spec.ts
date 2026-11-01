@@ -1,6 +1,5 @@
 import {randomUUID} from 'node:crypto';
-import {test,expect} from '@playwright/test';
-test.describe.configure({mode:'serial'});
+import {test,expect} from '../support/e2e-test.ts';
 
 test('browser: setup, customer profile, catalog import, warehouse receipt, persistence and logout',async({page,browser})=>{
  const crashes:string[]=[];page.on('pageerror',e=>crashes.push(e.message));
@@ -106,16 +105,10 @@ test('browser: isolated API fixtures → dispatch → photo evidence → Nexora 
  const route=(await post('/api/routes',{name,driverId:driver,vehicleId:vehicle,startAt:new Date(Date.now()-60000).toISOString(),endAt:new Date(Date.now()+3600000).toISOString()})).id;
  const version=async()=>{const b=await(await page.request.get('/api/bootstrap')).json();return b.routes.find((r:any)=>r.id===route).version;};
  await post(`/api/routes/${route}/tracking-provider`,{provider:'TRACCAR'});
- await page.goto('/');await page.getByRole('button',{name:'Rutas',exact:true}).click();
+ await post(`/api/routes/${route}/assignments`,{expectedVersion:1,parcelIds:[parcel.id],pickup:false});
+ await page.goto('/');await page.getByRole('button',{name:'Rutas',exact:true}).click();await page.getByText('Buscar rutas e historial',{exact:true}).click();
  await page.getByRole('button',{name:new RegExp(name)}).click();
- await page.getByRole('button',{name:/Cargar artículos/}).click();
- const parcelChoice=page.locator('label.parcel-row').filter({hasText:'ORDER-'+suffix});
- await expect(parcelChoice).toContainText('Producto QA');
- await expect(parcelChoice).toContainText('Receptor QA');
- await expect(parcelChoice).toContainText('Cliente E2E '+suffix);
- await parcelChoice.getByRole('checkbox').check();
- await page.getByRole('button',{name:'Asignar selección'}).click();
- await expect(page.getByText('Bultos asignados a la ruta.',{exact:true})).toBeVisible();
+ await expect(page.getByRole('region',{name:'Carga del vehículo',exact:true})).toContainText('ORDER-'+suffix);
  await page.getByRole('button',{name:/Paradas \(1\)/}).click();
  const stopCard=page.locator('.stop-card').filter({hasText:'ORDER-'+suffix});
  await expect(stopCard).toContainText('Producto QA × 1');
@@ -123,7 +116,7 @@ test('browser: isolated API fixtures → dispatch → photo evidence → Nexora 
  await post(`/api/orders/${order}/load`,{routeId:route,expectedVersion:await version(),codes:[parcel.code]});
  await post(`/api/routes/${route}/ready`,{expectedVersion:await version()});
  await post(`/api/vehicles/${vehicle}/inspections`,{odometer:0,fuelPercent:100,items:[{label:'Control QA',severity:'OK',note:''}]});
- await page.goto('/');await page.getByRole('button',{name:'Rutas',exact:true}).click();
+ await page.goto('/');await page.getByRole('button',{name:'Rutas',exact:true}).click();await page.getByText('Buscar rutas e historial',{exact:true}).click();
  await page.getByRole('button',{name:new RegExp(name)}).click();
  await page.getByRole('button',{name:/Bajar artículos/}).click();
  page.once('dialog',dialog=>dialog.accept());
@@ -131,9 +124,7 @@ test('browser: isolated API fixtures → dispatch → photo evidence → Nexora 
  await expect.poll(async()=> (await(await page.request.get('/api/orders/'+order)).json()).status).toBe('RESERVED');
  expect((await(await page.request.get('/api/inventory/reconciliation')).json()).ok).toBe(true);
  await page.getByRole('button',{name:/Cargar artículos/}).click();
- await page.getByText('Quitar artículos sin cargar de esta ruta',{exact:true}).click();
- page.once('dialog',dialog=>dialog.accept());
- await page.getByRole('button',{name:'Quitar de la ruta',exact:true}).click();
+ await post(`/api/routes/${route}/unassign-selected`,{expectedVersion:await version(),parcelIds:[parcel.id]});
  await expect.poll(async()=>{const b=await(await page.request.get('/api/bootstrap')).json();return b.routes.find((r:any)=>r.id===route).state;}).toBe('DRAFT');
  await post(`/api/routes/${route}/assignments`,{expectedVersion:await version(),parcelIds:[parcel.id],pickup:false});
  await post(`/api/orders/${order}/load`,{routeId:route,expectedVersion:await version(),codes:[parcel.code]});
@@ -149,7 +140,7 @@ test('browser: isolated API fixtures → dispatch → photo evidence → Nexora 
  await post(`/api/routes/${later}/load-selected`,{expectedVersion:laterBootstrap.routes.find((r:any)=>r.id===later).version,parcelIds:[laterParcel.id]});
  laterBootstrap=await(await page.request.get('/api/bootstrap')).json();
  await post(`/api/routes/${later}/ready`,{expectedVersion:laterBootstrap.routes.find((r:any)=>r.id===later).version});
- await page.reload();await page.getByRole('button',{name:'Rutas',exact:true}).click();
+ await page.reload();await page.getByRole('button',{name:'Rutas',exact:true}).click();await page.getByText('Buscar rutas e historial',{exact:true}).click();
  await page.getByRole('button',{name:new RegExp(name)}).click();
  await page.getByRole('button',{name:'Despachar ahora',exact:true}).click();
  await expect(page.getByText('Salida de ruta registrada.',{exact:true})).toBeVisible();
@@ -235,7 +226,7 @@ test('browser: reservation feedback is visible in the modal for missing stock an
  await page.goto('/');await page.getByRole('button',{name:'Pedidos',exact:true}).click();
  await expect(page.getByRole('article').filter({hasText:'RES-'+suffix})).toContainText('En espera · falta mercadería');
  await page.getByRole('article').filter({hasText:'RES-'+suffix}).getByRole('button',{name:'Ver faltantes'}).click();
- const dialog=page.getByRole('dialog',{name:'Reserva y ruta'});
+ const dialog=page.getByRole('dialog');
  await expect(dialog.getByRole('button',{name:'Confirmar carga'})).toHaveCount(0);
  await expect(dialog.getByLabel('Escanear bulto, serie o SKU')).toHaveCount(0);
  await expect(dialog.getByRole('button',{name:'Reservar stock'})).toBeDisabled();
@@ -244,8 +235,8 @@ test('browser: reservation feedback is visible in the modal for missing stock an
  await send('/api/inventory/receipts',{clientId:client,productId:product,locationId:location,quantity:1});
  await dialog.getByRole('button',{name:'Actualizar disponibilidad',exact:true}).click();
  await dialog.getByRole('button',{name:'Reservar stock'}).click();await expect(dialog.getByRole('status')).toContainText('Pedido reservado.');
- await expect(dialog.getByText('Falta asignar 1 bulto(s) a una ruta')).toBeVisible();
- await expect(dialog.getByRole('button',{name:'Asignar e ir a cargar'})).toBeVisible();
+ await expect(dialog.getByText('Stock reservado. El siguiente paso es asignar este pedido a un reparto.')).toBeVisible();
+ await expect(dialog.getByRole('button',{name:'Ir a Rutas',exact:true})).toBeVisible();
  await expect(dialog.getByRole('button',{name:'Confirmar carga'})).toHaveCount(0);
  const current=await(await page.request.get('/api/orders/'+order)).json();expect(current.status).toBe('RESERVED');
  await dialog.getByRole('button',{name:'Cerrar'}).click();
@@ -255,8 +246,8 @@ test('browser: reservation feedback is visible in the modal for missing stock an
  await expect(summary.getByText('Cargado en vehículo',{exact:true}).locator('..').locator('dd')).toHaveText('0unidades');
  await expect(summary.getByText('Disponible para reservar',{exact:true}).locator('..').locator('dd')).toHaveText('0unidades');
  await page.getByRole('article').filter({hasText:'OTRO-'+suffix}).getByRole('button',{name:'Ver faltantes'}).click();
- await expect(page.getByRole('dialog',{name:'Reserva y ruta'}).getByText('Pedido reservado.')).toHaveCount(0);
- await page.getByRole('dialog',{name:'Reserva y ruta'}).getByRole('button',{name:'Cerrar'}).click();
+ await expect(page.getByRole('dialog').getByText('Pedido reservado.')).toHaveCount(0);
+ await page.getByRole('dialog').getByRole('button',{name:'Cerrar'}).click();
  await send('/api/clients/'+client+'/delivery-provider',{deliveryProvider:'NEXORA'});
  const driver=(await send('/api/drivers',{name:'Chofer '+suffix,username:'drv-'+suffix,password:'QA-Driver-Browser-2026!'})).id;
  const vehicle=(await send('/api/vehicles',{plate:'PL-'+suffix,capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0})).id;
@@ -319,19 +310,12 @@ test('browser: one route form registers driver and vehicle then edits the same r
  await expect(page.getByRole('heading',{name:'Ruta unificada '+suffix,exact:true})).toBeVisible();
  await expect(page.locator('.route-list')).toHaveCount(0);
  await expect(page.getByRole('button',{name:'Nueva ruta',exact:true})).toHaveCount(0);
- await page.getByRole('button',{name:'← Volver a rutas',exact:true}).click();
- await expect(page.getByRole('heading',{name:'Listado de rutas',exact:true})).toBeVisible();
- await page.getByRole('searchbox',{name:'Buscar ruta',exact:true}).fill(suffix);
- await page.getByRole('button',{name:new RegExp('Ruta unificada '+suffix)}).click();
- await expect(page.getByRole('searchbox',{name:'Buscar ruta',exact:true})).toHaveCount(0);
- await expect(page.getByRole('heading',{name:'Pedidos y operación',exact:true})).toBeVisible();
- await page.getByRole('button',{name:'← Volver a rutas',exact:true}).click();
- await expect(page.getByRole('searchbox',{name:'Buscar ruta',exact:true})).toHaveValue(suffix);
  const bootstrap=await(await page.request.get('/api/bootstrap')).json(),route=bootstrap.routes.find((r:any)=>r.name==='Ruta unificada '+suffix);
  expect(route).toBeTruthy();
  const driver=(await send('/api/drivers',{name:'Reemplazo '+suffix,username:'other-'+suffix,password:'QA-Other-Driver-2026!'})).id;
  const vehicle=(await send('/api/vehicles',{plate:'OTHER-'+suffix,capacityWeightGrams:1000000,capacityVolumeCm3:1000000,odometer:0})).id;
- await page.reload();await page.getByRole('button',{name:'Rutas',exact:true}).click();await page.getByRole('button',{name:new RegExp('Ruta unificada '+suffix)}).click();
+ await page.getByRole('button',{name:'Actualizar',exact:true}).click();
+ await expect.poll(async()=>{const current=await(await page.request.get('/api/bootstrap')).json();return current.drivers.some((item:any)=>item.id===driver)&&current.vehicles.some((item:any)=>item.id===vehicle);}).toBe(true);
  await page.getByRole('button',{name:'Editar ruta',exact:true}).click();
  const editor=page.getByRole('form',{name:'Editar ruta'});
  await expect(page.getByRole('button',{name:'Confirmar ruta',exact:true})).toHaveCount(0);
@@ -359,7 +343,7 @@ test('browser: one route form registers driver and vehicle then edits the same r
  await expect(page.getByRole('button',{name:'← Volver a rutas',exact:true})).toBeVisible();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
  await page.getByRole('button',{name:'← Volver a rutas',exact:true}).click();
- await expect(page.getByRole('heading',{name:'Listado de rutas',exact:true})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'Rutas',exact:true})).toBeVisible();
  await expect(page.getByRole('heading',{name:'Pedidos y operación',exact:true})).toHaveCount(0);
 });
 

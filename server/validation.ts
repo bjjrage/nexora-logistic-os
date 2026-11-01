@@ -1,19 +1,18 @@
 import { z } from 'zod';
+import { accountCredentialFields, loginPasswordSchema, loginUsernameSchema } from './credential-contract.ts';
 const text=z.string().trim().min(1).max(500);
 const id=z.uuid();
 const command={commandId:id};
 const version={...command,expectedVersion:z.number().int().positive()};
 const positive=z.number().int().positive().max(1_000_000_000);
 const datetime=z.string().datetime({offset:true}).transform(value=>new Date(value).toISOString());
-const password=z.string().min(6).max(128);
-const username=z.string().trim().min(3).max(80).regex(/^[a-zA-Z0-9_.@-]+$/);
 const routeSelection=z.object({...version,parcelIds:z.array(id).min(1).max(200).refine(ids=>new Set(ids).size===ids.length,'Un bulto no puede seleccionarse dos veces.')});
 export const schemas={
-  setup:z.object({organizationName:text,timezone:text,username,password}),
-  login:z.object({username,password:z.string().min(1).max(128)}),
+  setup:z.object({organizationName:text,timezone:text,...accountCredentialFields}),
+  login:z.object({username:loginUsernameSchema,password:loginPasswordSchema}),
   client:z.object({...command,name:text,deliveryProvider:z.enum(['NEXORA','QUADMINDS']).optional(),legalName:z.string().trim().max(500).optional(),taxId:z.string().trim().max(80).optional(),contactName:z.string().trim().max(200).optional(),phone:z.string().trim().max(80).optional(),email:z.union([z.literal(''),z.email().max(254)]).optional(),address:z.string().trim().max(500).optional(),city:z.string().trim().max(160).optional(),notes:z.string().trim().max(2000).optional()}),
-  driver:z.object({...command,name:text,username,password}),
-  user:z.object({...command,name:text,username,password,role:z.enum(['ADMIN','OPERATIONS','DEPOT'])}),
+  driver:z.object({...command,name:text,...accountCredentialFields}),
+  user:z.object({...command,name:text,...accountCredentialFields,role:z.enum(['ADMIN','OPERATIONS','DEPOT'])}),
   vehicle:z.object({...command,plate:text,capacityWeightGrams:positive,capacityVolumeCm3:positive,odometer:z.number().int().nonnegative()}),
   shipment:z.object({...command,clientId:id,reference:text,originText:text,destinationText:text,recipientName:text,recipientPhone:z.string().trim().max(80).default(''),parcelCount:z.number().int().min(1).max(200),weightGrams:positive.nullable(),volumeCm3:positive.nullable(),proofPolicy:z.enum(['RECEIVER','RECEIVER_PHOTO'])}),
   receipt:z.object({...command,shipmentId:id,codes:z.array(text).min(1).max(200),location:text}),

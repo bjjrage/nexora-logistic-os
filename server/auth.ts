@@ -2,6 +2,7 @@ import { randomBytes, scryptSync, timingSafeEqual, createHash, randomUUID } from
 import type { Request, Response } from 'express';
 import type { Database } from './database.ts';
 import { ensure } from './errors.ts';
+import { accountUsernameSchema, accountPasswordSchema } from './credential-contract.ts';
 export type Role = 'ADMIN' | 'OPERATIONS' | 'DEPOT' | 'DRIVER' | 'CUSTOMER';
 export interface Actor {
     id: string;
@@ -56,6 +57,8 @@ export async function setup(store: Database, input: {
     username: string;
     password: string;
 }) {
+    const username = accountUsernameSchema.parse(input.username);
+    const password = accountPasswordSchema.parse(input.password);
     return await store.transaction(async () => {
         ensure(!await store.one('SELECT id FROM users LIMIT 1'), 'INVALID_TRANSITION', 'La instalación ya tiene administrador.');
         try {
@@ -66,7 +69,7 @@ export async function setup(store: Database, input: {
         }
         const orgId = randomUUID(), userId = randomUUID();
         await store.run('INSERT INTO organizations VALUES(?,?,?)', orgId, input.organizationName, input.timezone);
-        await store.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)', userId, orgId, input.username, 'Administración', passwordHash(input.password), 'ADMIN');
+        await store.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)', userId, orgId, username, 'Administración', passwordHash(password), 'ADMIN');
         return { userId, orgId };
     });
 }

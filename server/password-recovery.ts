@@ -3,6 +3,7 @@ import {z} from 'zod';
 import type {Database} from './database.ts';
 import {authorize,hash,passwordHash,type Actor} from './auth.ts';
 import {ensure} from './errors.ts';
+import {accountPasswordSchema} from './credential-contract.ts';
 export class PasswordRecovery {
  private store:Database;
  constructor(store:Database){this.store=store;}
@@ -22,7 +23,7 @@ export class PasswordRecovery {
   });
  }
  async redeem(input:unknown){
-  const body=z.object({token:z.string().regex(/^[a-f0-9]{64}$/),password:z.string().min(6).max(128)}).strict().parse(input);
+  const body=z.object({token:z.string().regex(/^[a-f0-9]{64}$/),password:accountPasswordSchema}).strict().parse(input);
   return this.store.transaction(async()=>{
    const row=await this.store.one('SELECT * FROM password_recovery WHERE token_hash=? AND used_at IS NULL AND expires_at>?',hash(body.token),new Date().toISOString());
    ensure(row?.issuer_id,'FORBIDDEN','El enlace no es válido o venció. Solicitá uno nuevo a Administración.',401);

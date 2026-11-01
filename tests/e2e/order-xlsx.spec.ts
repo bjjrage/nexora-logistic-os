@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from '../support/e2e-test.ts';
 import {randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import * as XLSX from 'xlsx';

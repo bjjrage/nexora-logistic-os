@@ -9,7 +9,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:17.11
@@ -19,6 +19,7 @@ jobs:
         options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       PG_TEST_ADMIN_URL: postgresql://postgres:ci_fixture_only@127.0.0.1:5432/postgres
+      ROUTING_PYTHON: ${{ github.workspace }}/.local/routing-venv/bin/python
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0, Node 24
@@ -26,6 +27,11 @@ jobs:
           node-version: '24.20.0'
           cache: npm
       - run: npm ci
+      - name: Install the pinned routing solver
+        run: |
+          python3 -m venv .local/routing-venv
+          .local/routing-venv/bin/python -m pip install --disable-pip-version-check -r infra/routing/requirements.txt
+          .local/routing-venv/bin/python -c "from ortools.constraint_solver import pywrapcp; print('OR-Tools routing solver ready')"
       - run: npm run check:secrets
       - run: npm run check:migrations
       - run: npm test
@@ -34,5 +40,7 @@ jobs:
       - run: node scripts/package-vercel-site.ts
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - run: npm run test:e2e:routing
       - run: docker build --tag nexora-os:ci .
       - run: docker run --rm --entrypoint node nexora-os:ci --version
+      - run: docker run --rm --entrypoint /opt/routing/bin/python nexora-os:ci -c "from ortools.constraint_solver import pywrapcp; print('OR-Tools container solver ready')"

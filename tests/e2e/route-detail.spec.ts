@@ -1,0 +1,36 @@
+import {test,expect} from '../support/e2e-test.ts';
+import {randomUUID} from 'node:crypto';
+
+test('old route remains loadable and confirmable after more than 500 newer parcels, including refresh',async({page})=>{
+ const send=async(path:string,data:Record<string,unknown>)=>{const response=await page.request.post(path,{headers:{'X-Requested-With':'logistics-os'},data:{commandId:randomUUID(),...data}});expect(response.ok(),path+': '+await response.text()).toBeTruthy();return response.json();};
+ await send('/api/setup',{organizationName:'Route scope QA',timezone:'UTC',username:'qa-scope',password:'QA-Scope-2026!'});
+ const client=(await send('/api/clients',{name:'Scope client',deliveryProvider:'NEXORA'})).id;
+ const driver=(await send('/api/drivers',{name:'Scope driver',username:'qa-scope-driver',password:'QA-Scope-2026!'})).id;
+ const vehicle=(await send('/api/vehicles',{plate:'SCOPE-TRUCK',capacityWeightGrams:10000,capacityVolumeCm3:10000,odometer:0})).id;
+ const location=(await send('/api/inventory/locations',{code:'SCOPE-DEPOT',name:'Scope depot'})).id;
+ const product=(await send('/api/inventory/products',{clientId:client,sku:'SCOPE-OLD-SKU',name:'Original cargo',tracking:'QUANTITY',weightGrams:1,volumeCm3:1})).id;
+ await send('/api/inventory/receipts',{clientId:client,productId:product,locationId:location,quantity:3});
+ const order=(await send('/api/orders',{clientId:client,externalId:'SCOPE-ORDER',orderDate:'2026-10-31',recipientName:'Scope recipient',destination:'QA destination',lines:[{productId:product,quantity:3}]})).id;
+ await send('/api/orders/'+order+'/reserve',{});
+ const parcels=(await(await page.request.get('/api/orders/'+order)).json()).parcels;
+ const route=(await send('/api/routes',{name:'Scope older route',trackingProvider:'TRACCAR',driverId:driver,vehicleId:vehicle,startAt:new Date(Date.now()+3600000).toISOString(),endAt:new Date(Date.now()+10800000).toISOString()})).id;
+ await send('/api/routes/'+route+'/assignments',{expectedVersion:1,parcelIds:parcels.map((p:{id:string})=>p.id),pickup:false});
+ for(const [index,count]of [200,200,101].entries())await send('/api/shipments',{clientId:client,reference:'NEWER-'+index,originText:'Depot',destinationText:'Other destination',recipientName:'Other recipient',proofPolicy:'RECEIVER',parcelCount:count,weightGrams:1,volumeCm3:1});
+ const boot=await(await page.request.get('/api/bootstrap')).json();expect(boot.parcels.some((p:{id:string})=>p.id===parcels[0].id)).toBe(false);
+ await page.goto('/');await page.getByRole('button',{name:'Rutas',exact:true}).click();
+ await page.getByText('Buscar rutas e historial',{exact:true}).click();await page.getByRole('searchbox',{name:'Buscar ruta',exact:true}).fill('Scope older route');
+ await page.getByRole('button',{name:/Scope older route/}).click();
+ await expect(page.getByRole('button',{name:'Cargar artículos (3)',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Cargar artículos (3)',exact:true}).click();
+ await expect(page.getByText('Original cargo',{exact:false}).first()).toBeVisible();
+ await page.getByRole('button',{name:'Seleccionar pendientes',exact:true}).click();
+ await page.getByRole('button',{name:'Confirmar carga',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Bajar artículos (3)',exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Confirmar ruta',exact:true})).toBeEnabled();
+ await page.getByRole('button',{name:'Actualizar',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Confirmar ruta',exact:true})).toBeEnabled();
+ await page.getByRole('button',{name:'Confirmar ruta',exact:true}).click();
+ await expect.poll(async()=> (await(await page.request.get('/api/routes/'+route+'/detail')).json()).routes[0].state).toBe('READY');
+ expect((await(await page.request.get('/api/orders/'+order)).json()).status).toBe('LOADED');
+ expect((await(await page.request.get('/api/inventory/reconciliation')).json()).ok).toBe(true);
+});
