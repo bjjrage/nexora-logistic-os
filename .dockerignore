@@ -10,6 +10,10 @@
 !manual/**
 !frontend/
 !frontend/**
+!shared/
+!shared/**
+!docs/
+!docs/rollback-3a6444-schema22.patch
 !server/
 !server/**
 !api/

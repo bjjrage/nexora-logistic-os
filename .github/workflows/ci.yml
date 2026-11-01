@@ -43,4 +43,5 @@ jobs:
       - run: npm run test:e2e:routing
       - run: docker build --tag nexora-os:ci .
       - run: docker run --rm --entrypoint node nexora-os:ci --version
+      - run: docker run --rm --entrypoint node nexora-os:ci --input-type=module -e "await import('./server/app.ts'); console.log('API runtime imports ready')"
       - run: docker run --rm --entrypoint /opt/routing/bin/python nexora-os:ci -c "from ortools.constraint_solver import pywrapcp; print('OR-Tools container solver ready')"

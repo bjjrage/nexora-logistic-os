@@ -2,9 +2,10 @@ import {spawn} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 import {parseEnv} from 'node:util';
 const isolated=parseEnv(readFileSync('.local/staging/test.env','utf8'));
-for(const key of ['DATABASE_URL','PG_TEST_ADMIN_URL']){
- const url=new URL(isolated[key]??'');
- if(!['127.0.0.1','localhost'].includes(url.hostname)||url.pathname!=='/nexora_test')throw new Error('Las pruebas requieren la base local nexora_test.');
-}
+if(isolated.NODE_ENV!=='test'||isolated.DATABASE_LOCAL_TEST!=='true')throw new Error('Las pruebas PostgreSQL requieren el entorno explícito de test local.');
+const runtimeUrl=new URL(isolated.DATABASE_URL??''),adminUrl=new URL(isolated.PG_TEST_ADMIN_URL??'');
+for(const url of [runtimeUrl,adminUrl])if(!['127.0.0.1','localhost'].includes(url.hostname)||!url.port||url.pathname!=='/nexora_test')throw new Error('Las pruebas requieren únicamente nexora_test local con un puerto explícito.');
+if(runtimeUrl.username!=='nexora_runtime')throw new Error('Las pruebas de aplicación requieren el rol nexora_runtime local.');
+if(runtimeUrl.hostname!==adminUrl.hostname||runtimeUrl.port!==adminUrl.port)throw new Error('Las conexiones runtime y admin deben apuntar a la misma instancia PostgreSQL local.');
 const files=['tests/postgres.integration.ts','tests/postgres.traccar.ts','tests/postgres.company.ts','tests/postgres.client-profiles.ts','tests/live-portal.integration.ts','tests/postgres.rls.ts','tests/postgres.pagination.ts','tests/postgres.audit-fixes.ts','tests/postgres.billing.ts','tests/postgres.stock-receipts.ts','tests/postgres.routing.ts'];
 const child=spawn(process.execPath,['--test','--test-concurrency=1',...files],{env:{...process.env,...isolated},stdio:'inherit',windowsHide:true});child.on('exit',code=>process.exitCode=code??1);child.on('error',()=>process.exitCode=1);
