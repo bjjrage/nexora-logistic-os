@@ -1,0 +1,9 @@
+.help-label { display:inline-flex; align-items:center; gap:6px; min-width:0; }
+.help-label > h2,.help-label > h3 { margin:0; }
+.help-tip { display:inline-flex; flex:0 0 auto; vertical-align:middle; }
+.help-tip .help-tip-trigger { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; min-height:24px; padding:3px; border:0; border-radius:50%; background:transparent; color:var(--muted); box-shadow:none; }
+.help-tip .help-tip-trigger:hover { color:var(--navy); background:#edf1f6; }
+.help-tip .help-tip-trigger:focus-visible { outline:2px solid var(--red); outline-offset:2px; }
+.help-tip-trigger svg { width:16px; height:16px; }
+.help-tip-popup { position:fixed; z-index:2000; display:block; width:max-content; max-width:min(280px,calc(100vw - 24px)); padding:10px 12px; border:1px solid #ccd5e2; border-radius:10px; background:#fff; color:var(--ink); box-shadow:0 8px 24px #071c3824; font-size:12px; font-weight:400; line-height:1.45; text-align:left; overflow-wrap:anywhere; }
+.help-tip-popup[hidden] { display:none; }

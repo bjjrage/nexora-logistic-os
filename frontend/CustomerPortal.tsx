@@ -1,9 +1,12 @@
-import CustomerStock from './CustomerStock';
+import CustomerStock,{type CustomerStockFilter} from './CustomerStock';
 import CustomerMovements from './CustomerMovements';
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, LogOut, RefreshCw } from "lucide-react";
+import {ArrowRight,ArrowLeftRight,Boxes,Box,CheckCircle2,ClipboardList,Clock3,Download,LayoutDashboard,LogOut,RefreshCw,ShieldAlert,Truck} from 'lucide-react';
 import Brand from "./Brand";
 import { api } from "./api";
+import HelpTip from './HelpTip';
+import {customerBadge,customerState,movementLabels} from './customer-labels';
+import './customer-portal.css';
 
 type CustomerUser = { id: string; name: string; role: string; clientId?: string | null };
 type Product = { id: string; sku: string; name: string; unit: string; tracking: string };
@@ -45,9 +48,11 @@ function formatOrderDate(value: string): string {
 }
 
 export default function CustomerPortal({ user, busy, onLogout }: Props) {
-  const [view, setView] = useState<"inventory" | "orders" | "movements">("inventory");
+  const [view, setView] = useState<'home'|'inventory'|'orders'|'movements'>('home');
+  const [stockFilter,setStockFilter]=useState<CustomerStockFilter>('');
   const [revision,setRevision] = useState(0);
   const exports = {
+    home:{href:'/api/inventory/export.csv',label:'Exportar inventario'},
     inventory:{href:'/api/inventory/export.csv',label:'Exportar inventario'},
     orders:{href:'/api/orders/export.csv',label:'Exportar pedidos'},
     movements:{href:'/api/inventory/movements/export.csv',label:'Exportar movimientos'}
@@ -98,6 +103,17 @@ export default function CustomerPortal({ user, busy, onLogout }: Props) {
   const reservedTotal = totals.RESERVED;
   const vehicleTotal = totals.VEHICLE;
   const quarantineTotal = totals.QUARANTINE;
+  const titles={home:'Mi depósito',inventory:'Inventario',orders:'Pedidos',movements:'Movimientos'};
+  const selectView=(next:typeof view)=>{if(next==='home')setOrderPage(0);setView(next);};
+  const navigation=[{id:'home',label:'Inicio',icon:<LayoutDashboard/>},{id:'inventory',label:'Inventario',icon:<Boxes/>},{id:'orders',label:'Pedidos',icon:<ClipboardList/>},{id:'movements',label:'Movimientos',icon:<ArrowLeftRight/>}] as const;
+  const showStock=(status:CustomerStockFilter)=>{setStockFilter(status);setView('inventory');};
+  const metrics=[
+    {label:'Productos',value:inventory.counts.products,status:'' as const,icon:<Box/>,action:'Ver inventario completo'},
+    {label:'Disponibles',value:availableTotal,status:'AVAILABLE' as const,icon:<CheckCircle2/>,action:'Ver stock disponible'},
+    {label:'Reservadas',value:reservedTotal,status:'RESERVED' as const,icon:<Clock3/>,action:'Ver stock reservado'},
+    {label:'En vehículo',value:vehicleTotal,status:'VEHICLE' as const,icon:<Truck/>,action:'Ver stock en vehículo'},
+    {label:'En cuarentena',value:quarantineTotal,status:'QUARANTINE' as const,icon:<ShieldAlert/>,action:'Ver stock en cuarentena'}
+  ];
 
   const toggleProofs = async (order: Order) => {
     if (!order.shipmentId) { setProofError("Este pedido todavía no tiene un envío asociado."); return; }
@@ -113,37 +129,39 @@ export default function CustomerPortal({ user, busy, onLogout }: Props) {
   };
 
   return (
-    <div className="portal-shell">
-      <header className="portal-header">
-        <div><Brand compact className="portal-brand" /><span className="portal-identity">Inventario y pedidos · {user.name}</span></div>
-        <div><a className="button button-secondary portal-export" href={exports[view].href} download><Download aria-hidden="true" />{exports[view].label}</a><button className="text-button" type="button" onClick={onLogout} disabled={busy}><LogOut aria-hidden="true" />Salir</button></div>
-      </header>
-      <main className="portal-body">
+    <div className="app-shell customer-workspace">
+      <aside className="sidebar" aria-label="Panel del cliente">
+        <div className="brand"><Brand/><span className="brand-caption">Portal de cliente</span></div>
+        <nav className="nav-list" aria-label="Navegación del cliente">{navigation.map(item=><button key={item.id} type="button" className={'nav-link '+(view===item.id?'active':'')} aria-current={view===item.id?'page':undefined} onClick={()=>selectView(item.id)}><span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}</button>)}</nav>
+        <div className="sidebar-footer"><div className="user-chip"><span className="avatar">{user.name.slice(0,1).toUpperCase()}</span><span><strong>{user.name}</strong><small>Cliente</small></span></div><button type="button" className="text-button signout" onClick={onLogout} disabled={busy}><LogOut aria-hidden="true"/>Cerrar sesión</button></div>
+      </aside>
+      <main className="workspace">
+        <header className="topbar"><div><Brand compact className="mobile-brand"/><span className="topbar-label">{user.name}</span><span className="topbar-separator">/</span><span>{titles[view]}</span></div><div className="topbar-meta"><span className={'connection-indicator'+(error?' is-stale':'')}/><span>{error?'Sin actualizar':loading?'Actualizando…':'Conectado'}</span><button type="button" className="text-button mobile-signout" onClick={onLogout} disabled={busy}>Salir</button></div></header>
+        <div className="content">
         <div className="page-heading">
-          <div><p className="eyebrow">PORTAL DE CLIENTE</p><h1>Tu mercadería en Nexora</h1><p className="muted">Consultá existencias, pedidos y movimientos registrados de tu cuenta.</p></div>
-          <button className="button button-secondary" type="button" onClick={() => void load()} disabled={loading}><RefreshCw aria-hidden="true" />Actualizar</button>
+          <div className="help-label"><h1>{titles[view]}</h1><HelpTip label={titles[view]}>Consultá y exportá tu mercadería y operaciones. Las recepciones, ajustes y despachos los registra Nexora.</HelpTip></div>
+          <div className="heading-actions"><a className="button button-secondary" href={exports[view].href} download><Download aria-hidden="true"/>{exports[view].label}</a><button className="button button-secondary" type="button" onClick={() => void load()} disabled={loading}><RefreshCw aria-hidden="true" />Actualizar</button></div>
         </div>
         {!user.clientId && <div className="notice error" role="alert">Esta cuenta no tiene un cliente asociado. Contactá al equipo de Nexora.</div>}
         {error && <div className="notice error" role="alert">{error}</div>}
         {loading && <p className="muted" role="status">Consultando inventario y pedidos…</p>}
-        <div className="inventory-metrics" aria-label="Resumen de cuenta">
-          <div className="inventory-metric"><small>Productos</small><strong>{inventory.counts.products}</strong></div>
-          <div className="inventory-metric"><small>Unidades disponibles</small><strong>{new Intl.NumberFormat("es").format(availableTotal)}</strong></div>
-          <div className="inventory-metric"><small>Unidades reservadas</small><strong>{new Intl.NumberFormat("es").format(reservedTotal)}</strong></div>
-          <div className="inventory-metric"><small>En vehículo</small><strong>{new Intl.NumberFormat("es").format(vehicleTotal)}</strong></div>
-          <div className="inventory-metric"><small>En cuarentena</small><strong>{new Intl.NumberFormat("es").format(quarantineTotal)}</strong></div>
-        </div>
+        {(view==='home'||view==='inventory')&&<section className="customer-metrics" aria-label="Resumen de cuenta">{metrics.map(metric=><button type="button" key={metric.label} className={'stock-kpi customer-metric '+(view==='inventory'&&stockFilter===metric.status?'is-active':'')} aria-label={metric.action} aria-pressed={view==='inventory'&&stockFilter===metric.status} onClick={()=>showStock(metric.status)}><span className="customer-metric-label"><span className="customer-metric-icon" aria-hidden="true">{metric.icon}</span>{metric.label}</span><strong>{loading?'—':new Intl.NumberFormat('es').format(metric.value)}</strong></button>)}</section>}
+        {view==='home'&&<div className="customer-overview">
+          <section className="card"><div className="card-header"><div className="help-label"><h2>Pedidos</h2><span className="badge badge-neutral">{orderTotal}</span></div><button type="button" className="text-button" aria-label="Ver todos los pedidos" onClick={()=>setView('orders')}>Ver todos<ArrowRight aria-hidden="true"/></button></div>
+            {orders.length?<div className="customer-summary-list">{orders.slice(0,4).map(order=><button type="button" className="customer-summary-row" key={order.id} onClick={()=>setView('orders')}><span><strong>{order.externalId}</strong><small>{order.recipientName}</small></span><span className={customerBadge(order.status)}>{customerState(order.status)}</span></button>)}</div>:!loading&&<p className="empty-state">Sin pedidos.</p>}
+          </section>
+          <section className="card"><div className="card-header"><h2>Últimos movimientos</h2><button type="button" className="text-button" aria-label="Ver todos los movimientos" onClick={()=>setView('movements')}>Ver todos<ArrowRight aria-hidden="true"/></button></div>
+            {inventory.movements.length?<div className="timeline">{inventory.movements.slice(0,5).map(movement=><div className="timeline-item" key={movement.id}><span className="timeline-dot"/><div><strong>{movementLabels[movement.action??movement.type??'']??movement.action??'Movimiento'} · {movement.quantity??'—'}</strong><small>{products.get(movement.productId??'')?.name??'Producto'} · {new Date(movement.createdAt).toLocaleDateString('es')}</small></div></div>)}</div>:!loading&&<p className="empty-state">Sin movimientos.</p>}
+          </section>
+        </div>}
+        {view === "inventory" && <CustomerStock key={stockFilter} revision={revision} status={stockFilter} onClearFilter={()=>setStockFilter('')}/>}
 
-        <nav className="inventory-tabs" aria-label="Vistas de cuenta">
-          {([["inventory", "Inventario"], ["orders", "Pedidos"], ["movements", "Movimientos"]] as Array<[typeof view, string]>).map(([id, label]) => <button key={id} className="inventory-tab" type="button" aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}>{label}</button>)}
-        </nav>
-
-        {view === "inventory" && <CustomerStock revision={revision}/>}
-
-        {view === "orders" && <section className="card"><nav className="pagination" aria-label="Páginas de pedidos"><button disabled={loading||orderPage===0} onClick={()=>setOrderPage(p=>p-1)}>Anterior</button><span>Página {orderPage+1}</span><button disabled={loading||(orderPage+1)*25>=orderTotal} onClick={()=>setOrderPage(p=>p+1)}>Siguiente</button></nav><div className="card-header"><div><h2>Tus pedidos</h2><p>{orderTotal} pedidos</p><p>Seguimiento de estado y líneas vinculadas a tu mercadería.</p></div></div>{orders.length ? <div className="customer-orders">{orders.map((order) => <article className="customer-order" key={order.id}><header><div><h3>{order.externalId}</h3><p>{order.recipientName} · {order.destination}</p><p>{order.orderDate ? formatOrderDate(order.orderDate) : "Fecha sin informar"}</p></div><span className="badge badge-neutral">{order.status}</span></header><div className="customer-order-lines">{(order.lines ?? []).map((line, index) => <span key={line.productId + index}>{line.name || products.get(line.productId)?.name || line.sku || line.productId} · solicitado {line.requested ?? line.quantity ?? 0}{line.delivered != null ? ` · entregado ${line.delivered}` : ""}{line.returned ? ` · retorno ${line.returned}` : ""}</span>)}</div>{order.shipmentId && <div className="form-divider"><button className="button button-secondary" type="button" aria-expanded={openProofShipment === order.shipmentId} aria-controls={`proofs-${order.id}`} onClick={() => void toggleProofs(order)}>{openProofShipment === order.shipmentId ? "Ocultar comprobantes" : "Ver comprobantes de entrega"}</button>{openProofShipment === order.shipmentId && <div id={`proofs-${order.id}`} className="customer-proof-list">{proofLoadingShipment === order.shipmentId ? <p className="muted" role="status">Consultando comprobantes…</p> : proofError ? <div className="notice error" role="alert">{proofError}</div> : (proofsByShipment[order.shipmentId] ?? []).length ? (() => { const proofs = proofsByShipment[order.shipmentId as string] ?? []; const grouped = new Map<string, CustomerProof[]>(); proofs.forEach((proof) => grouped.set(proof.parcelId, [...(grouped.get(proof.parcelId) ?? []), proof])); return [...grouped.entries()].map(([parcelId, parcelProofs]) => { const result = parcelProofs[0]?.providerResult; const complete = parcelProofs.some((proof) => proof.evidenceState === "COMPLETE"); const label = result === "DELIVERED" ? complete ? "Foto y firma guardadas" : "Entrega informada, evidencia pendiente" : result === "FAILED" ? "Entrega fallida según QuadMinds" : "Resultado pendiente de sincronización"; const parcelCode = order.parcels?.find((parcel) => parcel.id === parcelId)?.code; return <div className="inventory-list-row" key={parcelId}><span><strong>{parcelCode ? `Bulto ${parcelCode}` : "Comprobante de bulto"}</strong><small>{label}{parcelProofs[0]?.reportedAt ? ` · ${new Date(parcelProofs[0].reportedAt as string).toLocaleString("es")}` : ""}{parcelProofs[0]?.receiverName ? ` · recibió ${parcelProofs[0].receiverName}` : ""}</small></span><span className="inventory-actions">{parcelProofs.filter((proof) => proof.evidenceId).map((proof) => <a key={proof.evidenceId} className="button button-secondary" href={`/api/customer-evidence/${encodeURIComponent(proof.evidenceId as string)}`} target="_blank" rel="noreferrer">{proof.kind === "PHOTO" ? "Ver foto" : proof.kind === "SIGNATURE" ? "Ver firma" : "Ver comprobante"}</a>)}</span></div>; }); })() : <p className="muted">No hay comprobantes sincronizados para este pedido.</p>}</div>}</div>}</article>)}</div> : <p className="muted">No hay pedidos registrados.</p>}</section>}
+        {view === "orders" && <section className="card"><nav className="pagination" aria-label="Páginas de pedidos"><button disabled={loading||orderPage===0} onClick={()=>setOrderPage(p=>p-1)}>Anterior</button><span>Página {orderPage+1}</span><button disabled={loading||(orderPage+1)*25>=orderTotal} onClick={()=>setOrderPage(p=>p+1)}>Siguiente</button></nav><div className="card-header"><h2>Pedidos</h2><span className="badge badge-neutral">{orderTotal}</span></div>{orders.length ? <div className="customer-orders">{orders.map((order) => <article className="customer-order" key={order.id}><header><div><h3>{order.externalId}</h3><p>{order.recipientName} · {order.destination}</p><p>{order.orderDate ? formatOrderDate(order.orderDate) : "Fecha sin informar"}</p></div><span className={customerBadge(order.status)}>{customerState(order.status)}</span></header><div className="customer-order-lines">{(order.lines ?? []).map((line, index) => <span key={line.productId + index}>{line.name || products.get(line.productId)?.name || line.sku || line.productId} · solicitado {line.requested ?? line.quantity ?? 0}{line.delivered != null ? ` · entregado ${line.delivered}` : ""}{line.returned ? ` · retorno ${line.returned}` : ""}</span>)}</div>{order.shipmentId && <div className="form-divider"><button className="button button-secondary" type="button" aria-expanded={openProofShipment === order.shipmentId} aria-controls={`proofs-${order.id}`} onClick={() => void toggleProofs(order)}>{openProofShipment === order.shipmentId ? "Ocultar comprobantes" : "Ver comprobantes de entrega"}</button>{openProofShipment === order.shipmentId && <div id={`proofs-${order.id}`} className="customer-proof-list">{proofLoadingShipment === order.shipmentId ? <p className="muted" role="status">Consultando comprobantes…</p> : proofError ? <div className="notice error" role="alert">{proofError}</div> : (proofsByShipment[order.shipmentId] ?? []).length ? (() => { const proofs = proofsByShipment[order.shipmentId as string] ?? []; const grouped = new Map<string, CustomerProof[]>(); proofs.forEach((proof) => grouped.set(proof.parcelId, [...(grouped.get(proof.parcelId) ?? []), proof])); return [...grouped.entries()].map(([parcelId, parcelProofs]) => { const result = parcelProofs[0]?.providerResult; const complete = parcelProofs.some((proof) => proof.evidenceState === "COMPLETE"); const label = result === "DELIVERED" ? complete ? "Foto y firma guardadas" : "Entrega informada, evidencia pendiente" : result === "FAILED" ? "Entrega fallida según QuadMinds" : "Resultado pendiente de sincronización"; const parcelCode = order.parcels?.find((parcel) => parcel.id === parcelId)?.code; return <div className="inventory-list-row" key={parcelId}><span><strong>{parcelCode ? `Bulto ${parcelCode}` : "Comprobante de bulto"}</strong><small>{label}{parcelProofs[0]?.reportedAt ? ` · ${new Date(parcelProofs[0].reportedAt as string).toLocaleString("es")}` : ""}{parcelProofs[0]?.receiverName ? ` · recibió ${parcelProofs[0].receiverName}` : ""}</small></span><span className="inventory-actions">{parcelProofs.filter((proof) => proof.evidenceId).map((proof) => <a key={proof.evidenceId} className="button button-secondary" href={`/api/customer-evidence/${encodeURIComponent(proof.evidenceId as string)}`} target="_blank" rel="noreferrer">{proof.kind === "PHOTO" ? "Ver foto" : proof.kind === "SIGNATURE" ? "Ver firma" : "Ver comprobante"}</a>)}</span></div>; }); })() : <p className="muted">No hay comprobantes sincronizados para este pedido.</p>}</div>}</div>}</article>)}</div> : <p className="muted">Sin pedidos.</p>}</section>}
 
         {view === "movements" && <CustomerMovements revision={revision}/>}
+        </div>
       </main>
+      <nav className="mobile-nav" aria-label="Navegación móvil">{navigation.map(item=><button key={item.id} type="button" className={'nav-link '+(view===item.id?'active':'')} aria-current={view===item.id?'page':undefined} onClick={()=>selectView(item.id)}><span aria-hidden="true">{item.icon}</span>{item.label}</button>)}</nav>
     </div>
   );
 }
