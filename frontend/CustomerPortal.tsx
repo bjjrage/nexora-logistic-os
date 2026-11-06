@@ -1,4 +1,5 @@
 import CustomerStock from './CustomerStock';
+import CustomerMovements from './CustomerMovements';
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, LogOut, RefreshCw } from "lucide-react";
 import Brand from "./Brand";
@@ -45,6 +46,12 @@ function formatOrderDate(value: string): string {
 
 export default function CustomerPortal({ user, busy, onLogout }: Props) {
   const [view, setView] = useState<"inventory" | "orders" | "movements">("inventory");
+  const [revision,setRevision] = useState(0);
+  const exports = {
+    inventory:{href:'/api/inventory/export.csv',label:'Exportar inventario'},
+    orders:{href:'/api/orders/export.csv',label:'Exportar pedidos'},
+    movements:{href:'/api/inventory/movements/export.csv',label:'Exportar movimientos'}
+  };
   const [inventory, setInventory] = useState<Inventory>({ products: [], locations: [], balances: [], units: [], movements: [], counts: { products: 0, locations: 0, balances: 0, units: 0, movements: 0 }, limits: { products: null, locations: null, balances: null, units: 1000, movements: 500 }, hasMore: { products: false, locations: false, balances: false, units: false, movements: false } });
   const [orders, setOrders] = useState<Order[]>([]);
   const [orderPage,setOrderPage]=useState(0),[orderTotal,setOrderTotal]=useState(0);
@@ -66,6 +73,7 @@ export default function CustomerPortal({ user, busy, onLogout }: Props) {
       setInventory({ products: stock.products ?? [], locations: stock.locations ?? [], balances: stock.balances ?? [], units: stock.units ?? [], movements: stock.movements ?? [], counts: stock.counts, limits: stock.limits, hasMore: stock.hasMore,totals:stock.totals });
       setOrders(Array.isArray(orderResult) ? orderResult : orderResult.items ?? []);
       setOrderTotal(Array.isArray(orderResult)?orderResult.length:orderResult.total);
+      setRevision(current=>current+1);
     } catch (caught) { setError(readableError(caught)); }
     finally { setLoading(false); }
   }, [orderPage]);
@@ -73,7 +81,6 @@ export default function CustomerPortal({ user, busy, onLogout }: Props) {
   useEffect(() => { void load(); }, [load]);
 
   const products = useMemo(() => new Map(inventory.products.map((product) => [product.id, product])), [inventory.products]);
-  const locations = useMemo(() => new Map(inventory.locations.map((location) => [location.id, location])), [inventory.locations]);
   const totals = useMemo(() => {
     if (inventory.totals) return inventory.totals;
     const result: Record<"AVAILABLE" | "RESERVED" | "VEHICLE" | "QUARANTINE", number> = { AVAILABLE: 0, RESERVED: 0, VEHICLE: 0, QUARANTINE: 0 };
@@ -109,7 +116,7 @@ export default function CustomerPortal({ user, busy, onLogout }: Props) {
     <div className="portal-shell">
       <header className="portal-header">
         <div><Brand compact className="portal-brand" /><span className="portal-identity">Inventario y pedidos · {user.name}</span></div>
-        <div><a className="button button-secondary portal-export" href="/api/inventory/export.csv" download><Download aria-hidden="true" />Exportar inventario</a><button className="text-button" type="button" onClick={onLogout} disabled={busy}><LogOut aria-hidden="true" />Salir</button></div>
+        <div><a className="button button-secondary portal-export" href={exports[view].href} download><Download aria-hidden="true" />{exports[view].label}</a><button className="text-button" type="button" onClick={onLogout} disabled={busy}><LogOut aria-hidden="true" />Salir</button></div>
       </header>
       <main className="portal-body">
         <div className="page-heading">
@@ -120,7 +127,7 @@ export default function CustomerPortal({ user, busy, onLogout }: Props) {
         {error && <div className="notice error" role="alert">{error}</div>}
         {loading && <p className="muted" role="status">Consultando inventario y pedidos…</p>}
         <div className="inventory-metrics" aria-label="Resumen de cuenta">
-          <div className="inventory-metric"><small>Productos</small><strong>{inventory.products.length}</strong></div>
+          <div className="inventory-metric"><small>Productos</small><strong>{inventory.counts.products}</strong></div>
           <div className="inventory-metric"><small>Unidades disponibles</small><strong>{new Intl.NumberFormat("es").format(availableTotal)}</strong></div>
           <div className="inventory-metric"><small>Unidades reservadas</small><strong>{new Intl.NumberFormat("es").format(reservedTotal)}</strong></div>
           <div className="inventory-metric"><small>En vehículo</small><strong>{new Intl.NumberFormat("es").format(vehicleTotal)}</strong></div>
@@ -131,11 +138,11 @@ export default function CustomerPortal({ user, busy, onLogout }: Props) {
           {([["inventory", "Inventario"], ["orders", "Pedidos"], ["movements", "Movimientos"]] as Array<[typeof view, string]>).map(([id, label]) => <button key={id} className="inventory-tab" type="button" aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}>{label}</button>)}
         </nav>
 
-        {view === "inventory" && <CustomerStock revision={inventory.counts.movements}/>}
+        {view === "inventory" && <CustomerStock revision={revision}/>}
 
         {view === "orders" && <section className="card"><nav className="pagination" aria-label="Páginas de pedidos"><button disabled={loading||orderPage===0} onClick={()=>setOrderPage(p=>p-1)}>Anterior</button><span>Página {orderPage+1}</span><button disabled={loading||(orderPage+1)*25>=orderTotal} onClick={()=>setOrderPage(p=>p+1)}>Siguiente</button></nav><div className="card-header"><div><h2>Tus pedidos</h2><p>{orderTotal} pedidos</p><p>Seguimiento de estado y líneas vinculadas a tu mercadería.</p></div></div>{orders.length ? <div className="customer-orders">{orders.map((order) => <article className="customer-order" key={order.id}><header><div><h3>{order.externalId}</h3><p>{order.recipientName} · {order.destination}</p><p>{order.orderDate ? formatOrderDate(order.orderDate) : "Fecha sin informar"}</p></div><span className="badge badge-neutral">{order.status}</span></header><div className="customer-order-lines">{(order.lines ?? []).map((line, index) => <span key={line.productId + index}>{line.name || products.get(line.productId)?.name || line.sku || line.productId} · solicitado {line.requested ?? line.quantity ?? 0}{line.delivered != null ? ` · entregado ${line.delivered}` : ""}{line.returned ? ` · retorno ${line.returned}` : ""}</span>)}</div>{order.shipmentId && <div className="form-divider"><button className="button button-secondary" type="button" aria-expanded={openProofShipment === order.shipmentId} aria-controls={`proofs-${order.id}`} onClick={() => void toggleProofs(order)}>{openProofShipment === order.shipmentId ? "Ocultar comprobantes" : "Ver comprobantes de entrega"}</button>{openProofShipment === order.shipmentId && <div id={`proofs-${order.id}`} className="customer-proof-list">{proofLoadingShipment === order.shipmentId ? <p className="muted" role="status">Consultando comprobantes…</p> : proofError ? <div className="notice error" role="alert">{proofError}</div> : (proofsByShipment[order.shipmentId] ?? []).length ? (() => { const proofs = proofsByShipment[order.shipmentId as string] ?? []; const grouped = new Map<string, CustomerProof[]>(); proofs.forEach((proof) => grouped.set(proof.parcelId, [...(grouped.get(proof.parcelId) ?? []), proof])); return [...grouped.entries()].map(([parcelId, parcelProofs]) => { const result = parcelProofs[0]?.providerResult; const complete = parcelProofs.some((proof) => proof.evidenceState === "COMPLETE"); const label = result === "DELIVERED" ? complete ? "Foto y firma guardadas" : "Entrega informada, evidencia pendiente" : result === "FAILED" ? "Entrega fallida según QuadMinds" : "Resultado pendiente de sincronización"; const parcelCode = order.parcels?.find((parcel) => parcel.id === parcelId)?.code; return <div className="inventory-list-row" key={parcelId}><span><strong>{parcelCode ? `Bulto ${parcelCode}` : "Comprobante de bulto"}</strong><small>{label}{parcelProofs[0]?.reportedAt ? ` · ${new Date(parcelProofs[0].reportedAt as string).toLocaleString("es")}` : ""}{parcelProofs[0]?.receiverName ? ` · recibió ${parcelProofs[0].receiverName}` : ""}</small></span><span className="inventory-actions">{parcelProofs.filter((proof) => proof.evidenceId).map((proof) => <a key={proof.evidenceId} className="button button-secondary" href={`/api/customer-evidence/${encodeURIComponent(proof.evidenceId as string)}`} target="_blank" rel="noreferrer">{proof.kind === "PHOTO" ? "Ver foto" : proof.kind === "SIGNATURE" ? "Ver firma" : "Ver comprobante"}</a>)}</span></div>; }); })() : <p className="muted">No hay comprobantes sincronizados para este pedido.</p>}</div>}</div>}</article>)}</div> : <p className="muted">No hay pedidos registrados.</p>}</section>}
 
-        {view === "movements" && <section className="card"><div className="card-header"><div><h2>Historial de movimientos</h2><p>Actividad registrada sobre mercadería bajo custodia.</p></div></div>{inventory.hasMore.movements && <div className="notice" role="status">Se muestran {new Intl.NumberFormat("es").format(inventory.limits.movements)} movimientos recientes de {new Intl.NumberFormat("es").format(inventory.counts.movements)} registrados.</div>}{inventory.movements.length ? <div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Movimiento</th><th>Producto</th><th>Cantidad</th><th>Ubicación</th><th>Referencia</th></tr></thead><tbody>{inventory.movements.map((movement) => <tr key={movement.id}><td>{new Date(movement.createdAt).toLocaleString("es")}</td><td>{movement.action || movement.type || "Movimiento"}</td><td>{products.get(movement.productId ?? "")?.name || movement.productId || "—"}</td><td>{movement.quantity ?? "—"}</td><td>{locations.get(movement.fromLocationId ?? "")?.code || "—"} → {locations.get(movement.toLocationId ?? "")?.code || "—"}</td><td>{movement.reference || movement.reason || "—"}</td></tr>)}</tbody></table></div> : <p className="muted">No hay movimientos para mostrar.</p>}</section>}
+        {view === "movements" && <CustomerMovements revision={revision}/>}
       </main>
     </div>
   );

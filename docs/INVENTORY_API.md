@@ -16,6 +16,18 @@ Para `CUSTOMER`, el servidor ignora `clientId` de query/body al consultar y usa 
 
 ## Inventario
 
+### Consulta y exportaciones del portal
+
+| Endpoint | Resultado |
+|---|---|
+| `GET /api/inventory/movements?limit=25&offset=0&q=...` | `{items,total,limit,offset}`; SKU, producto, serie, referencia y ubicaciones de cada movimiento. Búsqueda por SKU, producto, serie o referencia. Máximo 200 filas por página. |
+| `GET /api/inventory/movements/export.csv` | Historial completo de movimientos; admite `q`, sin aplicar `limit` ni `offset` al archivo. |
+| `GET /api/orders/export.csv` | Todos los pedidos, una fila por producto, con cantidades solicitadas, reservadas, cargadas, entregadas y devueltas. |
+
+Los tres CSV (inventario, movimientos y pedidos) aplican el cliente de la sesión y neutralizan fórmulas de planilla. Los nuevos endpoints son de lectura y no habilitan mutaciones al rol `CUSTOMER`.
+
+Administración gestiona las cuentas existentes desde **Clientes → Depósito**: `GET /api/customer-access?clientId=UUID` lista solo las cuentas del cliente elegido; `POST /api/customer-access` crea una cuenta; `POST /api/customer-access/:id/revoke` suspende y elimina sus sesiones; `POST /api/customer-access/:id/enable` reactiva sin restaurar sesiones. Ambos cambios de estado requieren `{commandId}` y conservan auditoría e idempotencia. Los filtros y cuentas de otra organización se rechazan. Las rutas anteriores de gestión se conservan.
+
 `GET /api/inventory` devuelve `{ products, locations, balances, units, movements }`. Un cliente puede pedir `GET /api/inventory?clientId=...`, pero el filtro efectivo siempre proviene de la sesión. `GET /api/inventory/export.csv` genera el mismo ámbito de permisos, sin truncar unidades serializadas; el CSV incluye tipo de registro, propietario, producto, ubicación, estado, custodia, pedido, cantidad y, para cada serie, `serial` y `barcode`.
 
 El control de producto usa `tracking: "QUANTITY"` para artículos por cantidad o `tracking: "SERIAL"` para unidades identificables. Un barcode de producto puede compartirse entre unidades. Para seriales, cada unidad tiene un número de serie único por producto/cliente y un barcode opcional único en la organización.

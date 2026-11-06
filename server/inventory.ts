@@ -7,6 +7,7 @@ import { z } from 'zod';
 import {verifyVehicleCapacity} from './vehicle-capacity.ts';
 import {verifyProductCodes} from './product-codes.ts';
 import {assertRouteAvailable} from './route-coordination.ts';
+import {encodeCsv} from './csv.ts';
 
 export type InventoryActor = Omit<Actor, 'role'> & { role: string; clientId?: string | null };
 type ItemInput = { productId: string; quantity: number; serials?: string[] };
@@ -99,6 +100,15 @@ export class Inventory {
   }
   private allow(actor: InventoryActor, roles: string[]) { ensure(roles.includes(actor.role), 'FORBIDDEN', 'Tu rol no permite esta operación.', 403); }
   private readAccess(actor: InventoryActor) { this.allow(actor, ['ADMIN', 'OPERATIONS', 'DEPOT', 'CUSTOMER']); }
+  private async readClientId(actor: InventoryActor, clientFilter?: string) {
+    this.readAccess(actor);
+    if (actor.role === 'CUSTOMER') {
+      ensure(actor.clientId, 'FORBIDDEN', 'La sesión de cliente no tiene un cliente asociado.', 403);
+      return actor.clientId;
+    }
+    if (clientFilter) await this.client(actor, clientFilter);
+    return clientFilter;
+  }
   private async client(actor: InventoryActor, clientId: string, allowCustomerRead = false): Promise<Row> {
     if (actor.role === 'CUSTOMER') {
       ensure(allowCustomerRead && actor.clientId && actor.clientId === clientId, 'FORBIDDEN', 'El cliente no tiene acceso a esta mercadería.', 403);
@@ -1078,15 +1088,7 @@ export class Inventory {
       lines: lines.map(line => ({ id: line.id, productId: line.product_id, sku: line.sku, name: line.name, unit: line.unit, tracking: line.tracking, requested: line.quantity, reserved: line.reserved_quantity, loaded: line.loaded_quantity, delivered: line.delivered_quantity, returned: line.returned_quantity, available: Number(line.available_quantity) })) };
   }
   async exportCsv(actor: InventoryActor, clientFilter?: string) {
-    this.readAccess(actor);
-    let clientId: string | undefined;
-    if (actor.role === 'CUSTOMER') {
-      ensure(actor.clientId, 'FORBIDDEN', 'La sesión de cliente no tiene un cliente asociado.', 403);
-      clientId = actor.clientId;
-    } else if (clientFilter) {
-      await this.client(actor, clientFilter);
-      clientId = clientFilter;
-    }
+    const clientId = await this.readClientId(actor, clientFilter);
     const args = clientId ? [actor.orgId, clientId] : [actor.orgId];
     const predicate = clientId ? 'AND client_id=?' : '';
     const [rawProducts, rawLocations, rawBalances, rawUnits] = await Promise.all([
@@ -1107,13 +1109,59 @@ export class Inventory {
       const product: any = productMap.get(unit.productId), location: any = locationMap.get(unit.locationId);
       if (product) rows.push(['SERIAL',unit.clientId,unit.productId,product.sku,product.name,unit.locationId,location?.name ?? '',unit.status,unit.custodyId,unit.orderId,1,unit.serial,unit.barcode ?? '']);
     }
-    const quote = (value: unknown) => {
-      const raw = String(value ?? '');
-      const unsafePrefix = /^[\u0000-\u001f\u007f\ufeff]/.test(raw) || /^[\s\u0000-\u001f\u007f\ufeff]*[=+\-@]/.test(raw);
-      const text = typeof value === 'string' && unsafePrefix ? `'${raw}` : raw;
-      return `"${text.replaceAll('"', '""')}"`;
-    };
-    return rows.map(row => row.map(quote).join(',')).join('\r\n') + '\r\n';
+    return encodeCsv(rows);
+  }
+
+  private async movementQuery(actor: InventoryActor, input: unknown) {
+    const page = z.object({clientId:z.uuid().optional(),q:z.string().trim().max(200).default(''),limit:z.coerce.number().int().min(1).max(200).default(25),offset:z.coerce.number().int().min(0).max(1000000).default(0)}).parse(input);
+    const clientId = await this.readClientId(actor, page.clientId);
+    const filters = ['m.org_id=?'], args: Array<string | number> = [actor.orgId];
+    if (clientId) { filters.push('m.client_id=?'); args.push(clientId); }
+    if (page.q) {
+      filters.push('(lower(p.sku) LIKE ? OR lower(p.name) LIKE ? OR lower(m.reference) LIKE ? OR lower(u.serial) LIKE ?)');
+      args.push(...Array<string>(4).fill('%' + page.q.toLowerCase() + '%'));
+    }
+    const from = `FROM inventory_movements m
+      JOIN inventory_products p ON p.id=m.product_id AND p.org_id=m.org_id AND p.client_id=m.client_id
+      LEFT JOIN inventory_units u ON u.id=m.serial_id AND u.org_id=m.org_id AND u.client_id=m.client_id
+      LEFT JOIN inventory_locations src ON src.id=m.from_location_id AND src.org_id=m.org_id
+      LEFT JOIN inventory_locations dst ON dst.id=m.to_location_id AND dst.org_id=m.org_id
+      WHERE ${filters.join(' AND ')}`;
+    const columns = 'm.id,m.created_at,m.action,m.quantity,m.reference,m.reason,m.from_status,m.to_status,p.sku,p.name AS product_name,u.serial,src.code AS from_location_code,dst.code AS to_location_code';
+    return {page,from,columns,args};
+  }
+
+  async movementsPage(actor: InventoryActor, input: unknown = {}) {
+    const {page,from,columns,args} = await this.movementQuery(actor,input);
+    const [count,rows] = await Promise.all([
+      this.store.one(`SELECT COUNT(*) AS n ${from}`,...args),
+      this.store.all(`SELECT ${columns} ${from} ORDER BY m.created_at DESC,m.id DESC LIMIT ? OFFSET ?`,...args,page.limit,page.offset)
+    ]);
+    return {items:rows.map(camel),total:Number(count?.n??0),limit:page.limit,offset:page.offset};
+  }
+
+  async exportMovementsCsv(actor: InventoryActor, input: unknown = {}) {
+    const {from,columns,args} = await this.movementQuery(actor,input);
+    const rows = await this.store.all(`SELECT ${columns} ${from} ORDER BY m.created_at DESC,m.id DESC`,...args);
+    return encodeCsv([
+      ['Fecha','Movimiento','SKU','Producto','Serie','Cantidad','Desde','Hasta','Estado anterior','Estado nuevo','Referencia','Motivo'],
+      ...rows.map(row=>[row.created_at,row.action,row.sku,row.product_name,row.serial,row.quantity,row.from_location_code,row.to_location_code,row.from_status,row.to_status,row.reference,row.reason])
+    ]);
+  }
+
+  async exportOrdersCsv(actor: InventoryActor, clientFilter?: string) {
+    const clientId = await this.readClientId(actor,clientFilter);
+    const rows = await this.store.all(`SELECT o.external_id,o.order_date,o.status,o.destination,o.recipient_name,o.recipient_phone,
+      p.sku,p.name AS product_name,l.quantity,l.reserved_quantity,l.loaded_quantity,l.delivered_quantity,l.returned_quantity
+      FROM inventory_orders o
+      JOIN inventory_order_lines l ON l.order_id=o.id AND l.org_id=o.org_id
+      JOIN inventory_products p ON p.id=l.product_id AND p.org_id=o.org_id AND p.client_id=o.client_id
+      WHERE o.org_id=? ${clientId?'AND o.client_id=?':''}
+      ORDER BY o.order_date DESC,o.created_at DESC,o.id,l.id`,actor.orgId,...(clientId?[clientId]:[]));
+    return encodeCsv([
+      ['Pedido','Fecha','Estado','Destino','Destinatario','Teléfono','SKU','Producto','Solicitado','Reservado','Cargado','Entregado','Devuelto'],
+      ...rows.map(row=>[row.external_id,row.order_date,row.status,row.destination,row.recipient_name,row.recipient_phone,row.sku,row.product_name,row.quantity,row.reserved_quantity,row.loaded_quantity,row.delivered_quantity,row.returned_quantity])
+    ]);
   }
 }
 
