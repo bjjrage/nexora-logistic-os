@@ -2,6 +2,7 @@ import {useMemo,useState,type FormEvent} from 'react';
 import {Plus,Pencil,ArrowRight} from 'lucide-react';
 import {useModalFocus} from './useModalFocus';
 import CustomerAccessPanel from './CustomerAccessPanel';
+import HelpTip from './HelpTip';
 
 export type ClientRecord={id:string;name:string;legalName?:string|null;taxId?:string|null;contactName?:string|null;phone?:string|null;email?:string|null;address?:string|null;city?:string|null;notes?:string|null;catalogProductCount?:number|string};
 type ClientForm={name:string;legalName:string;taxId:string;contactName:string;phone:string;email:string;address:string;city:string;notes:string};
@@ -48,16 +49,16 @@ export default function ClientsPanel({profileEnabled,initialClientId='',clients,
   const missing=missingDetails(selected),productCount=Number(selected.catalogProductCount??0);
   return <>
    <button className="text-button inventory-back" onClick={()=>{setSelectedId('');setClientView('profile');}}>← Clientes</button>
-   <div className="page-heading"><div><p className="eyebrow">FICHA DEL CLIENTE</p><h1>{selected.name}</h1><p className="muted">Cliente de Nexora · dueño de la mercadería.</p></div>{canManage&&<button className="button button-secondary" onClick={()=>edit(selected)}><Pencil size={15}/>Editar ficha</button>}</div>
+   <div className="page-heading"><div><p className="eyebrow">FICHA DEL CLIENTE</p><h1>{selected.name}</h1></div>{canManage&&<button className="button button-secondary" onClick={()=>edit(selected)}><Pencil size={15}/>Editar ficha</button>}</div>
    <nav className="workspace-tabs secondary-tabs" aria-label="Secciones del cliente">
     <button type="button" aria-pressed={clientView==='profile'} onClick={()=>setClientView('profile')}>Ficha</button>
     <button type="button" aria-pressed={clientView==='depot'} onClick={()=>setClientView('depot')}>Depósito</button>
    </nav>
    {clientView==='depot'?<>
-    <section className="card"><div className="card-header"><div><h2>Mercadería en depósito</h2><p>Catálogo y recepción de {selected.name}.</p></div></div>
+    <section className="card"><div className="card-header"><div className="help-label"><h2>Mercadería en depósito</h2><HelpTip label="Mercadería en depósito">Catálogo y recepción de {selected.name}.</HelpTip></div></div>
      <div className="inventory-actions"><button type="button" className="button button-secondary" onClick={()=>onInventory(selected.id,'catalog')}>Ver catálogo / importar</button><button type="button" className="button button-secondary" disabled={!productCount} onClick={()=>onInventory(selected.id,'receive')}>Recibir mercadería</button></div>
     </section>
-    {canManageAccess?<CustomerAccessPanel key={selected.id} clientId={selected.id} clientName={selected.name}/>:<section className="card"><h2>Acceso al portal</h2><p>Administración habilita los usuarios de este cliente para consultar su mercadería.</p></section>}
+    {canManageAccess?<CustomerAccessPanel key={selected.id} clientId={selected.id} clientName={selected.name}/>:<section className="card"><div className="help-label"><h2>Acceso al portal</h2><HelpTip label="Acceso al portal">Administración habilita los usuarios de este cliente para consultar su mercadería.</HelpTip></div></section>}
    </>:<>
    <section className="card"><div className="card-header"><h2>Datos del cliente</h2><span className="badge badge-neutral">{missing.length?'Datos por completar':'Ficha completa'}</span></div>
     <dl className="client-details"><div><dt>Razón social</dt><dd>{value(selected.legalName)}</dd></div><div><dt>RUC / identificación fiscal</dt><dd>{value(selected.taxId)}</dd></div><div><dt>Contacto</dt><dd>{value(selected.contactName)}</dd></div><div><dt>Teléfono / WhatsApp</dt><dd>{value(selected.phone)}</dd></div><div><dt>Correo electrónico</dt><dd>{value(selected.email)}</dd></div><div><dt>Dirección y ciudad</dt><dd>{[selected.address,selected.city].filter(Boolean).join(' · ')||'Sin completar'}</dd></div></dl>
@@ -69,7 +70,7 @@ export default function ClientsPanel({profileEnabled,initialClientId='',clients,
     <article className="client-step"><span className="client-step-number">2</span><h3>Catálogo de productos</h3><p>{productCount?productCount+' producto(s) registrados.':'Importá el Excel o CSV de productos de este cliente.'}</p><button className="button button-primary" onClick={()=>onInventory(selected.id,'catalog')}>Importar catálogo<ArrowRight size={15}/></button></article>
     <article className="client-step"><span className="client-step-number">3</span><h3>Recibir mercadería</h3><p>{productCount?'Elegí el depósito y escaneá los productos que llegan.':'Primero importá su catálogo para reconocer los códigos.'}</p><button className="button button-secondary" disabled={!productCount} onClick={()=>onInventory(selected.id,'receive')}>Ir a recepción<ArrowRight size={15}/></button></article>
    </div></section>
-   <section className="card"><h2>Portal del cliente</h2><p>Habilitá sus usuarios desde Depósito para que consulten y exporten su inventario, movimientos y pedidos.</p><button type="button" className="button button-secondary" onClick={()=>setClientView('depot')}>Abrir depósito<ArrowRight size={15}/></button></section>
+   <section className="card"><div className="card-header"><div className="help-label"><h2>Portal del cliente</h2><HelpTip label="Portal del cliente">Habilitá sus usuarios desde Depósito para consultar y exportar su inventario, movimientos y pedidos.</HelpTip></div></div><button type="button" className="button button-secondary" onClick={()=>setClientView('depot')}>Abrir depósito<ArrowRight size={15}/></button></section>
    </>}
    {editor}</>;
  }

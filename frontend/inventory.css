@@ -75,6 +75,11 @@
 .customer-access-user { flex-wrap:wrap; }
 .customer-access-user > .inventory-actions { margin-top:0; }
 .customer-access-user small { overflow-wrap:anywhere; }
+.customer-access-links { display:flex; flex-wrap:wrap; align-items:center; gap:16px; margin-bottom:16px; }
+.customer-access-fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:end; gap:14px; margin-bottom:14px; }
+.customer-access-create { margin-bottom:18px; }
+.customer-access-create button[type=submit] { justify-self:start; width:auto; }
+@media(max-width:700px) { .customer-access-fields { grid-template-columns:minmax(0,1fr); } }
 @media(max-width:600px) {
   .portal-header { flex-wrap:wrap; }
   .portal-header > div { flex-wrap:wrap; }

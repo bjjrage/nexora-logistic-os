@@ -39,6 +39,19 @@ test('Clientes → Depósito habilita, suspende y reactiva un portal de consulta
     await page.getByRole('row').filter({hasText:'Mayorista A'}).getByRole('button',{name:'Abrir ficha',exact:true}).click();
     await page.getByRole('button',{name:'Depósito',exact:true}).click();
     await expect(page.getByRole('heading',{name:'Acceso al portal',exact:true})).toBeVisible();
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    await page.getByRole('button',{name:'Ayuda: Acceso al portal',exact:true}).hover();
+    await expect(page.getByRole('tooltip')).toContainText('Cada usuario consulta y exporta únicamente');
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    await page.getByRole('button',{name:'Ayuda: Usuario de ingreso',exact:true}).hover();
+    await expect(page.getByRole('tooltip')).toContainText('Entre 3 y 80 caracteres');
+    await page.mouse.move(0,0);
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    await page.getByRole('button',{name:'Ayuda: Contraseña',exact:true}).focus();
+    await expect(page.getByRole('tooltip')).toContainText('Entre 6 y 128 caracteres');
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
     await page.getByLabel('Nombre de la persona',{exact:true}).fill('Persona A');
     await page.getByLabel('Usuario de ingreso',{exact:true}).fill('persona-a');
     await page.getByLabel('Contraseña',{exact:true}).fill('Portal-QA-A-2026!');
@@ -48,6 +61,12 @@ test('Clientes → Depósito habilita, suspende y reactiva un portal de consulta
     await expect(page.getByText('Persona B',{exact:true})).toHaveCount(0);
     await page.screenshot({path:'.local/customer-depot-access-desktop.png',fullPage:true});
     await page.setViewportSize({width:390,height:844});
+    await page.getByRole('button',{name:'Ayuda: Contraseña',exact:true}).click();
+    await expect(page.getByRole('tooltip')).toBeVisible();
+    const helpBounds=await page.getByRole('tooltip').boundingBox();
+    expect(helpBounds!.x).toBeGreaterThanOrEqual(0);expect(helpBounds!.x+helpBounds!.width).toBeLessThanOrEqual(390);
+    await page.getByLabel('Nombre de la persona',{exact:true}).click();
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await page.screenshot({path:'.local/customer-depot-access-mobile.png',fullPage:true});
 
@@ -55,7 +74,20 @@ test('Clientes → Depósito habilita, suspende y reactiva un portal de consulta
     await customer.getByLabel('Usuario',{exact:true}).fill('persona-a');
     await customer.getByLabel('Contraseña',{exact:true}).fill('Portal-QA-A-2026!');
     await customer.getByRole('button',{name:'Ingresar',exact:true}).click();
-    await expect(customer.getByRole('heading',{name:'Tu mercadería en Nexora',exact:true})).toBeVisible();
+    await expect(customer.getByRole('heading',{name:'Mi depósito',exact:true})).toBeVisible();
+    await expect(customer.getByRole('navigation',{name:'Navegación del cliente',exact:true})).toBeVisible();
+    const metrics=customer.getByRole('region',{name:'Resumen de cuenta',exact:true}).getByRole('button');
+    await expect(metrics).toHaveCount(5);
+    for(const metric of await metrics.all()){await expect(metric).toHaveCSS('border-top-style','solid');await expect(metric).toHaveCSS('background-color','rgb(255, 255, 255)');}
+    await customer.screenshot({path:'.local/customer-home-desktop.png',fullPage:true});
+    await customer.setViewportSize({width:390,height:844});
+    expect(await customer.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await customer.screenshot({path:'.local/customer-home-mobile.png',fullPage:true});
+    await customer.setViewportSize({width:1280,height:720});
+    const filtered=customer.waitForResponse(response=>new URL(response.url()).pathname==='/api/inventory/stock'&&new URL(response.url()).searchParams.get('status')==='AVAILABLE');
+    await customer.getByRole('button',{name:'Ver stock disponible',exact:true}).click();
+    expect((await filtered).status()).toBe(200);
+    await expect(customer.getByRole('cell',{name:'Disponible',exact:true})).toBeVisible();
     await expect(customer.getByRole('cell').filter({hasText:'Mercadería A'})).toBeVisible();
     await expect(customer.getByText('Mercadería B',{exact:true})).toHaveCount(0);
     const inventory=await downloadCsv(customer,'Exportar inventario');
@@ -90,7 +122,7 @@ test('Clientes → Depósito habilita, suspende y reactiva un portal de consulta
     await customer.getByLabel('Usuario',{exact:true}).fill('persona-a');
     await customer.getByLabel('Contraseña',{exact:true}).fill('Portal-QA-A-2026!');
     await customer.getByRole('button',{name:'Ingresar',exact:true}).click();
-    await expect(customer.getByRole('heading',{name:'Tu mercadería en Nexora',exact:true})).toBeVisible();
+    await expect(customer.getByRole('heading',{name:'Mi depósito',exact:true})).toBeVisible();
     expect(errors).toEqual([]);
   } catch(error) {
     await page.screenshot({path:'.local/customer-depot-failure.png',fullPage:true}).catch(()=>{});
