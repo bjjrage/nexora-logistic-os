@@ -1,10 +1,11 @@
 import CustomerStock,{type CustomerStockFilter} from './CustomerStock';
 import CustomerMovements from './CustomerMovements';
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {ArrowRight,ArrowLeftRight,Boxes,Box,CheckCircle2,ClipboardList,Clock3,Download,LayoutDashboard,LogOut,RefreshCw,ShieldAlert,Truck} from 'lucide-react';
+import {ArrowRight,ArrowLeftRight,Boxes,ClipboardList,Download,LayoutDashboard,LogOut,RefreshCw} from 'lucide-react';
 import Brand from "./Brand";
 import { api } from "./api";
 import HelpTip from './HelpTip';
+import StatCard from './StatCard';
 import {customerBadge,customerState,movementLabels} from './customer-labels';
 import './customer-portal.css';
 
@@ -108,11 +109,11 @@ export default function CustomerPortal({ user, busy, onLogout }: Props) {
   const navigation=[{id:'home',label:'Inicio',icon:<LayoutDashboard/>},{id:'inventory',label:'Inventario',icon:<Boxes/>},{id:'orders',label:'Pedidos',icon:<ClipboardList/>},{id:'movements',label:'Movimientos',icon:<ArrowLeftRight/>}] as const;
   const showStock=(status:CustomerStockFilter)=>{setStockFilter(status);setView('inventory');};
   const metrics=[
-    {label:'Productos',value:inventory.counts.products,status:'' as const,icon:<Box/>,action:'Ver inventario completo'},
-    {label:'Disponibles',value:availableTotal,status:'AVAILABLE' as const,icon:<CheckCircle2/>,action:'Ver stock disponible'},
-    {label:'Reservadas',value:reservedTotal,status:'RESERVED' as const,icon:<Clock3/>,action:'Ver stock reservado'},
-    {label:'En vehículo',value:vehicleTotal,status:'VEHICLE' as const,icon:<Truck/>,action:'Ver stock en vehículo'},
-    {label:'En cuarentena',value:quarantineTotal,status:'QUARANTINE' as const,icon:<ShieldAlert/>,action:'Ver stock en cuarentena'}
+    {label:'Productos',value:inventory.counts.products,status:'' as const,action:'Ver inventario completo'},
+    {label:'Disponibles',value:availableTotal,status:'AVAILABLE' as const,action:'Ver stock disponible'},
+    {label:'Reservadas',value:reservedTotal,status:'RESERVED' as const,action:'Ver stock reservado'},
+    {label:'En vehículo',value:vehicleTotal,status:'VEHICLE' as const,action:'Ver stock en vehículo'},
+    {label:'En cuarentena',value:quarantineTotal,status:'QUARANTINE' as const,action:'Ver stock en cuarentena'}
   ];
 
   const toggleProofs = async (order: Order) => {
@@ -145,7 +146,7 @@ export default function CustomerPortal({ user, busy, onLogout }: Props) {
         {!user.clientId && <div className="notice error" role="alert">Esta cuenta no tiene un cliente asociado. Contactá al equipo de Nexora.</div>}
         {error && <div className="notice error" role="alert">{error}</div>}
         {loading && <p className="muted" role="status">Consultando inventario y pedidos…</p>}
-        {(view==='home'||view==='inventory')&&<section className="customer-metrics" aria-label="Resumen de cuenta">{metrics.map(metric=><button type="button" key={metric.label} className={'stock-kpi customer-metric '+(view==='inventory'&&stockFilter===metric.status?'is-active':'')} aria-label={metric.action} aria-pressed={view==='inventory'&&stockFilter===metric.status} onClick={()=>showStock(metric.status)}><span className="customer-metric-label"><span className="customer-metric-icon" aria-hidden="true">{metric.icon}</span>{metric.label}</span><strong>{loading?'—':new Intl.NumberFormat('es').format(metric.value)}</strong></button>)}</section>}
+        {(view==='home'||view==='inventory')&&<section className="stat-grid customer-metrics" aria-label="Resumen de cuenta">{metrics.map(metric=><StatCard key={metric.label} label={metric.label} value={loading?'—':new Intl.NumberFormat('es').format(metric.value)} caption={metric.action} aria-label={metric.action} aria-pressed={view==='inventory'&&stockFilter===metric.status} onClick={()=>showStock(metric.status)}/>)}</section>}
         {view==='home'&&<div className="customer-overview">
           <section className="card"><div className="card-header"><div className="help-label"><h2>Pedidos</h2><span className="badge badge-neutral">{orderTotal}</span></div><button type="button" className="text-button" aria-label="Ver todos los pedidos" onClick={()=>setView('orders')}>Ver todos<ArrowRight aria-hidden="true"/></button></div>
             {orders.length?<div className="customer-summary-list">{orders.slice(0,4).map(order=><button type="button" className="customer-summary-row" key={order.id} onClick={()=>setView('orders')}><span><strong>{order.externalId}</strong><small>{order.recipientName}</small></span><span className={customerBadge(order.status)}>{customerState(order.status)}</span></button>)}</div>:!loading&&<p className="empty-state">Sin pedidos.</p>}
