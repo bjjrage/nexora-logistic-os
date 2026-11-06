@@ -1,7 +1,32 @@
-import {test,expect,type Page} from '@playwright/test';
+import {test,expect,type Locator,type Page} from '@playwright/test';
 import {randomUUID} from 'node:crypto';
 import {Store} from '../../server/db.ts';
 import {createApp} from '../../server/app.ts';
+
+async function kpiAppearance(card:Locator) {
+  return card.evaluate(async node=>{
+    getComputedStyle(node).transform;
+    await Promise.all(node.getAnimations().map(animation=>animation.finished));
+    const properties=['display','background-color','color','border-top-color','border-top-width','border-radius','box-shadow','transform','padding','font-family','font-size','font-weight','line-height','letter-spacing','margin','gap','outline-color','outline-style','outline-width','transition'];
+    return [node,...node.querySelectorAll(':scope > span,:scope > strong,:scope > small,:scope > small > svg')].map(element=>{
+      const style=getComputedStyle(element);
+      return Object.fromEntries(properties.map(property=>[property,style.getPropertyValue(property)]));
+    });
+  });
+}
+
+async function kpiStates(page:Page,card:Locator,screenshot?:string) {
+  await page.mouse.move(0,0);await card.blur();
+  const normal=await kpiAppearance(card);
+  await card.hover();
+  const hover=await kpiAppearance(card);
+  if(screenshot)await page.screenshot({path:screenshot,fullPage:true});
+  await page.mouse.move(0,0);await card.focus();await page.keyboard.press('ArrowRight');
+  await expect(card).toBeFocused();await expect(card.locator(':scope:focus-visible')).toHaveCount(1);
+  const focus=await kpiAppearance(card);
+  await card.blur();
+  return {normal,hover,focus};
+}
 
 async function downloadCsv(page:Page,label:string) {
   const waiting=page.waitForEvent('download');
@@ -35,6 +60,15 @@ test('Clientes → Depósito habilita, suspende y reactiva un portal de consulta
     }
     await send('/api/customer-access',{clientId:b,name:'Persona B',username:'persona-b',password:'Portal-QA-B-2026!'});
     await page.goto(origin);
+    await page.setViewportSize({width:1280,height:720});
+    const osKpi=page.locator('.stat-card').first();
+    await expect(osKpi).toBeVisible();
+    const osDesktop=await kpiStates(page,osKpi,'.local/os-kpi-hover-desktop.png');
+    expect(osDesktop.hover[0]['background-color']).toBe('rgb(7, 28, 56)');
+    expect(osDesktop.hover[0].transform).toBe('matrix(1, 0, 0, 1, 0, -3)');
+    await page.setViewportSize({width:390,height:844});
+    const osMobile=await kpiStates(page,osKpi);
+    await page.setViewportSize({width:1280,height:720});
     await page.getByRole('button',{name:'Clientes',exact:true}).click();
     await page.getByRole('row').filter({hasText:'Mayorista A'}).getByRole('button',{name:'Abrir ficha',exact:true}).click();
     await page.getByRole('button',{name:'Depósito',exact:true}).click();
@@ -78,9 +112,12 @@ test('Clientes → Depósito habilita, suspende y reactiva un portal de consulta
     await expect(customer.getByRole('navigation',{name:'Navegación del cliente',exact:true})).toBeVisible();
     const metrics=customer.getByRole('region',{name:'Resumen de cuenta',exact:true}).getByRole('button');
     await expect(metrics).toHaveCount(5);
-    for(const metric of await metrics.all()){await expect(metric).toHaveCSS('border-top-style','solid');await expect(metric).toHaveCSS('background-color','rgb(255, 255, 255)');}
+    for(const [index,metric] of (await metrics.all()).entries()){
+      expect(await kpiStates(customer,metric,index===0?'.local/customer-kpi-hover-desktop.png':undefined)).toEqual(osDesktop);
+    }
     await customer.screenshot({path:'.local/customer-home-desktop.png',fullPage:true});
     await customer.setViewportSize({width:390,height:844});
+    expect(await kpiStates(customer,metrics.first(),'.local/customer-kpi-hover-mobile.png')).toEqual(osMobile);
     expect(await customer.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await customer.screenshot({path:'.local/customer-home-mobile.png',fullPage:true});
     await customer.setViewportSize({width:1280,height:720});

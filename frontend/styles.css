@@ -245,7 +245,7 @@ tbody tr:hover { background:#f0f1f4; }
 .stat-card > strong { display:block; color:var(--navy); font-family:Manrope,sans-serif; font-size:36px; line-height:1.2; letter-spacing:-.055em; margin:8px 0 4px; font-weight:800; }
 .stat-card > small { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--muted); font-size:10px; }
 .stat-card > small svg { width:13px; height:13px; }
-.stat-card[aria-expanded=true] { border-color:var(--red); box-shadow:0 0 0 1px var(--red); }
+.stat-card[aria-expanded=true],.stat-card[aria-pressed=true] { border-color:var(--red); box-shadow:0 0 0 1px var(--red); }
 .stat-card:hover:not(:disabled),.stat-card:focus-visible { border-color:var(--red-bright); background:var(--navy); box-shadow:0 0 0 2px var(--red-bright),0 0 26px #e8283470,0 8px 18px #071c3833; transform:translateY(-3px); }
 .stat-card:hover > span,.stat-card:hover > strong,.stat-card:hover > small,.stat-card:focus-visible > span,.stat-card:focus-visible > strong,.stat-card:focus-visible > small { color:#fff; }
 .kpi-details { padding-top:2px; }

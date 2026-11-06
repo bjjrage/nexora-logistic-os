@@ -16,6 +16,7 @@ import KpiDetails, { type KpiKind } from './KpiDetails';
 import InventoryPanel from './InventoryPanel';
 import type {ReceiptSeed} from './StockReceiptPanel';
 import CustomerPortal from './CustomerPortal';
+import StatCard from './StatCard';
 import ClientsPanel, {type ClientRecord} from './ClientsPanel';
 import CompanyPanel from './CompanyPanel';
 import AccountRecovery from './AccountRecovery';
@@ -681,7 +682,7 @@ function HomeView({ data, go, role }: { data: Bootstrap; go: (page: Page, routeI
     <>
       <SectionTitle eyebrow="CENTRO DE OPERACIONES" title="Operación" description="Recepción, despacho y entregas." action={<div className="heading-actions"><button className="button button-primary" onClick={()=>go('inventory')}><Boxes aria-hidden="true" />Gestionar inventario</button></div>} />
       <div className="stat-grid">
-        {stats.map(stat => <button type="button" className="stat-card" key={stat.id} aria-label={'Ver '+stat.label.toLowerCase()+' ('+stat.value+')'} aria-expanded={activeKpi===stat.id} aria-controls="kpi-details" onClick={event=>{kpiTrigger.current=event.currentTarget;setActiveKpi(current=>current===stat.id?null:stat.id);}}><span>{stat.label}</span><strong>{stat.value}</strong><small>{stat.caption}<ArrowUpRight aria-hidden="true" /></small></button>)}
+        {stats.map(stat => <StatCard key={stat.id} label={stat.label} value={stat.value} caption={stat.caption} aria-label={'Ver '+stat.label.toLowerCase()+' ('+stat.value+')'} aria-expanded={activeKpi===stat.id} aria-controls="kpi-details" onClick={event=>{kpiTrigger.current=event.currentTarget;setActiveKpi(current=>current===stat.id?null:stat.id);}}/>)}
       </div>
       {activeKpi && <KpiDetails kind={activeKpi} data={data} go={go} onClose={()=>{setActiveKpi(null);kpiTrigger.current?.focus({preventScroll:true});}} stateLabel={displayState} isFinalParcel={isFinalParcel} isClosed={isClosed} />}
       <div className="action-list" aria-label="Acciones de operación">
