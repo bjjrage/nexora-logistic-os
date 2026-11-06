@@ -50,6 +50,15 @@ export function installInventoryRoutes(app: Express, store: Database, auth: Inve
   app.post('/api/orders/import/xlsx',async(req,res)=>{const actor=await auth(req);authorize(actor as Actor,['ADMIN','OPERATIONS']);res.json(parseOrdersXlsx(req.body));});
   app.get('/api/inventory/products',async(req,res)=>res.json(await inventory.catalogPage(await actorForInventory(auth,req),req.query)));
   app.get('/api/inventory/stock',async(req,res)=>res.json(await inventory.stockPage(await actorForInventory(auth,req),req.query)));
+  app.get('/api/inventory/movements',async(req,res)=>res.json(await inventory.movementsPage(await actorForInventory(auth,req),req.query)));
+  app.get('/api/inventory/movements/export.csv',async(req,res)=>{
+    const csv=await inventory.exportMovementsCsv(await actorForInventory(auth,req),req.query);
+    res.set({'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="nexora-movements.csv"'}).send(csv);
+  });
+  app.get('/api/orders/export.csv',async(req,res)=>{
+    const csv=await inventory.exportOrdersCsv(await actorForInventory(auth,req),queryString(req.query.clientId));
+    res.set({'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="nexora-orders.csv"'}).send(csv);
+  });
   app.get('/api/inventory/lookup',async(req,res)=>res.json(await inventory.lookupCode(await actorForInventory(auth,req),req.query)));
   app.get('/api/inventory/catalog/template.csv', async (req, res) => {
     const csv = catalog.templateCsv(await actorForInventory(auth, req));

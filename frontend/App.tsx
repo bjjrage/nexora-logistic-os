@@ -374,7 +374,6 @@ function AuthScreen({ setupRequired, busy, error, onAuth }: {
 function AppContent() {
   const [session, setSession] = useState<Session | null>(null);
   const [reauthentication,setReauthentication]=useState(false);
-  useEffect(()=>{const expired=()=>setReauthentication(true);window.addEventListener('nexora:session-expired',expired);return()=>window.removeEventListener('nexora:session-expired',expired);},[]);
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [page, setPage] = useState<Page>("home");
   const [preferredRouteId, setPreferredRouteId] = useState("");
@@ -388,6 +387,20 @@ function AppContent() {
   const [success, setSuccess] = useState("");
   const inFlight = useRef(false);
   const idempotencyKeys = useRef(new Map<string, string>());
+
+  useEffect(()=>{
+    if(!session?.user)return;
+    const expired=()=>{
+      if(session?.user?.role==='CUSTOMER'){
+        setSession({user:null,setupRequired:false});
+        setBootstrap(null);
+        setReauthentication(false);
+        setError('Tu sesión terminó. Ingresá nuevamente para continuar.');
+      }else setReauthentication(true);
+    };
+    window.addEventListener('nexora:session-expired',expired);
+    return()=>window.removeEventListener('nexora:session-expired',expired);
+  },[session?.user?.role]);
 
   const refreshBootstrap = useCallback(async () => {
     const value = await api<Bootstrap>("/api/bootstrap");
@@ -616,7 +629,7 @@ function AppContent() {
           {page === "shipments" && !isDriver && <ShipmentsView initialShipmentId={preferredShipmentId} data={bootstrap} action={mutate} busy={pending} uploadEvidence={uploadEvidence} role={role} />}
           {page === "routes" && <RoutesView initialRouteId={preferredRouteId} onConfigureDepot={role==="ADMIN"?()=>changePage("company"):undefined} data={bootstrap} action={mutate} busy={pending} operationError={error} onClearError={()=>setError('')} onRefresh={async()=>{await refreshBootstrap();setError('');setSuccess('');}} uploadEvidence={uploadEvidence} role={role} driverId={isDriver ? session.user.driverId ?? null : null} />}
           {page === "fleet" && !isDriver && <FleetView data={bootstrap} action={mutate} busy={pending} uploadEvidence={uploadEvidence} role={role} onPrepareRoute={()=>changePage('routes','new')} />}
-          {page === "clients" && isOpsRole(role) && <ClientsPanel profileEnabled={bootstrap.clientProfilesEnabled===true} initialClientId={preferredClientId} clients={bootstrap.clients} shipments={bootstrap.shipments} canManage={true} action={mutate} busy={pending} actionError={error} onInventory={(clientId,view)=>{changePage('inventory');setInventoryEntry({clientId,view});}}/>}
+          {page === "clients" && isOpsRole(role) && <ClientsPanel profileEnabled={bootstrap.clientProfilesEnabled===true} initialClientId={preferredClientId} clients={bootstrap.clients} shipments={bootstrap.shipments} canManage={true} canManageAccess={role==='ADMIN'} action={mutate} busy={pending} actionError={error} onInventory={(clientId,view)=>{changePage('inventory');setInventoryEntry({clientId,view});}}/>}
           {page === "company" && role === "ADMIN" && <CompanyPanel onDepots={()=>{changePage("inventory");setInventoryEntry({clientId:"",view:"settings"});}} organization={bootstrap.organization} currentUserId={session.user.id} action={mutate} busy={pending} actionError={error} onFleet={()=>changePage('fleet')}/>}
           {page === "billing" && role === "ADMIN" && <Suspense fallback={<p role="status">Cargando facturación…</p>}><BillingPanel clients={bootstrap.clients}/></Suspense>}
           {page === "inventory" && !isDriver && <InventoryPanel key={inventoryEntry?inventoryEntry.clientId+':'+inventoryEntry.view:'inventory'} initialClientId={inventoryEntry?.clientId} initialView={inventoryEntry?.view} initialReceiptSeed={inventoryEntry?.seed} onReturnToOrder={inventoryEntry?.seed?.order?()=>{const order=inventoryEntry.seed!.order!;changePage('orders');setOrderEntry({id:order.orderId,reference:order.orderReference,clientId:order.clientId});}:undefined} onReturnToClient={inventoryEntry&&!inventoryEntry.seed?.order?(clientId)=>changePage('clients',clientId):undefined} section="inventory" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}

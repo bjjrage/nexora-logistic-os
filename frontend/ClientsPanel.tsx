@@ -1,10 +1,11 @@
 import {useMemo,useState,type FormEvent} from 'react';
 import {Plus,Pencil,ArrowRight} from 'lucide-react';
 import {useModalFocus} from './useModalFocus';
+import CustomerAccessPanel from './CustomerAccessPanel';
 
 export type ClientRecord={id:string;name:string;legalName?:string|null;taxId?:string|null;contactName?:string|null;phone?:string|null;email?:string|null;address?:string|null;city?:string|null;notes?:string|null;catalogProductCount?:number|string};
 type ClientForm={name:string;legalName:string;taxId:string;contactName:string;phone:string;email:string;address:string;city:string;notes:string};
-type Props={profileEnabled:boolean;initialClientId?:string;clients:ClientRecord[];shipments:{clientId:string}[];canManage:boolean;busy:boolean;actionError:string;onInventory:(clientId:string,view:'catalog'|'receive')=>void;action:(path:string,payload:Record<string,unknown>,message:string,onResult?:(result:Record<string,unknown>)=>void)=>Promise<boolean>};
+type Props={profileEnabled:boolean;initialClientId?:string;clients:ClientRecord[];shipments:{clientId:string}[];canManage:boolean;canManageAccess?:boolean;busy:boolean;actionError:string;onInventory:(clientId:string,view:'catalog'|'receive')=>void;action:(path:string,payload:Record<string,unknown>,message:string,onResult?:(result:Record<string,unknown>)=>void)=>Promise<boolean>};
 const emptyForm:ClientForm={name:'',legalName:'',taxId:'',contactName:'',phone:'',email:'',address:'',city:'',notes:''};
 const requiredDetails={legalName:'razón social',taxId:'RUC / identificación fiscal',contactName:'persona de contacto',phone:'teléfono',address:'dirección'};
 const missingDetails=(client:ClientRecord)=>Object.entries(requiredDetails).filter(([key])=>!String(client[key as keyof ClientRecord]??'').trim()).map(([,label])=>label);
@@ -16,9 +17,10 @@ const groups:{title:string;fields:Field[]}[]=[
  {title:'Dirección de la empresa',fields:[{key:'address',label:'Dirección',max:500,placeholder:'Calle, número y referencia'},{key:'city',label:'Ciudad',max:160},{key:'notes',label:'Observaciones internas',max:2000,type:'textarea',wide:true,placeholder:'Acuerdos de recepción o indicaciones del cliente'}]}
 ];
 
-export default function ClientsPanel({profileEnabled,initialClientId='',clients,shipments,canManage,busy,actionError,action,onInventory}:Props){
+export default function ClientsPanel({profileEnabled,initialClientId='',clients,shipments,canManage,canManageAccess=false,busy,actionError,action,onInventory}:Props){
  const [editing,setEditing]=useState<ClientRecord|null>(null),[creating,setCreating]=useState(false),[form,setForm]=useState<ClientForm>(emptyForm),[failed,setFailed]=useState(false);
  const [selectedId,setSelectedId]=useState(initialClientId);
+ const [clientView,setClientView]=useState<'profile'|'depot'>('profile');
  const [deliveryProvider,setDeliveryProvider]=useState('NEXORA');
  const selected=clients.find(client=>client.id===selectedId);
  const open=creating||!!editing,close=()=>{if(!busy){setCreating(false);setEditing(null);setFailed(false);}};
@@ -45,8 +47,18 @@ export default function ClientsPanel({profileEnabled,initialClientId='',clients,
  if(selected){
   const missing=missingDetails(selected),productCount=Number(selected.catalogProductCount??0);
   return <>
-   <button className="text-button inventory-back" onClick={()=>setSelectedId('')}>← Clientes</button>
+   <button className="text-button inventory-back" onClick={()=>{setSelectedId('');setClientView('profile');}}>← Clientes</button>
    <div className="page-heading"><div><p className="eyebrow">FICHA DEL CLIENTE</p><h1>{selected.name}</h1><p className="muted">Cliente de Nexora · dueño de la mercadería.</p></div>{canManage&&<button className="button button-secondary" onClick={()=>edit(selected)}><Pencil size={15}/>Editar ficha</button>}</div>
+   <nav className="workspace-tabs secondary-tabs" aria-label="Secciones del cliente">
+    <button type="button" aria-pressed={clientView==='profile'} onClick={()=>setClientView('profile')}>Ficha</button>
+    <button type="button" aria-pressed={clientView==='depot'} onClick={()=>setClientView('depot')}>Depósito</button>
+   </nav>
+   {clientView==='depot'?<>
+    <section className="card"><div className="card-header"><div><h2>Mercadería en depósito</h2><p>Catálogo y recepción de {selected.name}.</p></div></div>
+     <div className="inventory-actions"><button type="button" className="button button-secondary" onClick={()=>onInventory(selected.id,'catalog')}>Ver catálogo / importar</button><button type="button" className="button button-secondary" disabled={!productCount} onClick={()=>onInventory(selected.id,'receive')}>Recibir mercadería</button></div>
+    </section>
+    {canManageAccess?<CustomerAccessPanel key={selected.id} clientId={selected.id} clientName={selected.name}/>:<section className="card"><h2>Acceso al portal</h2><p>Administración habilita los usuarios de este cliente para consultar su mercadería.</p></section>}
+   </>:<>
    <section className="card"><div className="card-header"><h2>Datos del cliente</h2><span className="badge badge-neutral">{missing.length?'Datos por completar':'Ficha completa'}</span></div>
     <dl className="client-details"><div><dt>Razón social</dt><dd>{value(selected.legalName)}</dd></div><div><dt>RUC / identificación fiscal</dt><dd>{value(selected.taxId)}</dd></div><div><dt>Contacto</dt><dd>{value(selected.contactName)}</dd></div><div><dt>Teléfono / WhatsApp</dt><dd>{value(selected.phone)}</dd></div><div><dt>Correo electrónico</dt><dd>{value(selected.email)}</dd></div><div><dt>Dirección y ciudad</dt><dd>{[selected.address,selected.city].filter(Boolean).join(' · ')||'Sin completar'}</dd></div></dl>
     {selected.notes&&<details className="tracking-help"><summary>Observaciones internas</summary><p>{selected.notes}</p></details>}
@@ -57,7 +69,8 @@ export default function ClientsPanel({profileEnabled,initialClientId='',clients,
     <article className="client-step"><span className="client-step-number">2</span><h3>Catálogo de productos</h3><p>{productCount?productCount+' producto(s) registrados.':'Importá el Excel o CSV de productos de este cliente.'}</p><button className="button button-primary" onClick={()=>onInventory(selected.id,'catalog')}>Importar catálogo<ArrowRight size={15}/></button></article>
     <article className="client-step"><span className="client-step-number">3</span><h3>Recibir mercadería</h3><p>{productCount?'Elegí el depósito y escaneá los productos que llegan.':'Primero importá su catálogo para reconocer los códigos.'}</p><button className="button button-secondary" disabled={!productCount} onClick={()=>onInventory(selected.id,'receive')}>Ir a recepción<ArrowRight size={15}/></button></article>
    </div></section>
-   <details className="tracking-help"><summary>¿Este cliente necesita entrar al sistema?</summary><p>Registrar su empresa no crea un usuario. Administración puede habilitar su consulta de inventario desde Accesos cliente.</p></details>
+   <section className="card"><h2>Portal del cliente</h2><p>Habilitá sus usuarios desde Depósito para que consulten y exporten su inventario, movimientos y pedidos.</p><button type="button" className="button button-secondary" onClick={()=>setClientView('depot')}>Abrir depósito<ArrowRight size={15}/></button></section>
+   </>}
    {editor}</>;
  }
  return <>

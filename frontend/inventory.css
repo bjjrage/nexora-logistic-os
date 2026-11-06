@@ -64,14 +64,23 @@
 .customer-access-existing { margin:0; }
 .customer-access-existing .task-disclosure-body { padding:8px 18px 14px; }
 .inventory-role-note { padding:7px 0; color:var(--muted); font-size:10px; }
-.portal-shell { min-height:100vh; display:grid; grid-template-rows:auto 1fr; }
+.portal-shell { min-height:100vh; display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:auto 1fr; }
 .portal-header { display:flex; justify-content:space-between; align-items:center; gap:14px; padding:12px clamp(16px,4vw,52px); background:#fff; border-bottom:1px solid var(--line); }
 .portal-header > div { min-width:0; display:flex; align-items:center; gap:14px; }
 .portal-brand { display:flex; align-items:center; }
 .portal-identity { color:var(--muted); font-size:11px; }
-.portal-body { width:min(100%,1440px); margin:0 auto; padding:26px clamp(16px,4vw,52px) 48px; }
+.portal-body { width:min(100%,1440px); min-width:0; margin:0 auto; padding:26px clamp(16px,4vw,52px) 48px; }
 .portal-body .inventory-metrics { max-width:none; grid-template-columns:repeat(5,minmax(0,1fr)); }
 .portal-export { margin-left:auto; }
+.customer-access-user { flex-wrap:wrap; }
+.customer-access-user > .inventory-actions { margin-top:0; }
+.customer-access-user small { overflow-wrap:anywhere; }
+@media(max-width:600px) {
+  .portal-header { flex-wrap:wrap; }
+  .portal-header > div { flex-wrap:wrap; }
+  .portal-header > div:last-child { width:100%; justify-content:space-between; }
+  .customer-access-user > .inventory-actions { width:100%; justify-content:space-between; }
+}
 .customer-orders { display:grid; gap:0; }
 .customer-order { padding:15px 0; border-bottom:1px solid var(--line); }
 .customer-order header { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }

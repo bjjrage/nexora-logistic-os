@@ -6,7 +6,16 @@
 2. Guardar la ficha. Se abre el cliente creado o editado y se muestran los datos faltantes. El nombre es obligatorio; los demás datos pueden completarse después, sin inventar valores.
 3. Desde la ficha → **Importar catálogo**. El cliente queda seleccionado automáticamente. Descargar plantilla o cargar su Excel/CSV, validar y confirmar. Esto registra los productos y **no aumenta stock**.
 4. Volver a la ficha → **Ir a recepción**. Se habilita cuando hay al menos un producto activo. Elegir el depósito físico **C1 · Central** (ya creado en la operación real), escanear SKU/código, revisar cantidad o series y confirmar. Aquí se registra el inventario físico.
-5. Si el cliente necesita consultar su inventario, Administración habilita un acceso separado en **Accesos cliente**. Registrar una empresa cliente no crea una cuenta de usuario.
+5. Si el cliente necesita consultar su mercadería, Administración abre **Clientes → Abrir ficha → Depósito → Acceso al portal**. Habilitar una cuenta por persona, con nombre, usuario y contraseña. El enlace de ingreso aparece en esa misma pantalla. Registrar una empresa cliente no crea una cuenta de usuario.
+
+## Portal del mayorista
+
+- Cada cuenta está vinculada a una empresa cliente. Puede consultar y exportar únicamente su inventario, movimientos y pedidos. Las descargas CSV incluyen todos sus registros, aunque la pantalla esté paginada.
+- El historial de movimientos permite buscar por SKU, producto, serie o referencia y recorrer todos los registros por páginas de 25.
+- Desde **Clientes → Depósito**, Administración puede suspender y reactivar usuarios, o emitir el enlace privado de recuperación existente. Suspender cierra sus sesiones; en la siguiente consulta, el portal retira la vista de datos y vuelve al ingreso. Reactivar exige un nuevo ingreso y conserva la cuenta y su historial.
+- Coordinación puede abrir la sección Depósito, pero la habilitación de usuarios queda reservada a Administración. El acceso anterior **Accesos cliente** se conserva.
+- El portal es de consulta y exportación. Recepciones, ajustes, reservas y despachos siguen siendo operaciones internas de Nexora. El servidor aplica el cliente de la sesión también a las descargas; cambiar parámetros de la URL no permite consultar otra empresa.
+- Se reutilizan las cuentas y tablas existentes; esta ampliación no requiere una migración de base de datos.
 
 ## Qué cambió
 
