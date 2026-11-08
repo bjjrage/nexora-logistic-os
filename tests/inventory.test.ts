@@ -465,6 +465,43 @@ for (const tracking of ['QUANTITY', 'SERIAL'] as const) test(`carga ${tracking}:
   assert.equal(new Set(loaded.parcels.map((p: any) => p.id)).size, 3);
   assert.deepEqual(await f.inventory.loadOrder(f.actor, order.id, input), loaded);
   assert.equal((await f.store.one("SELECT count(*) n FROM inventory_movements WHERE order_id=? AND action='LOAD'", order.id))!.n, 3);
+  const locations=await f.inventory.locationStockPage({...f.actor,role:'CUSTOMER',clientId:f.clientId});
+  assert.equal(locations.items.find(location=>location.id===f.locationId)?.quantity,0);
+  assert.equal(locations.items.find(location=>location.id===f.locationId)?.vehicle,3);
+});
+
+test('portal identifica depósitos, suma cantidades y series y filtra stock/exportación sin cruzar clientes',async t=>{
+  const f=await fixture(t),customer={...f.actor,role:'CUSTOMER',clientId:f.clientId};
+  const north=(await f.inventory.createLocation(f.actor,{...f.command(),code:'NORTE',name:'Depósito Norte',kind:'DEPOT'})).id;
+  const privateLocation=(await f.inventory.createLocation(f.actor,{...f.command(),code:'PRIVADO',name:'Depósito privado',kind:'DEPOT'})).id;
+  const serial=await f.makeProduct(f.clientId,'SERIE-NORTE','SERIAL'),foreign=await f.makeProduct(f.secondClientId,'PRIVADO');
+  await f.inventory.receive(f.actor,{...f.command(),clientId:f.clientId,productId:f.product.id,locationId:f.locationId,quantity:8});
+  await f.inventory.receive(f.actor,{...f.command(),clientId:f.clientId,productId:f.product.id,locationId:north,quantity:6});
+  await f.inventory.receive(f.actor,{...f.command(),clientId:f.clientId,productId:serial.id,locationId:north,quantity:2,serials:[{serial:'N-1'},{serial:'N-2'}]});
+  await f.inventory.receive(f.actor,{...f.command(),clientId:f.secondClientId,productId:foreign.id,locationId:f.locationId,quantity:100});
+  await f.inventory.receive(f.actor,{...f.command(),clientId:f.secondClientId,productId:foreign.id,locationId:privateLocation,quantity:20});
+  await f.inventory.move(f.actor,{...f.command(),clientId:f.clientId,productId:f.product.id,fromLocationId:f.locationId,toLocationId:north,quantity:3,reason:'Traslado Norte'});
+  const order=await f.inventory.createOrder(f.actor,orderBody(randomUUID(),f.clientId,f.product.id,'RESERVA-CENTRAL',2));
+  await f.inventory.reserveOrder(f.actor,order.id,{...f.command(),locationId:f.locationId});
+  const summary=await f.inventory.locationStockPage(customer,{clientId:f.secondClientId});
+  assert.equal(summary.total,2);assert(!JSON.stringify(summary).includes('Depósito privado'));
+  const central=summary.items.find(location=>location.id===f.locationId)!,northern=summary.items.find(location=>location.id===north)!;
+  assert.equal(central.quantity,5);assert.equal(central.available,3);assert.equal(central.reserved,2);
+  assert.equal(northern.quantity,11);assert.equal(northern.vehicle,0);
+  const secondPage=await f.inventory.locationStockPage(customer,{limit:1,offset:1});
+  assert.equal(secondPage.total,2);assert.equal(secondPage.items.length,1);
+  const stock=await f.inventory.stockPage(customer,{locationId:north,q:'Depósito Norte',limit:1});
+  assert.equal(stock.total,3);assert.equal(stock.items[0].locationName,'Depósito Norte');assert.equal(stock.items[0].locationId,north);
+  assert.equal((await f.inventory.stockPage(customer,{locationId:privateLocation})).total,0);
+  const csv=await f.inventory.exportCsv(customer,f.secondClientId,{locationId:north});
+  assert(csv.includes('Depósito Norte'));assert(csv.includes('N-1'));assert(!csv.includes('Depósito QA'));assert(!csv.includes('PRIVADO'));
+  const movements=await f.inventory.movementsPage(customer,{q:'Depósito Norte'});
+  const transfer=movements.items.find(item=>item.action==='MOVE')!;
+  assert.equal(transfer.fromLocationName,'Depósito QA');assert.equal(transfer.toLocationName,'Depósito Norte');
+  assert.equal((await f.inventory.movementsPage(customer,{q:'Depósito privado'})).total,0);
+  assert((await f.inventory.exportMovementsCsv(customer,{q:'Depósito Norte'})).includes('Depósito Norte'));
+  await assert.rejects(()=>f.inventory.locationStockPage({...customer,clientId:null}),code('FORBIDDEN'));
+  await assert.rejects(()=>f.inventory.locationStockPage({...customer,role:'DRIVER'}),code('FORBIDDEN'));
 });
 
 test('seriales son unitarios y el snapshot/export de cliente se filtra desde el actor autenticado', async (t) => {
@@ -526,6 +563,8 @@ test('el snapshot anuncia sus límites y el CSV exporta todos los seriales sin t
   assert.equal(snapshot.clientTotals[f.clientId].AVAILABLE, 1001);
   assert.equal(snapshot.limits.units, 1000);
   assert.equal(snapshot.hasMore.units, true);
+  const locations=await f.inventory.locationStockPage({...f.actor,role:'CUSTOMER',clientId:f.clientId});
+  assert.equal(locations.items[0].quantity,1001);
   const csv = await f.inventory.exportCsv(f.actor, f.clientId);
   assert.equal(csv.split('\r\n').filter(line => line.startsWith('"SERIAL"')).length, 1001);
   assert(csv.includes('LARGE-1001'));

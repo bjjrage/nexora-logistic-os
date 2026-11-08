@@ -978,13 +978,38 @@ export class Inventory {
     const product=products[0]??(units[0]?await this.product(actor,units[0].product_id,body.clientId):null);
     return {product:product?{...camel(product),active:Boolean(product.active)}:null,unit:units[0]?camel(units[0]):null};
   }
+  async locationStockPage(actor:InventoryActor,input:unknown={}) {
+    const page=z.object({clientId:uuid.optional(),limit:z.coerce.number().int().min(1).max(200).default(25),offset:z.coerce.number().int().min(0).max(1000000).default(0)}).parse(input);
+    const clientId=await this.readClientId(actor,page.clientId);
+    const clientPredicate=clientId?'AND client_id=?':'',scope=clientId?[actor.orgId,clientId]:[actor.orgId];
+    const stock=`WITH stock AS (
+      SELECT location_id,status,quantity FROM inventory_balances WHERE org_id=? ${clientPredicate} AND quantity>0
+      UNION ALL
+      SELECT location_id,status,1 AS quantity FROM inventory_units WHERE org_id=? ${clientPredicate} AND status IN ('AVAILABLE','RESERVED','QUARANTINE','VEHICLE')
+    )`;
+    const [count,rows]=await Promise.all([
+      this.store.one(`${stock} SELECT COUNT(DISTINCT location_id) AS n FROM stock`,...scope,...scope),
+      this.store.all(`${stock}, totals AS (
+        SELECT location_id,
+          SUM(CASE WHEN status='AVAILABLE' THEN quantity ELSE 0 END) AS available,
+          SUM(CASE WHEN status='RESERVED' THEN quantity ELSE 0 END) AS reserved,
+          SUM(CASE WHEN status='QUARANTINE' THEN quantity ELSE 0 END) AS quarantine,
+          SUM(CASE WHEN status='VEHICLE' THEN quantity ELSE 0 END) AS vehicle
+        FROM stock GROUP BY location_id
+      ) SELECT l.id,l.code,l.name,l.kind,p.address,t.available,t.reserved,t.quarantine,t.vehicle
+        FROM totals t JOIN inventory_locations l ON l.id=t.location_id AND l.org_id=?
+        LEFT JOIN routing_points p ON p.org_id=l.org_id AND p.entity_kind='LOCATION' AND p.entity_id=l.id
+        ORDER BY l.name,l.code,l.id LIMIT ? OFFSET ?`,...scope,...scope,actor.orgId,page.limit,page.offset)
+    ]);
+    return {items:rows.map(row=>({id:String(row.id),code:String(row.code),name:String(row.name),kind:String(row.kind),address:row.address==null?null:String(row.address),available:Number(row.available),reserved:Number(row.reserved),quarantine:Number(row.quarantine),vehicle:Number(row.vehicle),quantity:Number(row.available)+Number(row.reserved)+Number(row.quarantine)})),total:Number(count?.n??0),limit:page.limit,offset:page.offset};
+  }
   async stockPage(actor:InventoryActor,input:unknown={}){
-    this.readAccess(actor);const page=z.object({clientId:z.uuid().optional(),status:z.enum(['','AVAILABLE','RESERVED','VEHICLE','QUARANTINE','DELIVERED','ADJUSTED']).default(''),q:z.string().trim().max(200).default(''),limit:z.coerce.number().int().min(1).max(200).default(25),offset:z.coerce.number().int().min(0).max(1000000).default(0)}).parse(input);
+    this.readAccess(actor);const page=z.object({clientId:z.uuid().optional(),locationId:uuid.optional(),status:z.enum(['','AVAILABLE','RESERVED','VEHICLE','QUARANTINE','DELIVERED','ADJUSTED']).default(''),q:z.string().trim().max(200).default(''),limit:z.coerce.number().int().min(1).max(200).default(25),offset:z.coerce.number().int().min(0).max(1000000).default(0)}).parse(input);
     if(page.clientId)await this.client(actor,page.clientId,true);const clientId=actor.role==='CUSTOMER'?actor.clientId:page.clientId;ensure(actor.role!=='CUSTOMER'||clientId,'FORBIDDEN','Sesión sin cliente.',403);
-    const filters=['x.org_id=?'],args:any[]=[actor.orgId];if(clientId){filters.push('x.client_id=?');args.push(clientId);}if(page.status){filters.push('x.status=?');args.push(page.status);}if(page.q){filters.push('(lower(p.sku) LIKE ? OR lower(p.name) LIKE ? OR lower(x.serial) LIKE ? OR lower(l.code) LIKE ? OR lower(c.name) LIKE ? OR lower(o.external_id) LIKE ?)');args.push(...Array(6).fill('%'+page.q.toLowerCase()+'%'));}
+    const filters=['x.org_id=?'],args:any[]=[actor.orgId];if(clientId){filters.push('x.client_id=?');args.push(clientId);}if(page.locationId){filters.push('x.location_id=?');args.push(page.locationId);}if(page.status){filters.push('x.status=?');args.push(page.status);}if(page.q){filters.push('(lower(p.sku) LIKE ? OR lower(p.name) LIKE ? OR lower(x.serial) LIKE ? OR lower(l.code) LIKE ? OR lower(l.name) LIKE ? OR lower(c.name) LIKE ? OR lower(o.external_id) LIKE ?)');args.push(...Array(7).fill('%'+page.q.toLowerCase()+'%'));}
     const source=`FROM (SELECT id,org_id,client_id,product_id,location_id,status,order_id,quantity,'' AS serial FROM inventory_balances WHERE quantity>0 UNION ALL SELECT id,org_id,client_id,product_id,location_id,status,order_id,1 AS quantity,serial FROM inventory_units) x JOIN inventory_products p ON p.id=x.product_id AND p.org_id=x.org_id JOIN inventory_locations l ON l.id=x.location_id AND l.org_id=x.org_id JOIN clients c ON c.id=x.client_id AND c.org_id=x.org_id LEFT JOIN inventory_orders o ON o.id=x.order_id AND o.org_id=x.org_id WHERE ${filters.join(' AND ')}`;
     const total=Number((await this.store.one(`SELECT COUNT(*) AS n ${source}`,...args))?.n??0);
-    const rows=await this.store.all(`SELECT x.id AS key,x.client_id,c.name AS client_name,x.product_id,p.sku,p.name AS product_name,x.serial,p.barcode,l.code AS location_code,x.quantity,p.unit,x.status,COALESCE(o.external_id,'—') AS order_reference ${source} ORDER BY p.sku,x.id LIMIT ? OFFSET ?`,...args,page.limit,page.offset);
+    const rows=await this.store.all(`SELECT x.id AS key,x.client_id,c.name AS client_name,x.product_id,p.sku,p.name AS product_name,x.serial,p.barcode,x.location_id,l.code AS location_code,l.name AS location_name,l.kind AS location_kind,x.quantity,p.unit,x.status,COALESCE(o.external_id,'—') AS order_reference ${source} ORDER BY p.sku,l.code,x.id LIMIT ? OFFSET ?`,...args,page.limit,page.offset);
     return {items:rows.map(camel),total,limit:page.limit,offset:page.offset};
   }
   async bootstrap(actor: InventoryActor, clientFilter?: string) {
@@ -1007,7 +1032,11 @@ export class Inventory {
       this.store.all(`SELECT l.* FROM inventory_locations l WHERE l.org_id=? ${customerLocationPredicate} ORDER BY l.code,l.id LIMIT 1000`, actor.orgId, ...customerLocationArgs),
       this.store.all(`SELECT * FROM inventory_balances WHERE org_id=? ${predicate} AND quantity>0 ORDER BY product_id,location_id,status LIMIT 1000`, ...args),
       this.store.all(`SELECT * FROM inventory_units WHERE org_id=? ${predicate} ORDER BY created_at,id LIMIT 1001`, ...args),
-      this.store.all(`SELECT * ${movementFilter} ORDER BY created_at DESC,id DESC LIMIT 501`, ...movementArgs),
+      this.store.all(`SELECT m.*,src.name AS from_location_name,dst.name AS to_location_name
+        FROM inventory_movements m
+        LEFT JOIN inventory_locations src ON src.id=m.from_location_id AND src.org_id=m.org_id
+        LEFT JOIN inventory_locations dst ON dst.id=m.to_location_id AND dst.org_id=m.org_id
+        WHERE m.org_id=? ${clientId?'AND m.client_id=?':''} ORDER BY m.created_at DESC,m.id DESC LIMIT 501`, ...movementArgs),
       this.store.one(`SELECT COUNT(*) AS count FROM inventory_products WHERE org_id=? ${predicate}`, ...args),
       this.store.one(`SELECT COUNT(*) AS count FROM inventory_locations l WHERE l.org_id=? ${customerLocationPredicate}`, actor.orgId, ...customerLocationArgs),
       this.store.one(`SELECT COUNT(*) AS count FROM inventory_balances WHERE org_id=? ${predicate} AND quantity>0`, ...args),
@@ -1087,15 +1116,17 @@ export class Inventory {
     return { ...camel(order), parcelIds: orderParcels.map(parcel => parcel.id), parcels: orderParcels,
       lines: lines.map(line => ({ id: line.id, productId: line.product_id, sku: line.sku, name: line.name, unit: line.unit, tracking: line.tracking, requested: line.quantity, reserved: line.reserved_quantity, loaded: line.loaded_quantity, delivered: line.delivered_quantity, returned: line.returned_quantity, available: Number(line.available_quantity) })) };
   }
-  async exportCsv(actor: InventoryActor, clientFilter?: string) {
+  async exportCsv(actor: InventoryActor, clientFilter?: string,input:unknown={}) {
     const clientId = await this.readClientId(actor, clientFilter);
+    const {locationId}=z.object({locationId:uuid.optional()}).parse(input);
     const args = clientId ? [actor.orgId, clientId] : [actor.orgId];
     const predicate = clientId ? 'AND client_id=?' : '';
+    const locationPredicate=locationId?'AND location_id=?':'',stockArgs=locationId?[...args,locationId]:args;
     const [rawProducts, rawLocations, rawBalances, rawUnits] = await Promise.all([
       this.store.all(`SELECT * FROM inventory_products WHERE org_id=? ${predicate} ORDER BY name,id`, ...args),
       this.store.all('SELECT * FROM inventory_locations WHERE org_id=? ORDER BY code,id', actor.orgId),
-      this.store.all(`SELECT * FROM inventory_balances WHERE org_id=? ${predicate} AND quantity>0 ORDER BY product_id,location_id,status,custody_id,order_id`, ...args),
-      this.store.all(`SELECT * FROM inventory_units WHERE org_id=? ${predicate} ORDER BY created_at,id`, ...args)
+      this.store.all(`SELECT * FROM inventory_balances WHERE org_id=? ${predicate} ${locationPredicate} AND quantity>0 ORDER BY product_id,location_id,status,custody_id,order_id`, ...stockArgs),
+      this.store.all(`SELECT * FROM inventory_units WHERE org_id=? ${predicate} ${locationPredicate} ORDER BY created_at,id`, ...stockArgs)
     ]);
     const products = rawProducts.map(camel), locations = rawLocations.map(camel), balances = rawBalances.map(camel), units = rawUnits.map(camel);
     const rows = [['type','clientId','productId','sku','name','locationId','location','status','custodyId','orderId','quantity','serial','barcode']];
@@ -1118,8 +1149,8 @@ export class Inventory {
     const filters = ['m.org_id=?'], args: Array<string | number> = [actor.orgId];
     if (clientId) { filters.push('m.client_id=?'); args.push(clientId); }
     if (page.q) {
-      filters.push('(lower(p.sku) LIKE ? OR lower(p.name) LIKE ? OR lower(m.reference) LIKE ? OR lower(u.serial) LIKE ?)');
-      args.push(...Array<string>(4).fill('%' + page.q.toLowerCase() + '%'));
+      filters.push('(lower(p.sku) LIKE ? OR lower(p.name) LIKE ? OR lower(m.reference) LIKE ? OR lower(u.serial) LIKE ? OR lower(src.code) LIKE ? OR lower(src.name) LIKE ? OR lower(dst.code) LIKE ? OR lower(dst.name) LIKE ?)');
+      args.push(...Array<string>(8).fill('%' + page.q.toLowerCase() + '%'));
     }
     const from = `FROM inventory_movements m
       JOIN inventory_products p ON p.id=m.product_id AND p.org_id=m.org_id AND p.client_id=m.client_id
@@ -1127,7 +1158,7 @@ export class Inventory {
       LEFT JOIN inventory_locations src ON src.id=m.from_location_id AND src.org_id=m.org_id
       LEFT JOIN inventory_locations dst ON dst.id=m.to_location_id AND dst.org_id=m.org_id
       WHERE ${filters.join(' AND ')}`;
-    const columns = 'm.id,m.created_at,m.action,m.quantity,m.reference,m.reason,m.from_status,m.to_status,p.sku,p.name AS product_name,u.serial,src.code AS from_location_code,dst.code AS to_location_code';
+    const columns = 'm.id,m.created_at,m.action,m.quantity,m.reference,m.reason,m.from_status,m.to_status,p.sku,p.name AS product_name,u.serial,src.code AS from_location_code,dst.code AS to_location_code,src.name AS from_location_name,dst.name AS to_location_name';
     return {page,from,columns,args};
   }
 
@@ -1144,8 +1175,8 @@ export class Inventory {
     const {from,columns,args} = await this.movementQuery(actor,input);
     const rows = await this.store.all(`SELECT ${columns} ${from} ORDER BY m.created_at DESC,m.id DESC`,...args);
     return encodeCsv([
-      ['Fecha','Movimiento','SKU','Producto','Serie','Cantidad','Desde','Hasta','Estado anterior','Estado nuevo','Referencia','Motivo'],
-      ...rows.map(row=>[row.created_at,row.action,row.sku,row.product_name,row.serial,row.quantity,row.from_location_code,row.to_location_code,row.from_status,row.to_status,row.reference,row.reason])
+      ['Fecha','Movimiento','SKU','Producto','Serie','Cantidad','Desde','Hasta','Estado anterior','Estado nuevo','Referencia','Motivo','Depósito / ubicación de origen','Depósito / ubicación de destino'],
+      ...rows.map(row=>[row.created_at,row.action,row.sku,row.product_name,row.serial,row.quantity,row.from_location_code,row.to_location_code,row.from_status,row.to_status,row.reference,row.reason,row.from_location_name,row.to_location_name])
     ]);
   }
 

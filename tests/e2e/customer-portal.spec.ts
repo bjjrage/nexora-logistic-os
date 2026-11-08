@@ -24,7 +24,7 @@ async function kpiStates(page:Page,card:Locator,screenshot?:string) {
   await page.mouse.move(0,0);await card.focus();await page.keyboard.press('ArrowRight');
   await expect(card).toBeFocused();await expect(card.locator(':scope:focus-visible')).toHaveCount(1);
   const focus=await kpiAppearance(card);
-  await card.blur();
+  await card.blur();await kpiAppearance(card);
   return {normal,hover,focus};
 }
 
@@ -52,10 +52,13 @@ test('Clientes → Depósito habilita, suspende y reactiva un portal de consulta
     };
     await send('/api/setup',{organizationName:'Nexora portal QA',timezone:'America/Asuncion',username:'qa-admin',password:'Portal-QA-Admin-2026!'});
     const a=(await send('/api/clients',{name:'Mayorista A'})).id,b=(await send('/api/clients',{name:'Mayorista B'})).id;
-    const location=(await send('/api/inventory/locations',{code:'CENTRAL-QA',name:'Depósito QA'})).id;
+    const location=(await send('/api/inventory/locations',{code:'CENTRAL-QA',name:'Depósito Central',kind:'DEPOT'})).id;
+    const north=(await send('/api/inventory/locations',{code:'NORTE-QA',name:'Depósito Norte',kind:'DEPOT'})).id;
+    const privateLocation=(await send('/api/inventory/locations',{code:'PRIVADO-QA',name:'Depósito exclusivo B',kind:'DEPOT'})).id;
     for(const [clientId,letter] of [[a,'A'],[b,'B']]){
       const product=(await send('/api/inventory/products',{clientId,sku:'SKU-'+letter,name:'Mercadería '+letter,tracking:'QUANTITY'})).id;
       await send('/api/inventory/receipts',{clientId,productId:product,locationId:location,quantity:5,reference:'INGRESO-'+letter});
+      await send('/api/inventory/receipts',{clientId,productId:product,locationId:letter==='A'?north:privateLocation,quantity:3,reference:'OTRO-INGRESO-'+letter});
       await send('/api/orders',{clientId,externalId:'PEDIDO-'+letter,orderDate:'2026-11-05',destination:'Destino '+letter,recipientName:'Receptor '+letter,lines:[{productId:product,quantity:1}]});
     }
     await send('/api/customer-access',{clientId:b,name:'Persona B',username:'persona-b',password:'Portal-QA-B-2026!'});
@@ -72,6 +75,10 @@ test('Clientes → Depósito habilita, suspende y reactiva un portal de consulta
     await page.getByRole('button',{name:'Clientes',exact:true}).click();
     await page.getByRole('row').filter({hasText:'Mayorista A'}).getByRole('button',{name:'Abrir ficha',exact:true}).click();
     await page.getByRole('button',{name:'Depósito',exact:true}).click();
+    const staffLocations=page.getByRole('region',{name:'Depósitos y ubicaciones',exact:true});
+    await expect(staffLocations.getByRole('article',{name:'Depósito Central',exact:true})).toContainText('5');
+    await expect(staffLocations.getByRole('article',{name:'Depósito Norte',exact:true})).toContainText('3');
+    await expect(staffLocations.getByText('Depósito exclusivo B',{exact:true})).toHaveCount(0);
     await expect(page.getByRole('heading',{name:'Acceso al portal',exact:true})).toBeVisible();
     await expect(page.getByRole('tooltip')).toHaveCount(0);
     await page.getByRole('button',{name:'Ayuda: Acceso al portal',exact:true}).hover();
@@ -93,6 +100,7 @@ test('Clientes → Depósito habilita, suspende y reactiva un portal de consulta
     const account=page.getByRole('article',{name:'Acceso de Persona A',exact:true});
     await expect(account.getByText('Activo',{exact:true})).toBeVisible();
     await expect(page.getByText('Persona B',{exact:true})).toHaveCount(0);
+    await page.evaluate(()=>window.scrollTo(0,0));
     await page.screenshot({path:'.local/customer-depot-access-desktop.png',fullPage:true});
     await page.setViewportSize({width:390,height:844});
     await page.getByRole('button',{name:'Ayuda: Contraseña',exact:true}).click();
@@ -108,7 +116,11 @@ test('Clientes → Depósito habilita, suspende y reactiva un portal de consulta
     await customer.getByLabel('Usuario',{exact:true}).fill('persona-a');
     await customer.getByLabel('Contraseña',{exact:true}).fill('Portal-QA-A-2026!');
     await customer.getByRole('button',{name:'Ingresar',exact:true}).click();
-    await expect(customer.getByRole('heading',{name:'Mi depósito',exact:true})).toBeVisible();
+    await expect(customer.getByRole('heading',{name:'Mi mercadería',exact:true})).toBeVisible();
+    const customerLocations=customer.getByRole('region',{name:'Depósitos y ubicaciones',exact:true});
+    await expect(customerLocations.getByRole('article',{name:'Depósito Central',exact:true})).toContainText('5');
+    await expect(customerLocations.getByRole('article',{name:'Depósito Norte',exact:true})).toContainText('3');
+    await expect(customer.getByText('Depósito exclusivo B',{exact:true})).toHaveCount(0);
     await expect(customer.getByRole('navigation',{name:'Navegación del cliente',exact:true})).toBeVisible();
     const metrics=customer.getByRole('region',{name:'Resumen de cuenta',exact:true}).getByRole('button');
     await expect(metrics).toHaveCount(5);
@@ -121,11 +133,19 @@ test('Clientes → Depósito habilita, suspende y reactiva un portal de consulta
     expect(await customer.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await customer.screenshot({path:'.local/customer-home-mobile.png',fullPage:true});
     await customer.setViewportSize({width:1280,height:720});
+    await customer.getByRole('button',{name:'Ver existencias en Depósito Norte',exact:true}).click();
+    const stockTable=customer.getByRole('table');
+    await expect(stockTable.getByRole('cell').filter({hasText:'Depósito Norte'})).toBeVisible();
+    await expect(stockTable.getByRole('cell').filter({hasText:'Depósito Central'})).toHaveCount(0);
+    const northernCsv=await downloadCsv(customer,'Exportar inventario');
+    expect(northernCsv).toContain('Depósito Norte');expect(northernCsv).not.toContain('Depósito Central');
+    await customer.getByRole('button',{name:'Quitar filtro de depósito',exact:true}).click();
+    await expect(stockTable.getByRole('cell').filter({hasText:'Depósito Central'})).toBeVisible();
     const filtered=customer.waitForResponse(response=>new URL(response.url()).pathname==='/api/inventory/stock'&&new URL(response.url()).searchParams.get('status')==='AVAILABLE');
     await customer.getByRole('button',{name:'Ver stock disponible',exact:true}).click();
     expect((await filtered).status()).toBe(200);
-    await expect(customer.getByRole('cell',{name:'Disponible',exact:true})).toBeVisible();
-    await expect(customer.getByRole('cell').filter({hasText:'Mercadería A'})).toBeVisible();
+    await expect(customer.getByRole('cell',{name:'Disponible',exact:true})).toHaveCount(2);
+    await expect(customer.getByRole('cell').filter({hasText:'Mercadería A'})).toHaveCount(2);
     await expect(customer.getByText('Mercadería B',{exact:true})).toHaveCount(0);
     const inventory=await downloadCsv(customer,'Exportar inventario');
     expect(inventory).toContain('SKU-A');expect(inventory).not.toContain('SKU-B');
@@ -138,6 +158,10 @@ test('Clientes → Depósito habilita, suspende y reactiva un portal de consulta
     await expect(customer.getByRole('cell',{name:'INGRESO-A',exact:true})).toBeVisible();
     const movements=await downloadCsv(customer,'Exportar movimientos');
     expect(movements).toContain('INGRESO-A');expect(movements).not.toContain('INGRESO-B');
+    expect(movements).toContain('Depósito Central');expect(movements).toContain('Depósito Norte');
+    await customer.getByLabel('Buscar en tus movimientos',{exact:true}).fill('Depósito Norte');
+    await expect(customer.getByRole('cell',{name:'OTRO-INGRESO-A',exact:true})).toBeVisible();
+    await expect(customer.getByRole('cell',{name:'INGRESO-A',exact:true})).toHaveCount(0);
     const forced=await customer.request.get(origin+'/api/orders/export.csv?clientId='+b);
     expect(forced.status()).toBe(200);expect(await forced.text()).not.toContain('PEDIDO-B');
     await customer.getByLabel('Buscar en tus movimientos',{exact:true}).fill('sin-resultados');
@@ -159,7 +183,7 @@ test('Clientes → Depósito habilita, suspende y reactiva un portal de consulta
     await customer.getByLabel('Usuario',{exact:true}).fill('persona-a');
     await customer.getByLabel('Contraseña',{exact:true}).fill('Portal-QA-A-2026!');
     await customer.getByRole('button',{name:'Ingresar',exact:true}).click();
-    await expect(customer.getByRole('heading',{name:'Mi depósito',exact:true})).toBeVisible();
+    await expect(customer.getByRole('heading',{name:'Mi mercadería',exact:true})).toBeVisible();
     expect(errors).toEqual([]);
   } catch(error) {
     await page.screenshot({path:'.local/customer-depot-failure.png',fullPage:true}).catch(()=>{});
