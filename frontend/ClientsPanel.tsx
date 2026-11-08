@@ -2,6 +2,7 @@ import {useMemo,useState,type FormEvent} from 'react';
 import {Plus,Pencil,ArrowRight} from 'lucide-react';
 import {useModalFocus} from './useModalFocus';
 import CustomerAccessPanel from './CustomerAccessPanel';
+import ClientLocations from './ClientLocations';
 import HelpTip from './HelpTip';
 
 export type ClientRecord={id:string;name:string;legalName?:string|null;taxId?:string|null;contactName?:string|null;phone?:string|null;email?:string|null;address?:string|null;city?:string|null;notes?:string|null;catalogProductCount?:number|string};
@@ -58,6 +59,7 @@ export default function ClientsPanel({profileEnabled,initialClientId='',clients,
     <section className="card"><div className="card-header"><div className="help-label"><h2>Mercadería en depósito</h2><HelpTip label="Mercadería en depósito">Catálogo y recepción de {selected.name}.</HelpTip></div></div>
      <div className="inventory-actions"><button type="button" className="button button-secondary" onClick={()=>onInventory(selected.id,'catalog')}>Ver catálogo / importar</button><button type="button" className="button button-secondary" disabled={!productCount} onClick={()=>onInventory(selected.id,'receive')}>Recibir mercadería</button></div>
     </section>
+    <ClientLocations key={'locations-'+selected.id} clientId={selected.id}/>
     {canManageAccess?<CustomerAccessPanel key={selected.id} clientId={selected.id} clientName={selected.name}/>:<section className="card"><div className="help-label"><h2>Acceso al portal</h2><HelpTip label="Acceso al portal">Administración habilita los usuarios de este cliente para consultar su mercadería.</HelpTip></div></section>}
    </>:<>
    <section className="card"><div className="card-header"><h2>Datos del cliente</h2><span className="badge badge-neutral">{missing.length?'Datos por completar':'Ficha completa'}</span></div>

@@ -6,6 +6,7 @@ import Brand from "./Brand";
 import { api } from "./api";
 import HelpTip from './HelpTip';
 import StatCard from './StatCard';
+import ClientLocations,{type ClientLocation} from './ClientLocations';
 import {customerBadge,customerState,movementLabels} from './customer-labels';
 import './customer-portal.css';
 
@@ -14,7 +15,7 @@ type Product = { id: string; sku: string; name: string; unit: string; tracking: 
 type Location = { id: string; code: string; name: string };
 type Balance = { productId: string; locationId: string; quantity: number; status?: string; condition?: string; available?: number; reserved?: number };
 type Unit = { id: string; productId: string; serial: string; barcode?: string | null; locationId?: string | null; status?: string; state?: string };
-type Movement = { id: string; productId?: string; action?: string; type?: string; quantity?: number; fromLocationId?: string | null; toLocationId?: string | null; createdAt: string; reason?: string | null; reference?: string | null };
+type Movement = { id: string; productId?: string; action?: string; type?: string; quantity?: number; fromLocationId?: string | null; toLocationId?: string | null; fromLocationName?:string|null;toLocationName?:string|null; createdAt: string; reason?: string | null; reference?: string | null };
 type SnapshotCounts = { products: number; locations: number; balances: number; units: number; movements: number };
 type SnapshotLimits = { products: number | null; locations: number | null; balances: number | null; units: number; movements: number };
 type SnapshotHasMore = { products: boolean; locations: boolean; balances: boolean; units: boolean; movements: boolean };
@@ -51,10 +52,11 @@ function formatOrderDate(value: string): string {
 export default function CustomerPortal({ user, busy, onLogout }: Props) {
   const [view, setView] = useState<'home'|'inventory'|'orders'|'movements'>('home');
   const [stockFilter,setStockFilter]=useState<CustomerStockFilter>('');
+  const [locationFilter,setLocationFilter]=useState<ClientLocation|null>(null);
   const [revision,setRevision] = useState(0);
   const exports = {
     home:{href:'/api/inventory/export.csv',label:'Exportar inventario'},
-    inventory:{href:'/api/inventory/export.csv',label:'Exportar inventario'},
+    inventory:{href:'/api/inventory/export.csv'+(locationFilter?'?'+new URLSearchParams({locationId:locationFilter.id}):''),label:'Exportar inventario'},
     orders:{href:'/api/orders/export.csv',label:'Exportar pedidos'},
     movements:{href:'/api/inventory/movements/export.csv',label:'Exportar movimientos'}
   };
@@ -104,10 +106,10 @@ export default function CustomerPortal({ user, busy, onLogout }: Props) {
   const reservedTotal = totals.RESERVED;
   const vehicleTotal = totals.VEHICLE;
   const quarantineTotal = totals.QUARANTINE;
-  const titles={home:'Mi depósito',inventory:'Inventario',orders:'Pedidos',movements:'Movimientos'};
+  const titles={home:'Mi mercadería',inventory:'Inventario',orders:'Pedidos',movements:'Movimientos'};
   const selectView=(next:typeof view)=>{if(next==='home')setOrderPage(0);setView(next);};
   const navigation=[{id:'home',label:'Inicio',icon:<LayoutDashboard/>},{id:'inventory',label:'Inventario',icon:<Boxes/>},{id:'orders',label:'Pedidos',icon:<ClipboardList/>},{id:'movements',label:'Movimientos',icon:<ArrowLeftRight/>}] as const;
-  const showStock=(status:CustomerStockFilter)=>{setStockFilter(status);setView('inventory');};
+  const showStock=(status:CustomerStockFilter)=>{setStockFilter(status);setLocationFilter(null);setView('inventory');};
   const metrics=[
     {label:'Productos',value:inventory.counts.products,status:'' as const,action:'Ver inventario completo'},
     {label:'Disponibles',value:availableTotal,status:'AVAILABLE' as const,action:'Ver stock disponible'},
@@ -147,15 +149,16 @@ export default function CustomerPortal({ user, busy, onLogout }: Props) {
         {error && <div className="notice error" role="alert">{error}</div>}
         {loading && <p className="muted" role="status">Consultando inventario y pedidos…</p>}
         {(view==='home'||view==='inventory')&&<section className="stat-grid customer-metrics" aria-label="Resumen de cuenta">{metrics.map(metric=><StatCard key={metric.label} label={metric.label} value={loading?'—':new Intl.NumberFormat('es').format(metric.value)} caption={metric.action} aria-label={metric.action} aria-pressed={view==='inventory'&&stockFilter===metric.status} onClick={()=>showStock(metric.status)}/>)}</section>}
+        {(view==='home'||view==='inventory')&&<ClientLocations revision={revision} onSelect={location=>{setLocationFilter(location);setStockFilter('');setView('inventory');}}/>}
         {view==='home'&&<div className="customer-overview">
           <section className="card"><div className="card-header"><div className="help-label"><h2>Pedidos</h2><span className="badge badge-neutral">{orderTotal}</span></div><button type="button" className="text-button" aria-label="Ver todos los pedidos" onClick={()=>setView('orders')}>Ver todos<ArrowRight aria-hidden="true"/></button></div>
             {orders.length?<div className="customer-summary-list">{orders.slice(0,4).map(order=><button type="button" className="customer-summary-row" key={order.id} onClick={()=>setView('orders')}><span><strong>{order.externalId}</strong><small>{order.recipientName}</small></span><span className={customerBadge(order.status)}>{customerState(order.status)}</span></button>)}</div>:!loading&&<p className="empty-state">Sin pedidos.</p>}
           </section>
           <section className="card"><div className="card-header"><h2>Últimos movimientos</h2><button type="button" className="text-button" aria-label="Ver todos los movimientos" onClick={()=>setView('movements')}>Ver todos<ArrowRight aria-hidden="true"/></button></div>
-            {inventory.movements.length?<div className="timeline">{inventory.movements.slice(0,5).map(movement=><div className="timeline-item" key={movement.id}><span className="timeline-dot"/><div><strong>{movementLabels[movement.action??movement.type??'']??movement.action??'Movimiento'} · {movement.quantity??'—'}</strong><small>{products.get(movement.productId??'')?.name??'Producto'} · {new Date(movement.createdAt).toLocaleDateString('es')}</small></div></div>)}</div>:!loading&&<p className="empty-state">Sin movimientos.</p>}
+            {inventory.movements.length?<div className="timeline">{inventory.movements.slice(0,5).map(movement=><div className="timeline-item" key={movement.id}><span className="timeline-dot"/><div><strong>{movementLabels[movement.action??movement.type??'']??movement.action??'Movimiento'} · {movement.quantity??'—'}</strong><small>{products.get(movement.productId??'')?.name??'Producto'} · {new Date(movement.createdAt).toLocaleDateString('es')}</small>{(movement.fromLocationName||movement.toLocationName)&&<small>{movement.fromLocationName??'—'} → {movement.toLocationName??'—'}</small>}</div></div>)}</div>:!loading&&<p className="empty-state">Sin movimientos.</p>}
           </section>
         </div>}
-        {view === "inventory" && <CustomerStock key={stockFilter} revision={revision} status={stockFilter} onClearFilter={()=>setStockFilter('')}/>}
+        {view === "inventory" && <CustomerStock key={stockFilter+':'+(locationFilter?.id??'')} revision={revision} status={stockFilter} locationId={locationFilter?.id} locationName={locationFilter?.name} onClearLocation={()=>setLocationFilter(null)} onClearFilter={()=>setStockFilter('')}/>}
 
         {view === "orders" && <section className="card"><nav className="pagination" aria-label="Páginas de pedidos"><button disabled={loading||orderPage===0} onClick={()=>setOrderPage(p=>p-1)}>Anterior</button><span>Página {orderPage+1}</span><button disabled={loading||(orderPage+1)*25>=orderTotal} onClick={()=>setOrderPage(p=>p+1)}>Siguiente</button></nav><div className="card-header"><h2>Pedidos</h2><span className="badge badge-neutral">{orderTotal}</span></div>{orders.length ? <div className="customer-orders">{orders.map((order) => <article className="customer-order" key={order.id}><header><div><h3>{order.externalId}</h3><p>{order.recipientName} · {order.destination}</p><p>{order.orderDate ? formatOrderDate(order.orderDate) : "Fecha sin informar"}</p></div><span className={customerBadge(order.status)}>{customerState(order.status)}</span></header><div className="customer-order-lines">{(order.lines ?? []).map((line, index) => <span key={line.productId + index}>{line.name || products.get(line.productId)?.name || line.sku || line.productId} · solicitado {line.requested ?? line.quantity ?? 0}{line.delivered != null ? ` · entregado ${line.delivered}` : ""}{line.returned ? ` · retorno ${line.returned}` : ""}</span>)}</div>{order.shipmentId && <div className="form-divider"><button className="button button-secondary" type="button" aria-expanded={openProofShipment === order.shipmentId} aria-controls={`proofs-${order.id}`} onClick={() => void toggleProofs(order)}>{openProofShipment === order.shipmentId ? "Ocultar comprobantes" : "Ver comprobantes de entrega"}</button>{openProofShipment === order.shipmentId && <div id={`proofs-${order.id}`} className="customer-proof-list">{proofLoadingShipment === order.shipmentId ? <p className="muted" role="status">Consultando comprobantes…</p> : proofError ? <div className="notice error" role="alert">{proofError}</div> : (proofsByShipment[order.shipmentId] ?? []).length ? (() => { const proofs = proofsByShipment[order.shipmentId as string] ?? []; const grouped = new Map<string, CustomerProof[]>(); proofs.forEach((proof) => grouped.set(proof.parcelId, [...(grouped.get(proof.parcelId) ?? []), proof])); return [...grouped.entries()].map(([parcelId, parcelProofs]) => { const result = parcelProofs[0]?.providerResult; const complete = parcelProofs.some((proof) => proof.evidenceState === "COMPLETE"); const label = result === "DELIVERED" ? complete ? "Foto y firma guardadas" : "Entrega informada, evidencia pendiente" : result === "FAILED" ? "Entrega fallida según QuadMinds" : "Resultado pendiente de sincronización"; const parcelCode = order.parcels?.find((parcel) => parcel.id === parcelId)?.code; return <div className="inventory-list-row" key={parcelId}><span><strong>{parcelCode ? `Bulto ${parcelCode}` : "Comprobante de bulto"}</strong><small>{label}{parcelProofs[0]?.reportedAt ? ` · ${new Date(parcelProofs[0].reportedAt as string).toLocaleString("es")}` : ""}{parcelProofs[0]?.receiverName ? ` · recibió ${parcelProofs[0].receiverName}` : ""}</small></span><span className="inventory-actions">{parcelProofs.filter((proof) => proof.evidenceId).map((proof) => <a key={proof.evidenceId} className="button button-secondary" href={`/api/customer-evidence/${encodeURIComponent(proof.evidenceId as string)}`} target="_blank" rel="noreferrer">{proof.kind === "PHOTO" ? "Ver foto" : proof.kind === "SIGNATURE" ? "Ver firma" : "Ver comprobante"}</a>)}</span></div>; }); })() : <p className="muted">No hay comprobantes sincronizados para este pedido.</p>}</div>}</div>}</article>)}</div> : <p className="muted">Sin pedidos.</p>}</section>}
 

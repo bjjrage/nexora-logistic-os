@@ -50,6 +50,7 @@ export function installInventoryRoutes(app: Express, store: Database, auth: Inve
   app.post('/api/orders/import/xlsx',async(req,res)=>{const actor=await auth(req);authorize(actor as Actor,['ADMIN','OPERATIONS']);res.json(parseOrdersXlsx(req.body));});
   app.get('/api/inventory/products',async(req,res)=>res.json(await inventory.catalogPage(await actorForInventory(auth,req),req.query)));
   app.get('/api/inventory/stock',async(req,res)=>res.json(await inventory.stockPage(await actorForInventory(auth,req),req.query)));
+  app.get('/api/inventory/locations/stock',async(req,res)=>res.json(await inventory.locationStockPage(await actorForInventory(auth,req),req.query)));
   app.get('/api/inventory/movements',async(req,res)=>res.json(await inventory.movementsPage(await actorForInventory(auth,req),req.query)));
   app.get('/api/inventory/movements/export.csv',async(req,res)=>{
     const csv=await inventory.exportMovementsCsv(await actorForInventory(auth,req),req.query);
@@ -68,7 +69,7 @@ export function installInventoryRoutes(app: Express, store: Database, auth: Inve
   app.post('/api/inventory/catalog/import', async (req, res) => res.status(201).json(await catalog.import(await actorForInventory(auth, req), req.body ?? {})));
   app.get('/api/inventory', async (req, res) => res.json(await inventory.bootstrap(await actorForInventory(auth, req), queryString(req.query.clientId))));
   app.get('/api/inventory/export.csv', async (req, res) => {
-    const csv = await inventory.exportCsv(await actorForInventory(auth, req), queryString(req.query.clientId));
+    const csv = await inventory.exportCsv(await actorForInventory(auth, req), queryString(req.query.clientId),req.query);
     res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="nexora-inventory.csv"' }).send(csv);
   });
   app.post('/api/orders/import/preview', async (req, res) => res.json(await inventory.previewImport(await actorForInventory(auth, req), req.body ?? {})));
