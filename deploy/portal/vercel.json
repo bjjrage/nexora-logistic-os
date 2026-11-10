@@ -4,7 +4,7 @@
   "installCommand": "npm --prefix ../.. ci --include=dev",
   "buildCommand": "npm --prefix ../.. run build:portal",
   "outputDirectory": "dist",
-  "ignoreCommand": "git -C ../.. diff --quiet \"$VERCEL_GIT_PREVIOUS_SHA\" HEAD -- deploy/portal frontend/portal 'frontend/Customer*' 'frontend/customer-*' frontend/Brand.tsx frontend/ClientLocations.tsx frontend/HelpTip.tsx frontend/PasswordReset.tsx frontend/StatCard.tsx frontend/api.ts frontend/diagnostics.ts 'frontend/*.css' public package.json package-lock.json tsconfig.json vite.config.ts",
+  "ignoreCommand": "node ../../scripts/vercel-ignore-build.mjs portal",
   "headers": [
     {"source": "/(.*)", "headers": [
       {"key": "X-Robots-Tag", "value": "noindex, nofollow"},
