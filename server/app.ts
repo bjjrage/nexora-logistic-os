@@ -9,6 +9,7 @@ import { actorFromRequest, checkLogin, checkPassword, createSession, hash, setup
 import { DomainError, ensure } from './errors.ts';
 import { schemas } from './validation.ts';
 import { createDriverDocument, renewDriverDocument } from './driver-documents.ts';
+import {clientRemovalPreview,removeClient} from './client-removal.ts';
 import { QuadMindsTracking } from './quadminds.ts';
 import { TraccarTracking } from './traccar.ts';
 import { CompanyAdministration } from './company.ts';
@@ -137,6 +138,8 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     const post = (path: string, schema: ZodType, work: (actor: Actor, b: any, req: Request) => unknown) => app.post(path, async (req, res) => res.json(await work(await auth(req), schema.parse(req.body), req)));
     post('/api/clients', schemas.client, async (a, b) => await domain.createClient(a, {...b,deliveryProvider:b.deliveryProvider??'NEXORA'}));
     post('/api/clients/:id', schemas.client, async (a,b,r)=>await domain.updateClient(a,String(r.params.id),b));
+    app.get('/api/clients/:id/removal',async(req,res)=>res.json(await clientRemovalPreview(store,await auth(req),String(req.params.id))));
+    app.post('/api/clients/:id/delete',async(req,res)=>res.json(await removeClient(store,await auth(req),String(req.params.id),req.body)));
     post('/api/users', schemas.user, async (a, b) => await domain.createUser(a, b));
     post('/api/drivers', schemas.driver, async (a, b) => await domain.createDriver(a, b));
     post('/api/vehicles', schemas.vehicle, async (a, b) => await domain.createVehicle(a, b));

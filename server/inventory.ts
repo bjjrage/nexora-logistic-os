@@ -262,6 +262,46 @@ export class Inventory {
       return { id, ...next };
     }, ['ADMIN', 'OPERATIONS']);
   }
+  async removeProduct(actor:InventoryActor,id:string,input:unknown){
+    const body=z.object({commandId:uuid,expectedSku:nonEmpty.max(100)}).strict().parse(input);
+    id=uuid.parse(id);
+    return this.command(actor,`products.${id}.delete`,body,async()=>{
+      const product=await this.product(actor,id);
+      ensure(product.sku===body.expectedSku,'VERSION_CONFLICT','El SKU cambió. Revisá el producto antes de eliminarlo.',409);
+      const clientId=String(product.client_id);
+      const balances=await this.store.all('SELECT * FROM inventory_balances WHERE org_id=? AND client_id=? AND product_id=? AND quantity>0',actor.orgId,clientId,id);
+      const units=await this.store.all("SELECT * FROM inventory_units WHERE org_id=? AND client_id=? AND product_id=? AND status IN ('AVAILABLE','RESERVED','VEHICLE','QUARANTINE')",actor.orgId,clientId,id);
+      const stock=[...balances,...units];
+      ensure(!stock.some(row=>row.status==='VEHICLE'),'INVALID_TRANSITION','Este producto tiene mercadería cargada o en reparto.',409);
+      ensure(!stock.some(row=>row.status==='RESERVED'),'INVALID_TRANSITION','Liberá las reservas de este producto antes de eliminarlo.',409);
+      ensure(!stock.some(row=>row.status==='QUARANTINE'),'INVALID_TRANSITION','Resolvé las devoluciones en cuarentena antes de eliminar este producto.',409);
+      ensure(!await this.store.one(`SELECT l.id FROM inventory_order_lines l
+       JOIN inventory_orders o ON o.org_id=l.org_id AND o.id=l.order_id
+       WHERE l.org_id=? AND l.client_id=? AND l.product_id=? AND o.status='DRAFT' LIMIT 1`,actor.orgId,clientId,id),
+       'INVALID_TRANSITION','Quitá este producto de los pedidos en borrador antes de eliminarlo.',409);
+
+      for(const balance of balances){
+        const quantity=Number(balance.quantity);
+        await this.changeBalance(actor,{clientId,productId:id,locationId:balance.location_id,status:'AVAILABLE',custodyId:balance.custody_id,orderId:balance.order_id,delta:-quantity});
+        await this.appendMovement(actor,{clientId,productId:id,quantity,fromLocationId:balance.location_id,fromStatus:'AVAILABLE',action:'ADJUST',reason:'Baja de producto',commandId:body.commandId});
+      }
+      for(const unit of units){
+        await this.store.run("UPDATE inventory_units SET status='ADJUSTED',updated_at=? WHERE org_id=? AND id=?",now(),actor.orgId,unit.id);
+        await this.appendMovement(actor,{clientId,productId:id,quantity:1,serialId:unit.id,fromLocationId:unit.location_id,fromStatus:'AVAILABLE',action:'ADJUST',reason:'Baja de producto',commandId:body.commandId});
+      }
+      const hasHistory=await this.store.one(`SELECT 1 AS found WHERE
+       EXISTS (SELECT 1 FROM inventory_movements WHERE org_id=? AND product_id=?)
+       OR EXISTS (SELECT 1 FROM inventory_order_lines WHERE org_id=? AND product_id=?)
+       OR EXISTS (SELECT 1 FROM inventory_units WHERE org_id=? AND product_id=?)`,actor.orgId,id,actor.orgId,id,actor.orgId,id);
+      if(hasHistory)await this.store.run('UPDATE inventory_products SET active=0,updated_at=? WHERE org_id=? AND id=?',now(),actor.orgId,id);
+      else{
+        await this.store.run('DELETE FROM inventory_balances WHERE org_id=? AND product_id=? AND quantity=0',actor.orgId,id);
+        await this.store.run('DELETE FROM inventory_products WHERE org_id=? AND id=?',actor.orgId,id);
+      }
+      const removedUnits=balances.reduce((count,balance)=>count+Number(balance.quantity),units.length);
+      return {id,deleted:!hasHistory,archived:Boolean(hasHistory),removedUnits};
+    },['ADMIN']);
+  }
   async createLocation(actor: InventoryActor, input: Row) {
     const b = inventorySchemas.location.parse(input);
     return this.command(actor, 'locations.create', b, async () => {
@@ -1007,6 +1047,7 @@ export class Inventory {
     this.readAccess(actor);const page=z.object({clientId:z.uuid().optional(),locationId:uuid.optional(),status:z.enum(['','AVAILABLE','RESERVED','VEHICLE','QUARANTINE','DELIVERED','ADJUSTED']).default(''),q:z.string().trim().max(200).default(''),limit:z.coerce.number().int().min(1).max(200).default(25),offset:z.coerce.number().int().min(0).max(1000000).default(0)}).parse(input);
     if(page.clientId)await this.client(actor,page.clientId,true);const clientId=actor.role==='CUSTOMER'?actor.clientId:page.clientId;ensure(actor.role!=='CUSTOMER'||clientId,'FORBIDDEN','Sesión sin cliente.',403);
     const filters=['x.org_id=?'],args:any[]=[actor.orgId];if(clientId){filters.push('x.client_id=?');args.push(clientId);}if(page.locationId){filters.push('x.location_id=?');args.push(page.locationId);}if(page.status){filters.push('x.status=?');args.push(page.status);}if(page.q){filters.push('(lower(p.sku) LIKE ? OR lower(p.name) LIKE ? OR lower(x.serial) LIKE ? OR lower(l.code) LIKE ? OR lower(l.name) LIKE ? OR lower(c.name) LIKE ? OR lower(o.external_id) LIKE ?)');args.push(...Array(7).fill('%'+page.q.toLowerCase()+'%'));}
+    if(!page.status)filters.push("(p.active=1 OR x.status IN ('AVAILABLE','RESERVED','VEHICLE','QUARANTINE'))");
     const source=`FROM (SELECT id,org_id,client_id,product_id,location_id,status,order_id,quantity,'' AS serial FROM inventory_balances WHERE quantity>0 UNION ALL SELECT id,org_id,client_id,product_id,location_id,status,order_id,1 AS quantity,serial FROM inventory_units) x JOIN inventory_products p ON p.id=x.product_id AND p.org_id=x.org_id JOIN inventory_locations l ON l.id=x.location_id AND l.org_id=x.org_id JOIN clients c ON c.id=x.client_id AND c.org_id=x.org_id LEFT JOIN inventory_orders o ON o.id=x.order_id AND o.org_id=x.org_id WHERE ${filters.join(' AND ')}`;
     const total=Number((await this.store.one(`SELECT COUNT(*) AS n ${source}`,...args))?.n??0);
     const rows=await this.store.all(`SELECT x.id AS key,x.client_id,c.name AS client_name,x.product_id,p.sku,p.name AS product_name,x.serial,p.barcode,x.location_id,l.code AS location_code,l.name AS location_name,l.kind AS location_kind,x.quantity,p.unit,x.status,COALESCE(o.external_id,'—') AS order_reference ${source} ORDER BY p.sku,l.code,x.id LIMIT ? OFFSET ?`,...args,page.limit,page.offset);

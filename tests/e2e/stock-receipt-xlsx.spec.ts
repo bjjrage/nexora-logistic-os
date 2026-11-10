@@ -66,11 +66,25 @@ for(const complete of [false,true])test('Stock sugerido '+(complete?'completes o
   await expect(panel.getByText('Hoja ya cubierta: no falta recibir mercadería.',{exact:true})).toBeVisible();
   await expect(panel.getByRole('button',{name:'Confirmar recepción del lote',exact:true})).toHaveCount(0);
  }else{await expect(panel.getByText(/Este contenido coincide con la recepción/)).toBeVisible();await expect(panel.getByRole('button',{name:'Confirmar recepción del lote',exact:true})).toBeDisabled();}
- await panel.getByRole('textbox',{name:'SKU fila 2',exact:true}).fill('SKU-INEXISTENTE-QA');
+ await panel.getByRole('textbox',{name:'Cantidad fila 2',exact:true}).fill('0');
  await panel.getByRole('button',{name:'Validar recepción',exact:true}).click();
  await expect(panel.getByText('Corregí el lote antes de recibir',{exact:true})).toBeVisible();
  await expect(panel.getByRole('button',{name:'Confirmar recepción del lote',exact:true})).toHaveCount(0);
  expect(await stock(client)).toEqual({count:30,units:total});
+ if(!complete){
+  await panel.getByRole('button',{name:'Vaciar lote',exact:true}).click();
+  await panel.getByLabel(/^Archivo de stock/).setInputFiles({
+   name:'recepcion-mixta.csv',mimeType:'text/csv',
+   buffer:Buffer.from('SKU,Cantidad,Nombre\nMOCK-NX-0001,1,\nSKU-NUEVO,2,Heladera de prueba'),
+  });
+  await panel.getByRole('button',{name:'Validar recepción',exact:true}).click();
+  await expect(panel.getByText('1 SKU nuevo')).toBeVisible();
+  await expect(panel.getByRole('row').filter({hasText:'Heladera de prueba'})).toContainText('Nuevo');
+  expect(await stock(client)).toEqual({count:30,units:total});
+  await panel.getByRole('button',{name:'Confirmar recepción del lote',exact:true}).click();
+  await expect(panel.getByText(/2 productos · 3 unidades recibidas/)).toBeVisible();
+  expect(await stock(client)).toEqual({count:31,units:total+3});
+ }
  expect((await(await page.request.get('/api/inventory/reconciliation')).json()).ok).toBe(true);
 });
 
