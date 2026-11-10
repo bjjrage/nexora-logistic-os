@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {test,expect} from '../support/e2e-test.ts';
 
-test('Administración retira un SKU y elimina el cliente desde su ficha',async({page})=>{
+test('Administración retira un SKU, archiva al cliente y conserva sus existencias',async({page})=>{
  const post=async(path:string,data:Record<string,unknown>)=>{
   const response=await page.request.post(path,{headers:{'X-Requested-With':'logistics-os'},data:{commandId:randomUUID(),...data}});
   expect(response.ok(),path+': '+await response.text()).toBe(true);
@@ -26,14 +26,15 @@ test('Administración retira un SKU y elimina el cliente desde su ficha',async({
 
  await nav.getByRole('button',{name:'Clientes',exact:true}).click();
  await page.getByRole('row').filter({hasText:'Bristol QA'}).getByRole('button',{name:'Abrir ficha'}).click();
- page.once('dialog',async dialog=>{
-  expect(dialog.message()).toContain('Bristol QA');
-  expect(dialog.message()).toContain('4 unidades de stock');
-  await dialog.accept();
- });
  await page.getByRole('button',{name:'Eliminar cliente',exact:true}).click();
- await expect(page.getByText('Cliente y registros eliminados.')).toBeVisible();
+ await expect(page.getByRole('alert')).toContainText('tiene historial');
+ page.once('dialog',dialog=>dialog.accept());
+ await page.getByRole('button',{name:'Archivar cliente',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Reactivar cliente',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'← Clientes',exact:true}).click();
  await expect(page.getByRole('row').filter({hasText:'Bristol QA'})).toHaveCount(0);
+ await page.getByRole('button',{name:'Ver archivados',exact:true}).click();
+ await expect(page.getByRole('row').filter({hasText:'Bristol QA'})).toBeVisible();
  await nav.getByRole('button',{name:'Inventario',exact:true}).click();
- await expect(page.getByRole('row').filter({hasText:'CONSERVAR-HASTA-BORRADO'})).toHaveCount(0);
+ await expect(page.getByRole('row').filter({hasText:'CONSERVAR-HASTA-BORRADO'})).toBeVisible();
 });

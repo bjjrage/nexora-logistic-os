@@ -269,7 +269,7 @@ test('auditoría de catálogo: scope de organización, permisos y mismo commandI
   const clientId = await f.addClient('Cliente interno');
   const foreignOrg = randomUUID(), foreignClient = randomUUID(), foreignProduct = randomUUID(), timestamp = new Date().toISOString();
   await f.store.run('INSERT INTO organizations VALUES(?,?,?)', foreignOrg, 'Otra organización aislada', 'UTC');
-  await f.store.run('INSERT INTO clients VALUES(?,?,?)', foreignClient, foreignOrg, 'Cliente ajeno');
+  await f.store.run('INSERT INTO clients(id,org_id,name) VALUES(?,?,?)', foreignClient, foreignOrg, 'Cliente ajeno');
   await f.store.run('INSERT INTO inventory_products VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)', foreignProduct, foreignOrg, foreignClient, 'FOREIGN-001', 'FOREIGN-BAR', 'Privado de otra org', 'QUANTITY', 'unidad', 100, 200, 1, timestamp, timestamp);
   const foreignPayload = { clientId: foreignClient, csv: 'sku,name,tracking\r\nFOREIGN-001,Intento de cambio,QUANTITY' };
   const foreignPreview = await f.post(f.adminCookie, '/api/inventory/catalog/preview', foreignPayload);

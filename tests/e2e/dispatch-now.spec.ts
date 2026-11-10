@@ -23,11 +23,16 @@ test('loaded route must be confirmed before it can dispatch now, with checklist 
  const routeDetail=async()=> (await bootstrap()).routes.find((item:any)=>item.id===route);
  await send('/api/routes/'+route+'/assignments',{expectedVersion:1,parcelIds:[parcel.id],pickup:false});
  await send('/api/routes/'+route+'/load-selected',{expectedVersion:(await routeDetail()).version,parcelIds:[parcel.id]});
+ await send('/api/company/test-mode',{enabled:true});
  const readyRequests:string[]=[];
  page.on('request',request=>{if(new URL(request.url()).pathname==='/api/routes/'+route+'/ready')readyRequests.push(request.url());});
  await page.goto('/');await page.getByRole('button',{name:'Rutas',exact:true}).click();await page.getByText('Buscar rutas e historial',{exact:true}).click();
  await page.getByRole('searchbox',{name:'Buscar ruta',exact:true}).fill(suffix);
  await page.getByRole('button',{name:new RegExp(routeName)}).click();
+ page.once('dialog',dialog=>dialog.accept());
+ await page.getByRole('button',{name:'Marcar ruta de prueba',exact:true}).click();
+ await expect(page.getByText('Ruta de prueba',{exact:true})).toBeVisible();
+ await send('/api/company/test-mode',{enabled:false});
  await expect(page.getByRole('button',{name:'Despachar ahora',exact:true})).toHaveCount(0);
  await page.getByRole('button',{name:'Confirmar ruta',exact:true}).click();
  await expect.poll(async()=> (await routeDetail()).state).toBe('READY');

@@ -72,13 +72,16 @@ test('PostgreSQL: agregar un segundo pedido a una ruta confirmada conserva la ca
   await db.run('UPDATE routes SET start_at=?,end_at=? WHERE id=?',futureStart,futureEnd,route);
   await assert.rejects(domain.dispatch(actor,route,{...cmd(),expectedVersion:await version(),dispatchNow:true}),{code:'INVALID_TRANSITION'});
   await domain.ready(actor,route,{...cmd(),expectedVersion:await version()});
+  await db.run('INSERT INTO organization_test_mode(org_id,enabled) VALUES(?,1)',orgId);
+  await domain.markRouteTest(actor,route,{...cmd(),expectedVersion:await version(),isTest:true});
+  await db.run('UPDATE organization_test_mode SET enabled=0 WHERE org_id=?',orgId);
   const departure=await domain.dispatch(actor,route,{...cmd(),expectedVersion:await version(),dispatchNow:true});
   assert.equal(departure.previousStartAt,futureStart);assert.equal((await domain.route(route,actor)).state,'IN_PROGRESS');
   const stop=(await db.one('SELECT id FROM stops WHERE route_id=? ORDER BY sequence',route))!;
   const attempt=()=>({...cmd(),expectedVersion:0,deliveredParcelIds:[parcels[0]],failedParcelIds:[],receiverName:'QA',evidenceIds:[],reasonCode:'',nextAction:''});
   const absent=attempt();absent.expectedVersion=await version();
   await assert.rejects(domain.attempt(actor,stop.id,absent),{code:'EVIDENCE_REQUIRED'});
-  await db.run('INSERT INTO organization_test_mode(org_id,enabled) VALUES(?,1)',orgId);
+  await db.run('UPDATE organization_test_mode SET enabled=1 WHERE org_id=?',orgId);
   const testAttempt=attempt();testAttempt.expectedVersion=await version();
   await domain.attempt(actor,stop.id,testAttempt);
   assert.ok(await db.one('SELECT parcel_id FROM test_delivery_proofs WHERE org_id=? AND parcel_id=? AND command_id=?',orgId,parcels[0],testAttempt.commandId));

@@ -339,6 +339,7 @@ export class Inventory {
   }
   private async applyReceipt(actor: InventoryActor,b:z.infer<typeof inventorySchemas.receive>) {
       const client = await this.client(actor, b.clientId), product = await this.product(actor, b.productId, client.id), location = await this.location(actor, b.locationId);
+      ensure(!client.archived_at, 'INVALID_TRANSITION', 'Reactivá el cliente para recibir mercadería.',409);
       ensure(product.active && location.active && location.kind !== 'QUARANTINE', 'INVALID_TRANSITION', 'El producto o la ubicación no admite recepciones.');
       if (product.tracking === 'SERIAL') ensure(b.serials?.length === b.quantity, 'VALIDATION_ERROR', 'Indicá un número de serie por unidad.', 400);
       else ensure(!b.serials?.length, 'VALIDATION_ERROR', 'Este producto se controla por cantidad, sin series individuales.', 400);
@@ -413,7 +414,7 @@ export class Inventory {
   }
 
   private async validateOrderProducts(actor: InventoryActor, order: z.infer<typeof orderInput>) {
-    await this.client(actor, order.clientId);
+    ensure(!(await this.client(actor, order.clientId)).archived_at, 'INVALID_TRANSITION', 'Reactivá el cliente para registrar pedidos nuevos.',409);
     const products: Row[] = [];
     for (const line of order.lines) {
       const product = await this.product(actor, line.productId, order.clientId);
@@ -547,7 +548,7 @@ export class Inventory {
       }
       let product: Row | undefined;
       try {
-        await this.client(actor, parsed.data.clientId);
+        ensure(!(await this.client(actor, parsed.data.clientId)).archived_at, 'INVALID_TRANSITION', 'Reactivá el cliente para importar pedidos.',409);
         if (parsed.data.productId) product = await this.product(actor, parsed.data.productId, parsed.data.clientId);
         if (parsed.data.sku) {
           const bySku = await this.store.one('SELECT * FROM inventory_products WHERE org_id=? AND client_id=? AND sku=? AND active=1', actor.orgId, parsed.data.clientId, parsed.data.sku);
@@ -899,7 +900,7 @@ export class Inventory {
         const policy=await this.store.one('SELECT c.delivery_provider FROM inventory_orders o LEFT JOIN client_delivery_policies c ON c.org_id=o.org_id AND c.client_id=o.client_id WHERE o.id=? AND o.org_id=?',item.order_id,actor.orgId);
         const link = await this.store.one("SELECT provider_result,evidence_state FROM quad_parcel_links WHERE org_id=? AND parcel_id=?", actor.orgId, parcelId);
         if(policy?.delivery_provider==='NEXORA'&&!link){
-          ensure(await this.store.one('SELECT id FROM evidence WHERE org_id=? AND parcel_id=?',actor.orgId,parcelId)||await this.store.one('SELECT t.parcel_id FROM test_delivery_proofs t JOIN organization_test_mode m ON m.org_id=t.org_id AND m.enabled=1 WHERE t.org_id=? AND t.parcel_id=? AND t.command_id=?',actor.orgId,parcelId,commandId),'EVIDENCE_REQUIRED','La entrega del pedido Nexora requiere una foto del bulto.');
+          ensure(await this.store.one('SELECT id FROM evidence WHERE org_id=? AND parcel_id=?',actor.orgId,parcelId)||await this.store.one("SELECT t.parcel_id FROM test_delivery_proofs t JOIN organization_test_mode m ON m.org_id=t.org_id AND m.enabled=1 JOIN route_assignments a ON a.org_id=t.org_id AND a.parcel_id=t.parcel_id AND a.active=1 JOIN routes r ON r.org_id=a.org_id AND r.id=a.route_id AND r.is_test=1 AND r.state='IN_PROGRESS' WHERE t.org_id=? AND t.parcel_id=? AND t.command_id=?",actor.orgId,parcelId,commandId),'EVIDENCE_REQUIRED','La entrega del pedido Nexora requiere una foto del bulto.');
         }else{
         ensure(link?.provider_result === 'DELIVERED' && link.evidence_state === 'COMPLETE', 'EVIDENCE_REQUIRED', 'La entrega del pedido requiere resultado y evidencia completos de QuadMinds.');
         const proofs = await this.store.all(`SELECT q.kind,e.sha256 FROM quad_proofs q JOIN evidence e ON e.id=q.evidence_id AND e.org_id=q.org_id

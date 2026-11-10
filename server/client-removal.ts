@@ -6,11 +6,14 @@ import {ensure} from './errors.ts';
 
 const totals=z.object({products:z.number().int().nonnegative(),orders:z.number().int().nonnegative(),shipments:z.number().int().nonnegative(),stockUnits:z.number().int().nonnegative()}).strict();
 const confirmation=z.object({commandId:z.uuid(),expectedName:z.string().min(1).max(500),expectedTotals:totals}).strict();
+const archiveConfirmation=z.object({commandId:z.uuid(),archived:z.boolean()}).strict();
 
 export async function clientRemovalPreview(store:Database,actor:Actor,clientId:string){
  authorize(actor,['ADMIN']);
  const row=await store.one(`
-  SELECT c.id,c.name,
+  SELECT c.id,c.name,c.archived_at,
+   EXISTS (SELECT 1 FROM client_history h WHERE h.org_id=c.org_id AND h.client_id=c.id) AS has_history,
+   (SELECT COUNT(*) FROM billing_documents d WHERE d.org_id=c.org_id AND d.client_id=c.id) AS billing_documents,
    (SELECT COUNT(*) FROM inventory_products p WHERE p.org_id=c.org_id AND p.client_id=c.id) AS products,
    (SELECT COUNT(*) FROM inventory_orders o WHERE o.org_id=c.org_id AND o.client_id=c.id) AS orders,
    (SELECT COUNT(*) FROM shipments s WHERE s.org_id=c.org_id AND s.client_id=c.id) AS shipments,
@@ -40,23 +43,39 @@ export async function clientRemovalPreview(store:Database,actor:Actor,clientId:s
  return {
   id:String(row.id),name:String(row.name),
   totals:{products:Number(row.products),orders:Number(row.orders),shipments:Number(row.shipments),stockUnits:Number(row.stock_units)},
-  roadParcels:Number(row.road_parcels),blocked:Boolean(Number(row.road_parcels)||row.pending_stop||row.vehicle_stock),
+  roadParcels:Number(row.road_parcels),inTransit:Boolean(Number(row.road_parcels)||row.pending_stop||row.vehicle_stock),
+  hasHistory:Boolean(row.has_history),billingDocuments:Number(row.billing_documents),archivedAt:row.archived_at??null,
+  blocked:Boolean(Number(row.road_parcels)||row.pending_stop||row.vehicle_stock||row.has_history),
  };
 }
 
 const inTransit='El cliente tiene mercadería cargada o en reparto. Terminá el reparto o devolvé la mercadería al depósito para eliminarlo.';
+const hasHistory='El cliente tiene historial operativo o de facturación. Usá Archivar cliente para conservarlo.';
 
-export async function removeClient(store:Database,actor:Actor,clientId:string,input:unknown){
+export async function archiveClient(store:Database,actor:Actor,clientId:string,input:unknown){
+ const id=z.uuid().parse(clientId),body=archiveConfirmation.parse(input);
+ return new Logistics(store).command(actor,`clients.${id}.${body.archived?'archive':'reactivate'}`,body,['ADMIN'],async()=>{
+  const client=await clientRemovalPreview(store,actor,id);
+  if(body.archived)ensure(!client.inTransit,'INVALID_TRANSITION','Terminá el reparto o registrá el retorno al depósito antes de archivar al cliente.',409);
+  const archivedAt=body.archived?(client.archivedAt??new Date().toISOString()):null;
+  await store.run('UPDATE clients SET archived_at=? WHERE org_id=? AND id=?',archivedAt,actor.orgId,id);
+  return {id,archivedAt,state:body.archived?'ARCHIVED':'ACTIVE'};
+ });
+}
+
+export async function removeClient(store:Database,actor:Actor,clientId:string,input:unknown,sessionToken?:string|null){
  const id=z.uuid().parse(clientId),body=confirmation.parse(input);
  return new Logistics(store).command(actor,`clients.${id}.delete`,body,['ADMIN'],async()=>{
   const client=await clientRemovalPreview(store,actor,id);
-  ensure(!client.blocked,'INVALID_TRANSITION',inTransit,409);
+  ensure(!client.inTransit,'INVALID_TRANSITION',inTransit,409);
+  ensure(!client.hasHistory,'INVALID_TRANSITION',hasHistory,409);
   const sameTotals=Object.entries(client.totals).every(([key,count])=>body.expectedTotals[key as keyof typeof body.expectedTotals]===count);
   ensure(client.name===body.expectedName&&sameTotals,'VERSION_CONFLICT','Los datos del cliente cambiaron. Volvé a revisar antes de eliminarlo.',409);
   if(store.kind==='postgres'){
-   const result=await store.one('SELECT purge_client(?,?,?,?) AS result',actor.orgId,id,actor.id,body.expectedName);
+   ensure(sessionToken,'FORBIDDEN','Volvé a iniciar sesión antes de eliminar un cliente.',403);
+   const result=await store.one('SELECT purge_client(?,?,?,?,?) AS result',actor.orgId,id,actor.id,body.expectedName,sessionToken);
    ensure(result?.result!=='FORBIDDEN','FORBIDDEN','Solo Administración puede eliminar clientes.',403);
-   ensure(result?.result!=='IN_TRANSIT','INVALID_TRANSITION',inTransit,409);
+   ensure(result?.result!=='CLIENT_HAS_HISTORY','INVALID_TRANSITION',hasHistory,409);
    ensure(result?.result==='DELETED','VERSION_CONFLICT','El cliente cambió. Volvé a revisar antes de eliminarlo.',409);
   }else{
    await store.run('INSERT INTO client_purge_scope(org_id,client_id,actor_id) VALUES(?,?,?)',actor.orgId,id,actor.id);

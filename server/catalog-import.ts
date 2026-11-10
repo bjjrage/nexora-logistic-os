@@ -304,7 +304,8 @@ export class CatalogImport {
   private async plan(actor: InventoryActor, clientId: string, file: FileContent, defaultTracking?: Tracking) {
     const rowErrors = [...file.errors];
     const ignoredColumns = file.rows[0] ? headersFrom(file.rows[0]).ignoredColumns : [];
-    const client = await this.store.one('SELECT id FROM clients WHERE id=? AND org_id=?', clientId, actor.orgId);
+    const client = await this.store.one('SELECT id,archived_at FROM clients WHERE id=? AND org_id=?', clientId, actor.orgId);
+    ensure(!client?.archived_at,'INVALID_TRANSITION','Reactivá el cliente para importar productos.',409);
     if (!client) return resultShape(Math.max(0, file.rows.length - 1), [], [...rowErrors, { row: 1, field: 'clientId', message: 'No se encontró el cliente en esta organización.' }], ignoredColumns);
     if (rowErrors.length || file.rows.length < 2) return resultShape(Math.max(0, file.rows.length - 1), [], rowErrors, ignoredColumns);
     const header = headersFrom(file.rows[0]);

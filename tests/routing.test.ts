@@ -430,8 +430,9 @@ test('planned routes continue through load, confirmation, departure and delivery
  await f.d.loadSelected(f.actor,id,{...cmd(),expectedVersion:await version(),parcelIds:parcels});
  await f.d.ready(f.actor,id,{...cmd(),expectedVersion:await version()});
  await f.d.inspect(f.actor,f.vehicle,{...cmd(),odometer:0,fuelPercent:80,items:[{label:'Control QA',severity:'OK',note:''}]});
- await f.d.dispatch(f.actor,id,{...cmd(),expectedVersion:await version(),dispatchNow:true});
  await f.db.run('INSERT INTO organization_test_mode VALUES(?,1)',f.actor.orgId);
+ await f.d.markRouteTest(f.actor,id,{...cmd(),expectedVersion:await version(),isTest:true});
+ await f.d.dispatch(f.actor,id,{...cmd(),expectedVersion:await version(),dispatchNow:true});
  const stop=(await f.db.one('SELECT id FROM stops WHERE route_id=?',id))!;
  await f.d.attempt(f.actor,stop.id,{...cmd(),expectedVersion:await version(),deliveredParcelIds:parcels,failedParcelIds:[],receiverName:'Receptor QA',evidenceIds:[],reasonCode:'',nextAction:''});
  assert.equal((await f.db.one('SELECT status FROM inventory_orders WHERE id=?',selectedOrder))!.status,'DELIVERED');

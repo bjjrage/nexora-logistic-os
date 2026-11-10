@@ -56,8 +56,10 @@ test('private routing schema on PostgreSQL runtime role applies once and reconci
   assert.equal((await d.bootstrap(actor)).parcels.some(p=>allCargo.includes(p.id)),false);
   const complete=await d.bootstrap(actor,routeId);assert.equal(complete.parcels.length,3);assert.equal(complete.assignments.filter(a=>a.active).length,3);assert.equal(complete.stops.length,2);
   assert.equal(complete.parcels.filter(p=>p.state==='LOADED').length,2);assert.equal(complete.parcels.filter(p=>p.state==='RECEIVED').length,1);
+  await db.run('INSERT INTO organization_test_mode VALUES(?,1)',actor.orgId);
+  await d.markRouteTest(actor,routeId,{...cmd(),expectedVersion:(await d.route(routeId,actor)).version,isTest:true});
   await d.loadSelected(actor,routeId,{...cmd(),expectedVersion:(await d.route(routeId,actor)).version,parcelIds:allCargo});await d.ready(actor,routeId,{...cmd(),expectedVersion:(await d.route(routeId,actor)).version});await d.inspect(actor,vehicle,{...cmd(),odometer:0,fuelPercent:80,items:[{label:'Control QA',severity:'OK',note:''}]});await d.dispatch(actor,routeId,{...cmd(),expectedVersion:(await d.route(routeId,actor)).version,dispatchNow:true});
-  await db.run('INSERT INTO organization_test_mode VALUES(?,1)',actor.orgId);const correctionBody={...cmd(),expectedVersion:(await d.route(routeId,actor)).version,didNotDepart:true,reason:'Prueba aislada; el vehículo no salió del depósito.'};
+  const correctionBody={...cmd(),expectedVersion:(await d.route(routeId,actor)).version,didNotDepart:true,reason:'Prueba aislada; el vehículo no salió del depósito.'};
   const undone=await correctTestDispatch(db,actor,routeId,correctionBody);assert.equal(undone.loadedPreserved,3);assert.equal((await db.one('SELECT status FROM inventory_orders WHERE id=?',order))!.status,'LOADED');assert.equal((await reconcileInventory(db,actor)).ok,true);
   const correction={...cmd(),orderIds:[order,extra],mode:'RELEASE',confirmUnloaded:true};
   assert.equal((await correctDispatchOrders(db,actor,correction)).released,3);assert.equal((await correctDispatchOrders(db,actor,correction)).released,3);

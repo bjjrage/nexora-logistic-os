@@ -1,8 +1,8 @@
 import test from 'node:test';
 import {Store} from '../server/db.ts';
-import {checkClientRemoval,checkProductRemoval} from './support/client-removal.ts';
+import {checkClientRemoval,checkClientWithBillingIsKept,checkProductRemoval} from './support/client-removal.ts';
 
-test('borrar cliente elimina sus datos en una operación, conserva la ruta mixta y respeta la custodia',async t=>{
+test('eliminar cliente sin historial y archivar con custodia e historial protegidos',async t=>{
  const db=new Store(':memory:');
  t.after(()=>db.close());
  await checkClientRemoval(db);
@@ -12,4 +12,9 @@ test('eliminar un SKU retira el stock disponible y conserva su historial',async 
  const db=new Store(':memory:');
  t.after(()=>db.close());
  await checkProductRemoval(db);
+});
+
+test('la base conserva los documentos de facturación al archivar',async t=>{
+ const db=new Store(':memory:');t.after(()=>db.close());
+ await checkClientWithBillingIsKept(db);
 });

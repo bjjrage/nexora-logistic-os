@@ -21,7 +21,8 @@ export function installCustomerAccess(app:Express,store:Database,auth:(req:Reque
   app.post('/api/customer-access',async(req,res)=>{
     const actor=await auth(req),body=createSchema.parse(req.body);
     res.json(await domain.command(actor,'customer-access.create',body,['ADMIN'],async()=>{
-      await domain.record('clients',body.clientId,actor);
+      const client=await domain.record('clients',body.clientId,actor);
+      ensure(!client.archived_at,'INVALID_TRANSITION','Reactivá el cliente para habilitar un acceso nuevo.',409);
       ensure(!await store.one('SELECT id FROM users WHERE lower(username)=lower(?)',body.username)&&!await store.one('SELECT id FROM customer_accounts WHERE lower(username)=lower(?)',body.username),'VALIDATION_ERROR','El nombre de usuario ya existe, aunque cambien las mayúsculas.',409);
       const id=randomUUID();
       await store.run('INSERT INTO customer_accounts(id,org_id,client_id,name,username,password_hash,enabled,created_at) VALUES(?,?,?,?,?,?,1,?)',id,actor.orgId,body.clientId,body.name,body.username,passwordHash(body.password),new Date().toISOString());
