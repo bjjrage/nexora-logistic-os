@@ -147,12 +147,48 @@ test('recepciones: rollback si falla una escritura a mitad del lote o el histori
  const f=await fixture(t);const original=f.store.run.bind(f.store);
  for(const failOn of ['movement','history']){
   let writes=0;f.store.run=async(sql,...args)=>{if((failOn==='movement'&&sql.startsWith('INSERT INTO inventory_movements')&&++writes===2)||(failOn==='history'&&sql.startsWith('INSERT INTO inventory_receipt_batches')))throw new Error('Fallo inyectado');return original(sql,...args);};
-  await assert.rejects(f.receipts.commit(f.actor,f.input([f.row('0001','5'),f.row('0002','3',{row:3})])),/Fallo inyectado/);
+  const input=f.input([f.row('0001','5'),f.row('NUEVO','3',{row:3})],{source:'CSV',createMissingProducts:true});
+  await assert.rejects(f.receipts.commit(f.actor,input),/Fallo inyectado/);
   f.store.run=original;
+  assert.equal(await f.store.one("SELECT id FROM inventory_products WHERE sku='NUEVO'"),undefined);
   assert.equal((await f.store.one('SELECT COUNT(*) AS n FROM inventory_balances'))!.n,0);
   assert.equal((await f.store.one('SELECT COUNT(*) AS n FROM inventory_movements'))!.n,0);
   assert.equal((await f.store.one('SELECT COUNT(*) AS n FROM inventory_receipt_batches'))!.n,0);
  }
+});
+
+test('recibir una planilla mixta crea SKU nuevos y recibe stock con una sola confirmación',async t=>{
+ const f=await fixture(t);
+ const {rows}=readReceiptFile({csv:'SKU,Cantidad,Descripción\n0001,2,Nombre distinto\nNUEVO,3,Heladera\nnuevo,4,\nSIN-NOMBRE,1,'});
+ const input=f.input(rows,{source:'CSV',createMissingProducts:true});
+ const preview=await f.receipts.preview(f.actor,input);
+ assert.equal(preview.valid,true);
+ assert.equal(preview.newProductCount,2);
+ assert.equal(preview.unitCount,10);
+ assert.equal(await f.store.one("SELECT id FROM inventory_products WHERE sku='NUEVO'"),undefined);
+ const result=await f.receipts.commit(f.actor,input);
+ assert.equal(result.unitCount,10);
+ assert.deepEqual(await f.receipts.commit(f.actor,input),result);
+ const products=await f.store.all(`SELECT p.sku,p.name,SUM(b.quantity) AS quantity
+  FROM inventory_products p JOIN inventory_balances b ON b.product_id=p.id
+  WHERE p.client_id=? GROUP BY p.sku,p.name ORDER BY p.sku`,f.clientId);
+ assert.deepEqual(products.map(p=>[p.sku,p.name,p.quantity]),[['0001','Producto 0001',2],['NUEVO','Heladera',7],['SIN-NOMBRE','SIN-NOMBRE',1]]);
+ const repeat=await f.receipts.preview(f.actor,f.input(rows,{source:'CSV',createMissingProducts:true}));
+ assert.equal(repeat.repeatedContent,true);
+ assert.equal(repeat.newProductCount,0);
+});
+
+test('completar una hoja con un SKU nuevo valida el plan y no repite la entrada',async t=>{
+ const f=await fixture(t);
+ const input=f.input([f.row('OBJETIVO-NUEVO','4')],{source:'XLSX',createMissingProducts:true,mode:'COMPLETE_SHEET'});
+ const preview=await f.receipts.preview(f.actor,input);
+ assert.equal(preview.newProductCount,1);
+ assert.equal((await f.receipts.preview({...f.actor,role:'DEPOT'},input)).valid,false);
+ const result=await f.receipts.commit(f.actor,{...input,expectedPlanHash:preview.planHash});
+ assert.equal(result.unitCount,4);
+ const repeat=await f.receipts.preview(f.actor,f.input(input.rows,{source:'XLSX',createMissingProducts:true,mode:'COMPLETE_SHEET'}));
+ assert.equal(repeat.valid,true);
+ assert.equal(repeat.unitCount,0);
 });
 
 test('recepciones: aislamiento de cliente y empresa, permisos y límite de unidades',async t=>{

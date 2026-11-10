@@ -76,6 +76,7 @@ export function installInventoryRoutes(app: Express, store: Database, auth: Inve
   app.get('/api/orders/imports', async (req, res) => res.json(await inventory.importHistory(await actorForInventory(auth, req))));
   app.post('/api/inventory/products', async (req, res) => res.status(201).json(await inventory.createProduct(await actorForInventory(auth, req), inventorySchemas.product.parse(req.body))));
   app.patch('/api/inventory/products/:id', async (req, res) => res.json(await inventory.updateProduct(await actorForInventory(auth, req), String(req.params.id), inventorySchemas.productUpdate.parse(req.body))));
+  app.post('/api/inventory/products/:id/delete', async (req, res) => res.json(await inventory.removeProduct(await actorForInventory(auth, req), String(req.params.id), req.body)));
   app.post('/api/inventory/locations', async (req, res) => res.status(201).json(await inventory.createLocation(await actorForInventory(auth, req), inventorySchemas.location.parse(req.body))));
   app.patch('/api/inventory/locations/:id', async (req, res) => res.json(await inventory.updateLocation(await actorForInventory(auth, req), String(req.params.id), inventorySchemas.locationUpdate.parse(req.body))));
   app.post('/api/inventory/receipts', async (req, res) => res.json(await inventory.receive(await actorForInventory(auth, req), inventorySchemas.receive.parse(req.body))));
