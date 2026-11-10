@@ -15,12 +15,12 @@ test('staff and customer login accept username case variations without weakening
  const client=(await domain.createClient(actor,{...command(),name:'Cliente QA'})).id;
  await store.run('INSERT INTO customer_accounts(id,org_id,client_id,name,username,password_hash,enabled,created_at) VALUES(?,?,?,?,?,?,1,?)',randomUUID(),actor.orgId,client,'Cliente QA','ClienteQA',passwordHash('QA-Cliente-789'),new Date().toISOString());
  const server=createApp(store).listen(0,'127.0.0.1');t.after(()=>new Promise<void>(r=>server.close(()=>r())));await new Promise<void>(r=>server.once('listening',r));
- const url='http://127.0.0.1:'+(server.address() as {port:number}).port+'/api/login';
- const login=async(username:string,password:string)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'logistics-os'},body:JSON.stringify({username,password})});
+ const url='http://127.0.0.1:'+(server.address() as {port:number}).port;
+ const login=async(username:string,password:string,customer=false)=>fetch(url+(customer?'/api/customer/login':'/api/login'),{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'logistics-os'},body:JSON.stringify({username,password})});
  assert.equal((await login('marcelo','QA-Password-456')).status,200);
  assert.equal((await login('MARCelo','QA-Password-456')).status,200);
  assert.equal((await login('marcelo','wrong-password')).status,401);
- assert.equal((await login('clienteqa','QA-Cliente-789')).status,200);
+ assert.equal((await login('clienteqa','QA-Cliente-789',true)).status,200);
  await store.run('INSERT INTO users(id,org_id,username,name,password_hash,role,driver_id) VALUES(?,?,?,?,?,?,NULL)',randomUUID(),actor.orgId,'MARCelo','Colisión histórica',passwordHash('QA-Other-123'),'ADMIN');
  assert.equal((await login('mArcelo','QA-Password-456')).status,401);
  assert.equal((await login('Marcelo','QA-Password-456')).status,200);

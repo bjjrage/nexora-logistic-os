@@ -41,7 +41,7 @@ async function fixture(t: any) {
     assert.equal(result.status, 200);
     return result.body.id as string;
   };
-  const login = async (username: string) => await request(base, '/api/login', { method: 'POST', body: { username, password } });
+  const login = async (username: string, customer = false) => await request(base, customer ? '/api/customer/login' : '/api/login', { method: 'POST', body: { username, password } });
   return { base, store, adminCookie, post, login, addClient };
 }
 
@@ -288,7 +288,7 @@ test('auditoría de catálogo: scope de organización, permisos y mismo commandI
   assert.equal(forbiddenTemplate.status, 403);
   const customer = await f.post(f.adminCookie, '/api/customer-access', { commandId: randomUUID(), clientId, name: 'Customer import', username: 'audit-catalog-customer', password });
   assert.equal(customer.status, 200);
-  const customerLogin = await f.login('audit-catalog-customer');
+  const customerLogin = await f.login('audit-catalog-customer', true);
   assert.equal(customerLogin.status, 200);
   assert.equal((await f.post(customerLogin.cookie, '/api/inventory/catalog/import', { clientId, csv: 'sku,name,tracking\r\nCUSTOMER-1,No,QUANTITY', commandId: randomUUID() })).status, 403);
   assert.equal((await f.post(undefined, '/api/inventory/catalog/preview', { clientId, csv: 'sku,name,tracking\r\nUNAUTH-1,No,QUANTITY' })).status, 401);
