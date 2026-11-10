@@ -15,6 +15,14 @@ try{
    if(built.ok)frontend=(await built.json()).release;
  }
 }catch{}
-const synchronized=clean&&local===remote&&local===online&&ready&&(!origin.hostname.endsWith('.vercel.app')||frontend===local);
+let frontendCurrent=frontend===local;
+if(frontend&&!frontendCurrent&&/^[a-f0-9]{40}$/.test(frontend)){
+ try{
+  const paths=git('diff','--name-only',frontend,local).split('\n').filter(Boolean);
+  const portalFiles=new Set(['frontend/CustomerPortal.tsx','frontend/CustomerStock.tsx','frontend/CustomerMovements.tsx','frontend/customer-portal.css','frontend/customer-labels.ts']);
+  frontendCurrent=paths.every(path=>path.startsWith('frontend/portal/')||path.startsWith('deploy/portal/')||portalFiles.has(path));
+ }catch{}
+}
+const synchronized=clean&&local===remote&&local===online&&ready&&(!origin.hostname.endsWith('.vercel.app')||frontendCurrent);
 console.log(JSON.stringify({local,github:remote,online,frontend,workingTreeClean:clean,ready,synchronized},null,2));
 if(!synchronized)process.exitCode=1;

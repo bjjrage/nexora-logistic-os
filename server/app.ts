@@ -5,7 +5,8 @@ import { resolve } from 'node:path';
 import { camel } from './db.ts';
 import type { Database } from './database.ts';
 import { Logistics } from './domain.ts';
-import { actorFromRequest, checkLogin, checkPassword, createSession, hash, setup, type Actor } from './auth.ts';
+import { actorFromRequest, checkLogin, checkPassword, createSession, endSession, hash, setup, type Actor } from './auth.ts';
+import { CUSTOMER_PORTAL_ORIGIN } from './portal-origin.ts';
 import { DomainError, ensure } from './errors.ts';
 import { schemas } from './validation.ts';
 import { createDriverDocument, renewDriverDocument } from './driver-documents.ts';
@@ -25,6 +26,8 @@ import {reconcileInventory} from './reconciliation.ts';
 import {PasswordRecovery} from './password-recovery.ts';
 import {latestParcelAssignment} from './driver-access.ts';
 import {installBillingRoutes} from './billing.ts';
+const customerDataPrefix = '/api/customer-data/';
+const customerRead = /^(inventory(\/(stock|locations\/stock|movements|export\.csv|movements\/export\.csv))?|orders\/(read|export\.csv)|quadminds\/shipments\/[a-f0-9-]+\/proofs|customer-evidence\/[a-f0-9-]+)$/i;
 export function createApp(store: Database, tracking = new QuadMindsTracking(store), quad = new QuadOperations(store),diagnostics=new Diagnostics()) {
     const app = express(), domain = new Logistics(store);
     const traccar = new TraccarTracking(store);
@@ -35,6 +38,14 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     app.use(diagnostics.middleware);
     app.use((_req,res,next)=>{if(process.env.NODE_ENV==='production')res.set({'Strict-Transport-Security':'max-age=31536000; includeSubDomains','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org; font-src 'self'; connect-src 'self'; frame-src https://www.openstreetmap.org; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"});next();});
     app.use((_req, res, next) => { res.set({ 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'strict-origin-when-cross-origin', 'Permissions-Policy': 'geolocation=()', 'Cache-Control': 'no-store' }); next(); });
+    app.use((req, _res, next) => {
+        if (req.path.startsWith(customerDataPrefix)) {
+            const path = req.path.slice(customerDataPrefix.length);
+            ensure(['GET','HEAD'].includes(req.method) && customerRead.test(path),'NOT_FOUND','Recurso no encontrado.',404);
+            req.url = '/api/' + req.url.slice(customerDataPrefix.length);
+        }
+        next();
+    });
     app.post('/api/quadminds/webhook',express.raw({type:'application/json',limit:'512kb'}),async(req,res)=>{ensure(Buffer.isBuffer(req.body),'VALIDATION_ERROR','Se requiere un evento JSON.',400);res.json(await quad.webhook(req.body,req.headers['quadminds-signature']));});
     app.get('/api/jobs/quadminds-sync',async(req,res)=>{
         const secret=process.env.CRON_SECRET;
@@ -44,14 +55,17 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     app.use('/api', (req, res, next) => {
         if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
             const production=process.env.NODE_ENV==='production'||process.env.VERCEL==='1';
-            const allowed = new Set([...(production?[]:['http://127.0.0.1:5173','http://localhost:5173']), `${production?'https':'http'}://${req.headers.host}`, ...(process.env.ALLOWED_ORIGINS ?? '').split(',').map(s=>s.trim()).filter(Boolean)]);
-            if (req.headers['x-requested-with'] !== 'logistics-os' || (req.headers.origin && !allowed.has(req.headers.origin)))
+            const portal = req.path.startsWith('/customer/');
+            const allowed = new Set([...(production?[]:['http://127.0.0.1:5173','http://localhost:5173','http://127.0.0.1:5174','http://localhost:5174']), `${production?'https':'http'}://${req.headers.host}`, ...(process.env.ALLOWED_ORIGINS ?? '').split(',').map(s=>s.trim()).filter(Boolean)]);
+            const origin = req.headers.origin;
+            const wrongSurface = origin && (production && portal ? origin !== CUSTOMER_PORTAL_ORIGIN : origin === CUSTOMER_PORTAL_ORIGIN && !portal);
+            if (req.headers['x-requested-with'] !== 'logistics-os' || wrongSurface || (origin && origin !== CUSTOMER_PORTAL_ORIGIN && !allowed.has(origin)))
                 return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Origen de solicitud no autorizado.' } });
         }
         next();
     });
     app.use(express.json({ limit: '8mb' }));
-    const auth = async (req: Request): Promise<Actor> => { const actor = await actorFromRequest(store, req); ensure(actor, 'FORBIDDEN', 'Iniciá sesión para continuar.', 401); const context=requestContext.getStore();if(context){context.userId=actor.id;context.orgId=actor.orgId;} return actor; };
+    const auth = async (req: Request): Promise<Actor> => { const actor = await actorFromRequest(store, req, req.originalUrl.startsWith(customerDataPrefix) ? 'CUSTOMER' : undefined); ensure(actor, 'FORBIDDEN', 'Iniciá sesión para continuar.', 401); const context=requestContext.getStore();if(context){context.userId=actor.id;context.orgId=actor.orgId;} return actor; };
     installLivePortal(app,store,auth);
     const loginAttempts = new WindowLimiter(20,60000);
     const userAttempts = new WindowLimiter(10,300000);
@@ -66,45 +80,44 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
       const gps=await traccar.health();const ready=process.env.TRACCAR_ENABLED!=='true'||gps.configured&&gps.connected;
       res.status(ready?200:503).json({status:ready?'ready':'degraded',database:'connected',gps:process.env.TRACCAR_ENABLED==='true'?(gps.connected?'connected':'unavailable'):'disabled'});
     });
-    app.post('/api/password-recovery/redeem',async(req,res)=>{loginLimit(req);res.json(await recovery.redeem(req.body));});
+    app.post('/api/password-recovery/redeem',async(req,res)=>{loginLimit(req);res.json(await recovery.redeem(req.body,'USER'));});
+    app.post('/api/customer/password-recovery/redeem',async(req,res)=>{loginLimit(req);res.json(await recovery.redeem(req.body,'CUSTOMER'));});
     app.post('/api/password-recovery/issue',async(req,res)=>{const actor=await auth(req);ensure(recoveryIssues.allow(actor.id),'FORBIDDEN','Demasiados enlaces. Esperá antes de emitir otro.',429);res.json(await recovery.issue(actor,req.body));});
     app.get('/api/preview-identity',(_req,res)=>{if(process.env.NODE_ENV==='production'||!process.env.PREVIEW_INSTANCE_ID)return res.status(404).json({error:{code:'NOT_FOUND',message:'Endpoint no encontrado.'}});res.json({application:'logistics-os-local',previewInstanceId:process.env.PREVIEW_INSTANCE_ID});});
     const telemetryLimit=new WindowLimiter(20,60000);
     app.post('/api/diagnostics/events',async(req,res)=>{const actor=await auth(req);ensure(telemetryLimit.allow(actor.id),'FORBIDDEN','Demasiados eventos.',429);const body=z.object({kind:z.enum(['UI_ERROR','UNHANDLED_REJECTION','API_ERROR']),component:z.string().regex(/^[a-zA-Z0-9_.-]{1,80}$/),requestId:z.uuid().optional()}).strict().parse(req.body);diagnostics.emit('client.error',body);res.status(202).json({accepted:true});});
     app.get('/api/diagnostics',async(req,res)=>{const actor=await auth(req);ensure(actor.role==='ADMIN','FORBIDDEN','Acceso no autorizado.',403);res.json({release:process.env.RELEASE_SHA??'local',events:diagnostics.recent.filter(entry=>entry.orgId===actor.orgId)});});
     app.get('/api/inventory/reconciliation',async(req,res)=>{const actor=await auth(req);const result=await reconcileInventory(store,actor);if(!result.ok)diagnostics.emit('inventory.mismatch',{quantityIssues:result.quantityIssues.length,serialIssues:result.serialIssues.length});res.json(result);});
-    app.get('/api/session', async (req, res) => res.json({ user: await actorFromRequest(store, req), setupRequired: !await store.one('SELECT id FROM users LIMIT 1') }));
+    app.get('/api/session', async (req, res) => res.json({ user: await actorFromRequest(store, req, 'STAFF'), setupRequired: !await store.one('SELECT id FROM users LIMIT 1') }));
+    app.get('/api/customer/session', async (req, res) => res.json({ user: await actorFromRequest(store, req, 'CUSTOMER') }));
     app.post('/api/setup', async (req, res) => {
         loginLimit(req);
         if(process.env.NODE_ENV==='production')ensure(process.env.INITIAL_SETUP_TOKEN&&process.env.INITIAL_SETUP_TOKEN.length>=32&&typeof req.headers['x-setup-token']==='string'&&hash(req.headers['x-setup-token'])===hash(process.env.INITIAL_SETUP_TOKEN),'FORBIDDEN','El alta inicial se realiza desde la instalación privada de Nexora.',403);
         const input = schemas.setup.parse(req.body); const result = await setup(store, input); await createSession(store, result.userId, res); res.status(201).json({ id: result.userId });
     });
-    app.post('/api/login', async (req, res) => {
+    const login = (customer: boolean) => async (req: Request, res: Response) => {
         loginLimit(req);
         const b = schemas.login.parse(req.body);
         ensure(userAttempts.allow(b.username.toLowerCase()),'FORBIDDEN','Demasiados intentos para este usuario. Esperá unos minutos.',429);
-        let user = await store.one('SELECT id,password_hash FROM users WHERE username=? AND enabled=1', b.username);
-        let customer=false;
-        if(!user){user=await store.one('SELECT id,password_hash FROM customer_accounts WHERE username=? AND enabled=1',b.username);customer=!!user;}
+        const table = customer ? 'customer_accounts' : 'users';
+        let user = await store.one(`SELECT id,password_hash FROM ${table} WHERE username=? AND enabled=1`, b.username);
         if(!user){
-            const staff=await store.all('SELECT id,password_hash FROM users WHERE lower(username)=lower(?) AND enabled=1',b.username);
-            const customers=await store.all('SELECT id,password_hash FROM customer_accounts WHERE lower(username)=lower(?) AND enabled=1',b.username);
+            const candidates=await store.all(`SELECT id,password_hash FROM ${table} WHERE lower(username)=lower(?) AND enabled=1 LIMIT 2`,b.username);
             // Never guess between legacy accounts whose names differ only by case.
-            if(staff.length+customers.length===1){user=staff[0]??customers[0];customer=!staff.length;}
+            if(candidates.length===1)user=candidates[0];
         }
         ensure(checkLogin(b.password, user?.password_hash) && user, 'FORBIDDEN', 'Usuario o contraseña incorrectos.', 401);
         await createSession(store, user.id, res,customer);
         res.json({ id: user.id });
-    });
-    app.post('/api/logout', async (req, res) => {
-        const token = req.headers.cookie?.split(';').map(x => x.trim()).find(x => x.startsWith('logistics_session='))?.split('=')[1];
-        if (token) {
-            await store.run('DELETE FROM sessions WHERE token_hash=?', hash(token));
-            await store.run('DELETE FROM customer_sessions WHERE token_hash=?',hash(token));
-        }
-        res.clearCookie('logistics_session', { path: '/' });
+    };
+    const logout = (customer: boolean) => async (req: Request, res: Response) => {
+        await endSession(store, req, res, customer);
         res.json({ ok: true });
-    });
+    };
+    app.post('/api/login', login(false));
+    app.post('/api/logout', logout(false));
+    app.post('/api/customer/login', login(true));
+    app.post('/api/customer/logout', logout(true));
     installCustomerAccess(app,store,auth);
     installInventoryRoutes(app,store,auth);
     installQuadOperationRoutes(app,store,auth,quad);
@@ -201,6 +214,9 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     app.get(['/manual.html','/MANUAL_MAESTRO_NEXORA_OS.html'],(_req,res)=>res.sendFile(resolve('MANUAL_MAESTRO_NEXORA_OS.html'),{dotfiles:'allow'}));
     app.get('/manual-portatil.html',(_req,res)=>res.download(resolve('MANUAL_WORKFLOWS_NEXORA_PORTATIL.html'),'MANUAL_WORKFLOWS_NEXORA_PORTATIL.html',{dotfiles:'allow'}));
     const dist = resolve('dist');
+    if (process.env.NODE_ENV !== 'production') {
+        app.use('/portal', express.static(resolve('deploy/portal/dist')));
+    }
     if (existsSync(resolve(dist, 'index.html'))) {
         app.use(express.static(dist));
         app.get('/{*splat}', (_req, res) => res.sendFile(resolve(dist, 'index.html')));

@@ -4,6 +4,7 @@
   "installCommand": "npm --prefix ../.. ci --include=dev",
   "buildCommand": "npm --prefix ../.. run build && node ../../scripts/package-vercel-site.ts",
   "outputDirectory": "dist",
+  "ignoreCommand": "git -C ../.. diff --quiet \"$VERCEL_GIT_PREVIOUS_SHA\" HEAD -- . ':(exclude)frontend/portal/**' ':(exclude)deploy/portal/**' ':(exclude)frontend/CustomerPortal.tsx' ':(exclude)frontend/CustomerStock.tsx' ':(exclude)frontend/CustomerMovements.tsx' ':(exclude)frontend/customer-portal.css' ':(exclude)frontend/customer-labels.ts'",
   "headers": [
     {
       "source": "/(.*)",

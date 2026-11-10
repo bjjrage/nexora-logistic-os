@@ -1,6 +1,7 @@
 node_modules/
 dist/
 deploy/vercel/dist/
+deploy/portal/dist/
 .local/
 .env
 .env.*

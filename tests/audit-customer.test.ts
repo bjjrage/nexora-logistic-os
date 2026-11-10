@@ -97,8 +97,8 @@ async function request(base: string, path: string, options: {
   return { status: response.status, body, ...(setCookie ? { cookie: setCookie.split(';')[0] } : {}) };
 }
 
-async function login(base: string, username: string): Promise<Reply> {
-  return await request(base, '/api/login', { method: 'POST', body: { username, password } });
+async function login(base: string, username: string, customer = true): Promise<Reply> {
+  return await request(base, customer ? '/api/customer/login' : '/api/login', { method: 'POST', body: { username, password } });
 }
 
 test('auditoría: sesiones de dos clientes quedan aisladas de las APIs internas y la revocación expira la sesión', async t => {
@@ -109,16 +109,23 @@ test('auditoría: sesiones de dos clientes quedan aisladas de las APIs internas 
   assert(loginA.cookie && loginB.cookie);
 
   const [sessionA, sessionB] = await Promise.all([
-    request(f.base, '/api/session', { cookie: loginA.cookie }),
-    request(f.base, '/api/session', { cookie: loginB.cookie }),
+    request(f.base, '/api/customer/session', { cookie: loginA.cookie }),
+    request(f.base, '/api/customer/session', { cookie: loginB.cookie }),
   ]);
   assert.equal(sessionA.body.user.role, 'CUSTOMER');
   assert.equal(sessionA.body.user.clientId, f.clients[0]);
   assert.equal(sessionB.body.user.role, 'CUSTOMER');
   assert.equal(sessionB.body.user.clientId, f.clients[1]);
+  assert.match(loginA.cookie, /^nexora_customer_session=/);
+  assert.equal((await login(f.base, 'customer-a', false)).status, 401);
+  assert.equal((await request(f.base, '/api/session', { cookie: loginA.cookie })).body.user, null);
 
   const inventoryA = await request(f.base, '/api/inventory', { cookie: loginA.cookie });
   assert.equal(inventoryA.status, 200);
+  const portalStock = await request(f.base, '/api/customer-data/inventory?clientId='+f.clients[1], { cookie: loginA.cookie });
+  assert.equal(portalStock.status, 200);
+  assert.deepEqual(portalStock.body.products.map((item: Json) => item.sku).sort(), ['AUDIT-A-QTY', 'AUDIT-A-SERIAL']);
+  assert.equal((await request(f.base, '/api/customer-data/bootstrap', { cookie: loginA.cookie })).status, 404);
   assert.deepEqual(inventoryA.body.products.map((item: Json) => item.sku).sort(), ['AUDIT-A-QTY', 'AUDIT-A-SERIAL']);
   assert.equal(inventoryA.body.balances.every((item: Json) => item.clientId === f.clients[0]), true);
   assert.equal(inventoryA.body.locations.some((item: Json) => item.code === 'AUDIT-B-PRIVATE'), false);
@@ -152,8 +159,12 @@ test('auditoría: sesiones de dos clientes quedan aisladas de las APIs internas 
 
   const driver = await f.post('/api/drivers', { commandId: f.command(), name: 'Chofer interno', username: 'audit-driver', password });
   assert.equal(driver.status, 200);
-  const driverLogin = await login(f.base, 'audit-driver');
+  const driverLogin = await login(f.base, 'audit-driver', false);
   assert.equal(driverLogin.status, 200);
+  assert.match(driverLogin.cookie!, /^logistics_session=/);
+  assert.equal((await login(f.base, 'audit-driver')).status, 401);
+  assert.equal((await request(f.base, '/api/customer/session', { cookie: driverLogin.cookie })).body.user, null);
+  assert.equal((await request(f.base, '/api/customer-data/inventory', { cookie: driverLogin.cookie })).status, 401);
   assert.equal((await request(f.base, '/api/inventory', { cookie: driverLogin.cookie })).status, 403);
   assert.equal((await request(f.base, '/api/inventory/export.csv', { cookie: driverLogin.cookie })).status, 403);
 
@@ -165,10 +176,10 @@ test('auditoría: sesiones de dos clientes quedan aisladas de las APIs internas 
 
   const revoked = await f.post(`/api/customer-access/${f.a}/revoke`, { commandId: f.command() });
   assert.equal(revoked.status, 200);
-  assert.equal((await request(f.base, '/api/session', { cookie: loginA.cookie })).body.user, null);
+  assert.equal((await request(f.base, '/api/customer/session', { cookie: loginA.cookie })).body.user, null);
   assert.equal((await request(f.base, '/api/bootstrap', { cookie: loginA.cookie })).status, 401);
   assert.equal((await login(f.base, 'customer-a')).status, 401);
-  assert.equal((await request(f.base, '/api/session', { cookie: loginB.cookie })).body.user.clientId, f.clients[1]);
+  assert.equal((await request(f.base, '/api/customer/session', { cookie: loginB.cookie })).body.user.clientId, f.clients[1]);
   for(const path of ['/api/inventory/movements','/api/inventory/movements/export.csv','/api/orders/export.csv']){
     assert.equal((await request(f.base,path,{cookie:loginA.cookie})).status,401);
     assert.equal((await request(f.base,path,{cookie:driverLogin.cookie})).status,403);
@@ -196,7 +207,7 @@ test('auditoría: el rol DRIVER no puede consultar ni exportar el inventario com
   const f = await fixture(t);
   const driver = await f.post('/api/drivers', { commandId: f.command(), name: 'Chofer interno', username: 'audit-driver-only', password });
   assert.equal(driver.status, 200);
-  const driverLogin = await login(f.base, 'audit-driver-only');
+  const driverLogin = await login(f.base, 'audit-driver-only', false);
   assert.equal(driverLogin.status, 200);
   assert.equal((await request(f.base, '/api/inventory', { cookie: driverLogin.cookie })).status, 403);
   assert.equal((await request(f.base, '/api/orders/read', { cookie: driverLogin.cookie })).status, 403);
@@ -226,7 +237,7 @@ test('depósito: accesos filtrados por cliente, reactivación auditada y sesione
   assert.equal((await login(f.base,'customer-a')).status,200);
   assert.equal((await f.store.one('SELECT COUNT(*) AS n FROM audit WHERE org_id=? AND command_id=?', (await f.store.one('SELECT org_id FROM customer_accounts WHERE id=?',f.a))!.org_id,commandId))!.n,1);
   const operations=await f.post('/api/users',{commandId:f.command(),name:'Coordinación',username:'portal-operations',password,role:'OPERATIONS'});assert.equal(operations.status,200);
-  const ops=await login(f.base,'portal-operations');
+  const ops=await login(f.base,'portal-operations',false);
   assert.equal((await request(f.base,'/api/customer-access?clientId='+f.clients[0],{cookie:ops.cookie})).status,403);
   assert.equal((await request(f.base,'/api/customer-access/'+f.a+'/enable',{method:'POST',cookie:ops.cookie,body:{commandId:f.command()}})).status,403);
 });

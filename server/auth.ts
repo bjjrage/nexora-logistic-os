@@ -32,24 +32,34 @@ export function checkLogin(password: string, encoded: string | undefined) {
     const ok = checkPassword(password, encoded ?? decoyHash);
     return ok && encoded !== undefined;
 }
-export async function actorFromRequest(store: Database, req: Request): Promise<Actor | null> {
-    const token = req.headers.cookie?.split(';').map(x => x.trim()).find(x => x.startsWith('logistics_session='))?.split('=')[1];
-    if (!token || !/^[a-f0-9]{64}$/.test(token))
-        return null;
-    const user = await store.one('SELECT u.id,u.org_id,u.name,u.role,u.driver_id,CASE WHEN EXISTS(SELECT 1 FROM org_owners o WHERE o.org_id=u.org_id AND o.user_id=u.id) THEN 1 ELSE 0 END AS is_super_admin FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.enabled=1', hash(token), new Date().toISOString());
+const sessionCookie = (customer: boolean) => customer ? 'nexora_customer_session' : 'logistics_session';
+const sessionTable = (customer: boolean) => customer ? 'customer_sessions' : 'sessions';
+function sessionToken(req: Request, customer: boolean) {
+    const token = req.headers.cookie?.split(';').map(x => x.trim()).find(x => x.startsWith(sessionCookie(customer)+'='))?.split('=')[1];
+    return token && /^[a-f0-9]{64}$/.test(token) ? token : null;
+}
+export async function actorFromRequest(store: Database, req: Request, scope?: 'STAFF' | 'CUSTOMER'): Promise<Actor | null> {
+    const staffToken = scope === 'CUSTOMER' ? null : sessionToken(req, false);
+    const user = staffToken && await store.one('SELECT u.id,u.org_id,u.name,u.role,u.driver_id,CASE WHEN EXISTS(SELECT 1 FROM org_owners o WHERE o.org_id=u.org_id AND o.user_id=u.id) THEN 1 ELSE 0 END AS is_super_admin FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.enabled=1', hash(staffToken), new Date().toISOString());
     if(user) return { id: user.id, orgId: user.org_id, name: user.name, role: user.role, driverId: user.driver_id, clientId:null, isSuperAdmin:!!user.is_super_admin };
-    const account=await store.one('SELECT a.id,a.org_id,a.name,a.client_id FROM customer_sessions s JOIN customer_accounts a ON a.id=s.account_id WHERE s.token_hash=? AND s.expires_at>? AND a.enabled=1',hash(token),new Date().toISOString());
+    const customerToken = scope === 'STAFF' ? null : sessionToken(req, true);
+    const account=customerToken && await store.one('SELECT a.id,a.org_id,a.name,a.client_id FROM customer_sessions s JOIN customer_accounts a ON a.id=s.account_id WHERE s.token_hash=? AND s.expires_at>? AND a.enabled=1',hash(customerToken),new Date().toISOString());
     return account ? {id:account.id,orgId:account.org_id,name:account.name,role:'CUSTOMER',driverId:null,clientId:account.client_id} : null;
 }
 export async function createSession(store: Database, userId: string, res: Response, customer=false) {
     const token = randomBytes(32).toString('hex');
-    const table=customer?'customer_sessions':'sessions';
+    const table=sessionTable(customer);
     await store.transaction(async()=>{
         ensure(await store.one(`SELECT id FROM ${customer?'customer_accounts':'users'} WHERE id=? AND enabled=1`,userId),'FORBIDDEN','Usuario o contraseña incorrectos.',401);
         await store.run(`DELETE FROM ${table} WHERE expires_at<=?`, new Date().toISOString());
         await store.run(`INSERT INTO ${table} VALUES(?,?,?)`, hash(token), userId, new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString());
     });
-    res.cookie('logistics_session', token, { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV==='production'||process.env.COOKIE_SECURE === 'true', maxAge: 12 * 60 * 60 * 1000, path: '/' });
+    res.cookie(sessionCookie(customer), token, { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV==='production'||process.env.COOKIE_SECURE === 'true', maxAge: 12 * 60 * 60 * 1000, path: '/' });
+}
+export async function endSession(store: Database, req: Request, res: Response, customer: boolean) {
+    const token = sessionToken(req, customer);
+    if (token) await store.run(`DELETE FROM ${sessionTable(customer)} WHERE token_hash=?`, hash(token));
+    res.clearCookie(sessionCookie(customer), { path: '/' });
 }
 export async function setup(store: Database, input: {
     organizationName: string;

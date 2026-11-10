@@ -1,0 +1,38 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm --prefix ../.. ci --include=dev",
+  "buildCommand": "npm --prefix ../.. run build:portal",
+  "outputDirectory": "dist",
+  "ignoreCommand": "git -C ../.. diff --quiet \"$VERCEL_GIT_PREVIOUS_SHA\" HEAD -- deploy/portal frontend/portal 'frontend/Customer*' 'frontend/customer-*' frontend/Brand.tsx frontend/ClientLocations.tsx frontend/HelpTip.tsx frontend/PasswordReset.tsx frontend/StatCard.tsx frontend/api.ts frontend/diagnostics.ts 'frontend/*.css' public package.json package-lock.json tsconfig.json vite.config.ts",
+  "headers": [
+    {"source": "/(.*)", "headers": [
+      {"key": "X-Robots-Tag", "value": "noindex, nofollow"},
+      {"key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains"},
+      {"key": "X-Content-Type-Options", "value": "nosniff"},
+      {"key": "X-Frame-Options", "value": "DENY"},
+      {"key": "Referrer-Policy", "value": "strict-origin-when-cross-origin"},
+      {"key": "Permissions-Policy", "value": "geolocation=()"},
+      {"key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"}
+    ]},
+    {"source": "/api/:path*", "headers": [{"key": "Cache-Control", "value": "no-store"}]},
+    {"source": "/release.json", "headers": [{"key": "Cache-Control", "value": "no-store"}]}
+  ],
+  "rewrites": [
+    {"source": "/api/customer/login", "destination": "https://nexora-logistic-production.up.railway.app/api/customer/login"},
+    {"source": "/api/customer/session", "destination": "https://nexora-logistic-production.up.railway.app/api/customer/session"},
+    {"source": "/api/customer/logout", "destination": "https://nexora-logistic-production.up.railway.app/api/customer/logout"},
+    {"source": "/api/customer/password-recovery/redeem", "destination": "https://nexora-logistic-production.up.railway.app/api/customer/password-recovery/redeem"},
+    {"source": "/api/inventory", "destination": "https://nexora-logistic-production.up.railway.app/api/customer-data/inventory"},
+    {"source": "/api/inventory/stock", "destination": "https://nexora-logistic-production.up.railway.app/api/customer-data/inventory/stock"},
+    {"source": "/api/inventory/locations/stock", "destination": "https://nexora-logistic-production.up.railway.app/api/customer-data/inventory/locations/stock"},
+    {"source": "/api/inventory/movements", "destination": "https://nexora-logistic-production.up.railway.app/api/customer-data/inventory/movements"},
+    {"source": "/api/inventory/export.csv", "destination": "https://nexora-logistic-production.up.railway.app/api/customer-data/inventory/export.csv"},
+    {"source": "/api/inventory/movements/export.csv", "destination": "https://nexora-logistic-production.up.railway.app/api/customer-data/inventory/movements/export.csv"},
+    {"source": "/api/orders/read", "destination": "https://nexora-logistic-production.up.railway.app/api/customer-data/orders/read"},
+    {"source": "/api/orders/export.csv", "destination": "https://nexora-logistic-production.up.railway.app/api/customer-data/orders/export.csv"},
+    {"source": "/api/quadminds/shipments/:id/proofs", "destination": "https://nexora-logistic-production.up.railway.app/api/customer-data/quadminds/shipments/:id/proofs"},
+    {"source": "/api/customer-evidence/:id", "destination": "https://nexora-logistic-production.up.railway.app/api/customer-data/customer-evidence/:id"},
+    {"source": "/portal/:path*", "destination": "/:path*"}
+  ]
+}

@@ -22,11 +22,11 @@ export class PasswordRecovery {
    return {token,expiresAt};
   });
  }
- async redeem(input:unknown){
+ async redeem(input:unknown,kind?:'USER'|'CUSTOMER'){
   const body=z.object({token:z.string().regex(/^[a-f0-9]{64}$/),password:accountPasswordSchema}).strict().parse(input);
   return this.store.transaction(async()=>{
    const row=await this.store.one('SELECT * FROM password_recovery WHERE token_hash=? AND used_at IS NULL AND expires_at>?',hash(body.token),new Date().toISOString());
-   ensure(row?.issuer_id,'FORBIDDEN','El enlace no es válido o venció. Solicitá uno nuevo a Administración.',401);
+   ensure(row?.issuer_id&&(!kind||Boolean(row.account_id)===(kind==='CUSTOMER')),'FORBIDDEN','El enlace no es válido o venció. Solicitá uno nuevo a Administración.',401);
    const customer=Boolean(row.account_id),table=customer?'customer_accounts':'users',id=row.account_id??row.user_id;
    if(!customer&&await this.store.one('SELECT user_id FROM org_owners WHERE org_id=? AND user_id=?',row.org_id,id))ensure(row.issuer_id===id,'FORBIDDEN','Este enlace de recuperación ya no es válido.',401);
    ensure(await this.store.one(`SELECT id FROM ${table} WHERE id=? AND org_id=? AND enabled=1`,id,row.org_id),'FORBIDDEN','La cuenta está suspendida.',401);
