@@ -83,8 +83,8 @@ export default function ClientsPanel({profileEnabled,initialClientId='',clients,
     <button type="button" aria-pressed={clientView==='depot'} onClick={()=>setClientView('depot')}>Depósito</button>
    </nav>
    {clientView==='depot'?<>
-    <section className="card"><div className="card-header"><div className="help-label"><h2>Mercadería en depósito</h2><HelpTip label="Mercadería en depósito">Catálogo y recepción de {selected.name}.</HelpTip></div></div>
-     <div className="inventory-actions"><button type="button" className="button button-primary" onClick={()=>onInventory(selected.id,'receive')}>Recibir mercadería</button><button type="button" className="button button-secondary" onClick={()=>onInventory(selected.id,'catalog')}>Ver catálogo / importar</button></div>
+    <section className="card"><div className="card-header"><div className="help-label"><h2>Mercadería en depósito</h2><HelpTip label="Mercadería en depósito">Recepciones y existencias de {selected.name}.</HelpTip></div></div>
+     <div className="inventory-actions"><button type="button" className="button button-primary" onClick={()=>onInventory(selected.id,'receive')}>Recibir mercadería</button></div>
     </section>
     <ClientLocations key={'locations-'+selected.id} clientId={selected.id}/>
     {canManageAccess?<CustomerAccessPanel key={selected.id} clientId={selected.id} clientName={selected.name}/>:<section className="card"><div className="help-label"><h2>Acceso al portal</h2><HelpTip label="Acceso al portal">Administración habilita los usuarios de este cliente para consultar su mercadería.</HelpTip></div></section>}
@@ -97,7 +97,7 @@ export default function ClientsPanel({profileEnabled,initialClientId='',clients,
    <section aria-labelledby="client-next-steps"><h2 id="client-next-steps">Seguí con este cliente</h2><div className="client-steps">
     <article className="client-step"><span className="client-step-number">1</span><h3>Ficha del cliente</h3><p>{missing.length?'Completá sus datos de empresa y contacto.':'Datos de empresa y contacto registrados.'}</p>{canManage&&<button className="button button-secondary" onClick={()=>edit(selected)}>Completar / editar ficha</button>}</article>
     <article className="client-step"><span className="client-step-number">2</span><h3>Recibir mercadería</h3><button className="button button-primary" onClick={()=>onInventory(selected.id,'receive')}>Ir a recepción<ArrowRight size={15}/></button></article>
-    <article className="client-step"><h3>Catálogo de productos</h3><p>{productCount} SKU registrados</p><button className="button button-secondary" onClick={()=>onInventory(selected.id,'catalog')}>Importar catálogo<ArrowRight size={15}/></button></article>
+    <article className="client-step"><h3>Productos</h3><p>{productCount} SKU registrados</p><button className="button button-secondary" onClick={()=>onInventory(selected.id,'catalog')}>Administrar productos<ArrowRight size={15}/></button></article>
    </div></section>
    <section className="card"><div className="card-header"><div className="help-label"><h2>Portal del cliente</h2><HelpTip label="Portal del cliente">Habilitá sus usuarios desde Depósito para consultar y exportar su inventario, movimientos y pedidos.</HelpTip></div></div><button type="button" className="button button-secondary" onClick={()=>setClientView('depot')}>Abrir depósito<ArrowRight size={15}/></button></section>
    </>}
