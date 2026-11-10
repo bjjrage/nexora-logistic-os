@@ -15,7 +15,7 @@ import RouteParcelActions from './RouteParcelActions';
 import KpiDetails, { type KpiKind } from './KpiDetails';
 import InventoryPanel from './InventoryPanel';
 import type {ReceiptSeed} from './StockReceiptPanel';
-import CustomerPortal from './CustomerPortal';
+import {customerPortalUrl} from './portal-url';
 import StatCard from './StatCard';
 import ClientsPanel, {type ClientRecord} from './ClientsPanel';
 import CompanyPanel from './CompanyPanel';
@@ -366,6 +366,7 @@ function AuthScreen({ setupRequired, busy, error, onAuth }: {
             {busy ? "Procesando…" : setupRequired ? "Crear espacio y cuenta" : "Ingresar"}
           </button>
         </form>
+        {!setupRequired && <a className="text-button" href={customerPortalUrl()}>Portal de clientes</a>}
       </section>
       </div>
     </main>
@@ -559,9 +560,6 @@ function AppContent() {
   }
   if (!session) {
     return <main className="auth-shell"><div className="auth-card"><h1>No se pudo conectar</h1><ErrorBanner error={error} /><button className="button button-secondary" onClick={() => { setLoading(true); setError(""); void refreshSession().catch((caught) => setError(errorMessage(caught))).finally(() => setLoading(false)); }}>Reintentar</button></div></main>;
-  }
-  if (session.user?.role === "CUSTOMER") {
-    return <CustomerPortal user={session.user} busy={pending} onLogout={logout} />;
   }
   if (!session.user || !bootstrap) {
     return <AuthScreen setupRequired={session.setupRequired} busy={pending} error={error} onAuth={authenticate} />;

@@ -80,6 +80,7 @@ test('Clientes → Depósito habilita, suspende y reactiva un portal de consulta
     await expect(staffLocations.getByRole('article',{name:'Depósito Norte',exact:true})).toContainText('3');
     await expect(staffLocations.getByText('Depósito exclusivo B',{exact:true})).toHaveCount(0);
     await expect(page.getByRole('heading',{name:'Acceso al portal',exact:true})).toBeVisible();
+    await expect(page.getByRole('link',{name:'Abrir portal'})).toHaveAttribute('href',origin+'/portal/');
     await expect(page.getByRole('tooltip')).toHaveCount(0);
     await page.getByRole('button',{name:'Ayuda: Acceso al portal',exact:true}).hover();
     await expect(page.getByRole('tooltip')).toContainText('Cada usuario consulta y exporta únicamente');
@@ -112,11 +113,14 @@ test('Clientes → Depósito habilita, suspende y reactiva un portal de consulta
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await page.screenshot({path:'.local/customer-depot-access-mobile.png',fullPage:true});
 
-    await customer.goto(origin);
+    await customer.goto(origin+'/portal/');
+    await expect(customer.getByRole('heading',{name:'Portal de clientes',exact:true})).toBeVisible();
     await customer.getByLabel('Usuario',{exact:true}).fill('persona-a');
     await customer.getByLabel('Contraseña',{exact:true}).fill('Portal-QA-A-2026!');
     await customer.getByRole('button',{name:'Ingresar',exact:true}).click();
     await expect(customer.getByRole('heading',{name:'Mi mercadería',exact:true})).toBeVisible();
+    expect((await customer.request.get(origin+'/api/session')).status()).toBe(200);
+    expect((await (await customer.request.get(origin+'/api/session')).json()).user).toBeNull();
     const customerLocations=customer.getByRole('region',{name:'Depósitos y ubicaciones',exact:true});
     await expect(customerLocations.getByRole('article',{name:'Depósito Central',exact:true})).toContainText('5');
     await expect(customerLocations.getByRole('article',{name:'Depósito Norte',exact:true})).toContainText('3');
@@ -184,6 +188,17 @@ test('Clientes → Depósito habilita, suspende y reactiva un portal de consulta
     await customer.getByLabel('Contraseña',{exact:true}).fill('Portal-QA-A-2026!');
     await customer.getByRole('button',{name:'Ingresar',exact:true}).click();
     await expect(customer.getByRole('heading',{name:'Mi mercadería',exact:true})).toBeVisible();
+    await account.getByRole('button',{name:'Restablecer acceso',exact:true}).click();
+    const recovery=account.getByLabel('Enlace privado de recuperación',{exact:true});
+    await expect(recovery).toBeVisible();
+    expect(await recovery.inputValue()).toMatch(new RegExp('^'+origin+'/portal/#restablecer='));
+    await customer.goto(await recovery.inputValue());
+    await customer.getByLabel('Nueva contraseña',{exact:true}).fill('Portal-QA-Recuperada-2026!');
+    await customer.getByLabel('Repetir contraseña',{exact:true}).fill('Portal-QA-Recuperada-2026!');
+    await customer.getByRole('button',{name:'Guardar nueva contraseña',exact:true}).click();
+    await expect(customer.getByRole('heading',{name:'Contraseña actualizada',exact:true})).toBeVisible();
+    await customer.getByRole('link',{name:'Ir al inicio de sesión',exact:true}).click();
+    await expect(customer.getByRole('heading',{name:'Portal de clientes',exact:true})).toBeVisible();
     expect(errors).toEqual([]);
   } catch(error) {
     await page.screenshot({path:'.local/customer-depot-failure.png',fullPage:true}).catch(()=>{});

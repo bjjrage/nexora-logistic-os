@@ -4,6 +4,7 @@
   "installCommand": "npm --prefix ../.. ci --include=dev",
   "buildCommand": "npm --prefix ../.. run build && node ../../scripts/package-vercel-site.ts",
   "outputDirectory": "dist",
+  "ignoreCommand": "node ../../scripts/vercel-ignore-build.mjs os",
   "headers": [
     {
       "source": "/(.*)",

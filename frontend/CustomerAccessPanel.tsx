@@ -1,6 +1,7 @@
 import {useCallback,useEffect,useId,useState,type FormEvent} from 'react';
 import {api} from './api';
 import AccountRecovery from './AccountRecovery';
+import {customerPortalUrl} from './portal-url';
 import HelpTip from './HelpTip';
 import {Copy,ExternalLink} from 'lucide-react';
 
@@ -49,7 +50,7 @@ export default function CustomerAccessPanel({clientId,clientName}:{clientId:stri
 
   return <section className="card" aria-labelledby="customer-depot-access-title">
     <div className="card-header"><div className="help-label"><h2 id="customer-depot-access-title">Acceso al portal</h2><HelpTip label="Acceso al portal">Cada usuario consulta y exporta únicamente el inventario, movimientos y pedidos de {clientName}. Las operaciones quedan a cargo de Nexora.</HelpTip></div><span className="badge badge-neutral">{items.filter(item=>item.enabled).length} activos</span></div>
-    <div className="customer-access-links"><a className="button text-button" href={window.location.origin} target="_blank" rel="noreferrer">Abrir portal<ExternalLink size={14} aria-hidden="true"/></a><button className="text-button" type="button" onClick={()=>void navigator.clipboard.writeText(window.location.origin).then(()=>setMessage('Enlace copiado.')).catch(()=>setError('No se pudo copiar el enlace.'))}><Copy size={14} aria-hidden="true"/>Copiar enlace</button></div>
+    <div className="customer-access-links"><a className="button text-button" href={customerPortalUrl()} target="_blank" rel="noreferrer">Abrir portal<ExternalLink size={14} aria-hidden="true"/></a><button className="text-button" type="button" onClick={()=>void navigator.clipboard.writeText(customerPortalUrl()).then(()=>setMessage('Enlace copiado.')).catch(()=>setError('No se pudo copiar el enlace.'))}><Copy size={14} aria-hidden="true"/>Copiar enlace</button></div>
     {error&&<p className="notice error" role="alert">{error} <button className="text-button" type="button" disabled={busy||loading} onClick={()=>void load()}>Volver a consultar</button></p>}
     {message&&<p className="notice" role="status">{message}</p>}
     <form className="stack customer-access-create" onSubmit={event=>void create(event)}>

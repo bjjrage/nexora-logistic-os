@@ -7,13 +7,16 @@
     "node": ">=24.20.0"
   },
   "scripts": {
-    "dev": "concurrently -k -n api,web \"npm:dev:api\" \"npm:dev:web\"",
+    "dev": "concurrently -k -n api,web,portal \"npm:dev:api\" \"npm:dev:web\" \"npm:dev:portal\"",
     "dev:api": "node --watch server/index.ts",
     "dev:web": "vite --configLoader native --host 127.0.0.1",
+    "dev:portal": "vite --configLoader native --mode portal",
     "build": "tsc --noEmit && vite build --configLoader native && node scripts/package-manual.ts",
+    "build:portal": "tsc --noEmit && vite build --configLoader native --mode portal",
     "start": "node server/index.ts",
     "test": "node --test tests/*.test.ts",
     "test:isolated": "node scripts/prepare-test-postgres.ts && node scripts/run-isolated-tests.ts",
+    "pretest:e2e": "npm run build:portal",
     "test:e2e": "playwright test",
     "test:e2e:routing": "playwright test --config=playwright.routing.config.ts",
     "backup:os": "node --env-file=.env scripts/backup-os.ts",
