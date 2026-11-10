@@ -223,7 +223,7 @@ test('depósito: accesos filtrados por cliente, reactivación auditada y sesione
   assert.equal((await request(f.base,'/api/customer-access?clientId=invalid',{cookie:f.adminCookie})).status,400);
   const foreignOrg=randomUUID(),foreignClient=randomUUID(),foreignAccount=randomUUID();
   await f.store.run('INSERT INTO organizations VALUES(?,?,?)',foreignOrg,'Otra organización','UTC');
-  await f.store.run('INSERT INTO clients VALUES(?,?,?)',foreignClient,foreignOrg,'Cliente privado');
+  await f.store.run('INSERT INTO clients(id,org_id,name) VALUES(?,?,?)',foreignClient,foreignOrg,'Cliente privado');
   await f.store.run('INSERT INTO customer_accounts(id,org_id,client_id,name,username,password_hash,enabled,created_at) VALUES(?,?,?,?,?,?,0,?)',foreignAccount,foreignOrg,foreignClient,'Privado','foreign-'+foreignAccount,'unusable-fixture',new Date().toISOString());
   assert.equal((await request(f.base,'/api/customer-access?clientId='+foreignClient,{cookie:f.adminCookie})).status,404);
   assert.equal((await f.post('/api/customer-access/'+foreignAccount+'/enable',{commandId:f.command()})).status,404);

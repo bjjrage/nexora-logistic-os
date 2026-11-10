@@ -10,6 +10,7 @@ export async function correctTestDispatch(db:Database,actor:Actor,id:string,inpu
  return domain.command(actor,`routes.${id}.correct-test-dispatch`,body,['ADMIN'],async()=>{
   ensure((await db.one('SELECT enabled FROM organization_test_mode WHERE org_id=?',actor.orgId))?.enabled===1,'FORBIDDEN','Esta corrección está disponible únicamente en modo de prueba.',403);
   const route=await domain.route(id,actor,body.expectedVersion);ensure(route.state==='IN_PROGRESS','INVALID_TRANSITION','La ruta no tiene una salida de prueba en curso.');
+  ensure(route.is_test===1,'FORBIDDEN','Solo se puede corregir el despacho de una ruta marcada como prueba.',403);
   ensure(!await db.one("SELECT id FROM stops WHERE org_id=? AND route_id=? AND state<>'PENDING'",actor.orgId,id)&&!await db.one('SELECT t.id FROM attempts t JOIN stops s ON s.id=t.stop_id AND s.org_id=t.org_id WHERE s.org_id=? AND s.route_id=? LIMIT 1',actor.orgId,id),'INVALID_TRANSITION','Hay visitas o entregas registradas. No se puede deshacer esta salida.');
   const events=await db.all('SELECT i.response FROM idempotency i JOIN audit a ON a.org_id=i.org_id AND a.command_id=i.command_id WHERE i.org_id=? AND i.operation=? ORDER BY a.created_at DESC,a.rowid DESC',actor.orgId,`routes.${id}.dispatch`),source=events.map(e=>JSON.parse(e.response)).find((r:Row)=>r.version===route.version);
   ensure(source,'VERSION_CONFLICT','La ruta cambió después de salir. Revisá su historial antes de corregirla.');

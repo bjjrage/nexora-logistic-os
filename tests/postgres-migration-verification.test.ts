@@ -6,8 +6,8 @@ test('PostgreSQL startup requires the complete migration set including client re
   const verify = (versions: number[]) => PostgresStore.prototype.verify.call({
     all: async () => versions.map(version => ({ version })),
   } as unknown as PostgresStore);
-  await verify(Array.from({length: 22}, (_, index) => index + 1));
+  await verify(Array.from({length: 23}, (_, index) => index + 1));
   await assert.rejects(verify(Array.from({length: 21}, (_, index) => index + 1)), /migraciones esperadas/);
   await assert.rejects(verify([...Array.from({length: 16}, (_, index) => index + 1), 18]), /migraciones esperadas/);
-  await assert.rejects(verify(Array.from({length: 23}, (_, index) => index + 1)), /migraciones esperadas/);
+  await assert.rejects(verify(Array.from({length: 24}, (_, index) => index + 1)), /migraciones esperadas/);
 });

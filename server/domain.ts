@@ -74,7 +74,7 @@ export class Logistics {
         b=schemas.client.parse(b);
         return await this.command(actor, 'clients.create', b, OPS, async () => {
             const id = randomUUID();
-            await this.store.run('INSERT INTO clients VALUES(?,?,?)', id, actor.orgId, b.name);
+            await this.store.run('INSERT INTO clients(id,org_id,name) VALUES(?,?,?)', id, actor.orgId, b.name);
             await saveClientProfile(this.store,actor.orgId,id,b);
             if(b.deliveryProvider)await this.store.run('INSERT INTO client_delivery_policies VALUES(?,?,?,?)',actor.orgId,id,b.deliveryProvider,now());
             return { id };
@@ -108,7 +108,8 @@ export class Logistics {
     }
     async createShipment(actor: Actor, b: Row) {
         return await this.command(actor, 'shipments.create', b, OPS, async () => {
-            await this.record('clients', b.clientId, actor);
+            const client=await this.record('clients', b.clientId, actor);
+            ensure(!client.archived_at,'INVALID_TRANSITION','Reactivá el cliente para registrar un envío nuevo.',409);
             const id = randomUUID();
             await this.store.run('INSERT INTO shipments VALUES(?,?,?,?,?,?,?,?,?,?)', id, actor.orgId, b.clientId, b.reference, b.originText, b.destinationText, b.recipientName, b.recipientPhone, b.proofPolicy, now());
             for (let i = 0; i < b.parcelCount; i++)
@@ -140,14 +141,33 @@ export class Logistics {
     }
     async createRoute(actor: Actor, b: Row) {
         return await this.command(actor, 'routes.create', b, OPS, async () => {
+            if(b.isTest){
+                authorize(actor,['ADMIN']);
+                ensure((await this.store.one('SELECT enabled FROM organization_test_mode WHERE org_id=?',actor.orgId))?.enabled===1,'FORBIDDEN','Habilitá las rutas de prueba en Empresa y equipo.',403);
+                ensure(b.trackingProvider!=='QUADMINDS','INVALID_TRANSITION','Las rutas de prueba usan el seguimiento de Nexora.',409);
+            }
             const driver = await this.record('drivers', b.driverId, actor), vehicle = await this.record('vehicles', b.vehicleId, actor);
             ensure(driver.available && vehicle.available, 'INVALID_TRANSITION', 'Chofer o vehículo no disponible.');
             ensure(b.endAt > b.startAt, 'VALIDATION_ERROR', 'La ventana debe terminar después del inicio.', 400);
             const id = randomUUID();
-            await this.store.run('INSERT INTO routes(id,org_id,name,driver_id,vehicle_id,start_at,end_at) VALUES(?,?,?,?,?,?,?)', id, actor.orgId, b.name, b.driverId, b.vehicleId, b.startAt, b.endAt);
+            await this.store.run('INSERT INTO routes(id,org_id,name,driver_id,vehicle_id,start_at,end_at,is_test) VALUES(?,?,?,?,?,?,?,?)', id, actor.orgId, b.name, b.driverId, b.vehicleId, b.startAt, b.endAt,b.isTest?1:0);
             if(b.trackingProvider)await this.store.run('INSERT INTO route_tracking_settings VALUES(?,?,?,?)',actor.orgId,id,b.trackingProvider,now());
             if(b.phoneDeviceId!==undefined)await bindVehiclePhone(this.store,actor.orgId,b.vehicleId,b.phoneDeviceId);
-            return { id, version: 1, state: 'DRAFT' };
+            return { id, version: 1, state: 'DRAFT', isTest: b.isTest?1:0 };
+        });
+    }
+    async markRouteTest(actor:Actor,id:string,input:unknown){
+        const b=schemas.routeTest.parse(input);
+        return this.command(actor,`routes.${id}.test`,b,['ADMIN'],async()=>{
+            const route=await this.route(id,actor,b.expectedVersion);
+            ensure(['DRAFT','READY'].includes(route.state),'INVALID_TRANSITION','Marcá la ruta como prueba antes de despachar.',409);
+            if(b.isTest){
+                ensure((await this.store.one('SELECT enabled FROM organization_test_mode WHERE org_id=?',actor.orgId))?.enabled===1,'FORBIDDEN','Habilitá las rutas de prueba en Empresa y equipo.',403);
+                const provider=await this.store.one('SELECT provider FROM route_tracking_settings WHERE org_id=? AND route_id=?',actor.orgId,id);
+                ensure(provider?.provider!=='QUADMINDS','INVALID_TRANSITION','Las rutas de prueba usan el seguimiento de Nexora.',409);
+            }
+            await this.store.run('UPDATE routes SET is_test=?,version=version+1 WHERE org_id=? AND id=?',b.isTest?1:0,actor.orgId,id);
+            return {id,version:route.version+1,isTest:b.isTest?1:0,state:route.state};
         });
     }
     async updateRoute(actor:Actor,id:string,input:Row){
@@ -429,7 +449,7 @@ export class Logistics {
             if (failed.length)
                 ensure(b.reasonCode && b.nextAction.trim(), 'VALIDATION_ERROR', 'La incidencia requiere motivo y próxima acción.', 400);
             const shipment = await this.record('shipments', stop.shipment_id, actor);
-            const testMode=(await this.store.one('SELECT enabled FROM organization_test_mode WHERE org_id=?',actor.orgId))?.enabled===1;
+            const testMode=r.is_test===1&&(await this.store.one('SELECT enabled FROM organization_test_mode WHERE org_id=?',actor.orgId))?.enabled===1;
             for (const parcelId of [...delivered, ...failed]) {
                 const p = await this.parcel(parcelId, actor);
                 ensure(p.shipment_id === stop.shipment_id && await this.store.one('SELECT id FROM route_assignments WHERE route_id=? AND parcel_id=? AND active=1', r.id, p.id), 'FORBIDDEN', 'El bulto no está en esta parada.', 403);

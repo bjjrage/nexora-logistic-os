@@ -70,6 +70,7 @@ type Route = Entity & {
   version: number;
   startAt: string;
   endAt: string;
+  isTest?: number;
 };
 type Stop = Entity & { routeId: string; shipmentId: string; sequence: number; state: string; kind?: string };
 type Assignment = Entity & { routeId: string; parcelId: string; pickup: boolean; active: boolean };
@@ -621,7 +622,7 @@ function AppContent() {
         </header>
         <div className="content">
           {bootstrap.organization.name.startsWith('DEMO') && <div className="notice demo-notice" role="status">DEMO · Datos ficticios · Base separada de la operación</div>}
-          {bootstrap.organization.testMode && <div className="notice demo-notice" role="status">MODO DE PRUEBA ACTIVO · Se permite entregar sin foto. Usá únicamente pedidos de prueba.</div>}
+          {bootstrap.organization.testMode && <div className="notice demo-notice" role="status">MODO DE PRUEBA ACTIVO · Solo rutas marcadas como prueba.</div>}
           {bootstrap.limits?.hasMore && <div className="notice" role="status">{bootstrap.limits.message}</div>}
           {(error||success)&&<div className="operation-feedback"><ErrorBanner error={error} /><SuccessBanner message={success} /></div>}
           {page === "home" && !isDriver && <HomeView data={bootstrap} go={changePage} role={role} />}
@@ -785,7 +786,7 @@ function ShipmentsView({ data, action, busy, uploadEvidence, role, initialShipme
             <form className="stack" onSubmit={submitCreate}>
               <fieldset disabled={busy}>
                 <div className="form-grid">
-                  <Field label="Cliente"><select required value={clientId} onChange={(event) => setClientId(event.target.value)}><option value="">Seleccionar cliente</option>{data.clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></Field>
+                  <Field label="Cliente"><select required value={clientId} onChange={(event) => setClientId(event.target.value)}><option value="">Seleccionar cliente</option>{data.clients.filter(client=>!client.archivedAt).map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></Field>
                   <Field label="Referencia del envío"><input required value={reference} onChange={(event) => setReference(event.target.value)} /></Field>
                   <Field label="Origen"><input required value={originText} onChange={(event) => setOriginText(event.target.value)} /></Field>
                   <Field label="Destino"><input required value={destinationText} onChange={(event) => setDestinationText(event.target.value)} /></Field>
@@ -1008,7 +1009,7 @@ function RoutesView({ data:summaryData, action, busy:operationBusy, operationErr
       {createError&&<p className="notice error" role="alert">{createError}</p>}
       {detailError&&<p className="notice error" role="alert">{detailError}<button type="button" className="button button-secondary" onClick={()=>void onRefresh()}>Actualizar</button><button type="button" className="button button-secondary" onClick={backToRoutes}>Volver a rutas</button></p>}
       {canPlan&&!selectedRoute&&!showCreate&&<ReservedDispatch revision={data} onConfigureDepot={onConfigureDepot} onRefresh={onRefresh} onOpen={id=>{resetRouteTask();setSelectedRouteId(id);setRouteTab(data.routes.find(r=>r.id===id)?.state==="IN_PROGRESS"?"stops":"loading");}}/>}
-      {canPlan && showCreate && <Panel title="Nueva ruta"><RouteSetup drivers={data.drivers} vehicles={data.vehicles} action={action} busy={busy} operationError={operationError} onCancel={()=>setShowCreate(false)} onSaved={result=>{if(typeof result.id==='string'){setJustCreated({...result,id:result.id,state:'DRAFT',version:Number(result.version??1)} as Route);setSelectedRouteId(result.id);setRouteTab('loading');setShowCreate(false);}}}/></Panel>}
+      {canPlan && showCreate && <Panel title="Nueva ruta"><RouteSetup allowTest={role==='ADMIN'&&data.organization.testMode} drivers={data.drivers} vehicles={data.vehicles} action={action} busy={busy} operationError={operationError} onCancel={()=>setShowCreate(false)} onSaved={result=>{if(typeof result.id==='string'){setJustCreated({...result,id:result.id,state:'DRAFT',version:Number(result.version??1)} as Route);setSelectedRouteId(result.id);setRouteTab('loading');setShowCreate(false);}}}/></Panel>}
       {!showCreate && <div className={"routes-layout " + (!selectedRoute ? "routes-layout--list" : "routes-layout--detail")}>
         {!selectedRoute && <details className="routes-history" open={!canPlan}><summary>{canPlan?"Buscar rutas e historial":"Tus rutas"}</summary><Panel title="Rutas">
           <div className="workspace-filters"><label className="field"><span>Buscar ruta</span><input type="search" value={routeSearch} placeholder="Nombre, chofer o matrícula" onChange={event=>{setRouteSearch(event.target.value);setRoutePage(0);}} /></label><label className="field"><span>Estado de ruta</span><select value={routeFilter} onChange={event=>{setRouteFilter(event.target.value);setRoutePage(0);}}><option value="ALL">Todas</option><option value="DRAFT">Sin confirmar</option><option value="READY">Rutas confirmadas</option><option value="IN_PROGRESS">En curso</option><option value="OPERATIONALLY_CLOSED">Cerradas</option></select></label></div>
@@ -1032,8 +1033,10 @@ function RoutesView({ data:summaryData, action, busy:operationBusy, operationErr
           {selectedRoute.state === 'READY' && (new Date(selectedRoute.startAt).getTime() > Date.now()||new Date(selectedRoute.endAt).getTime() < Date.now()) && <p className="muted">Al despachar ahora, el horario se actualizará automáticamente. Necesitás un checklist registrado en las últimas 24 horas.</p>}
           <div className="button-row">
             {capacityIncomplete && <p className="muted">Hay bultos sin peso o volumen. Podés continuar; la capacidad total no está verificada.</p>}
+            {selectedRoute.isTest===1&&<span className="badge badge-warning">Ruta de prueba</span>}
+            {role==='ADMIN'&&['DRAFT','READY'].includes(selectedRoute.state)&&(data.organization.testMode||selectedRoute.isTest===1)&&<button type="button" className="button button-secondary" disabled={busy} onClick={()=>{const isTest=selectedRoute.isTest!==1;if(!isTest||window.confirm('¿Marcar esta ruta para operar con pedidos de prueba?'))void action('/api/routes/'+selectedRoute.id+'/test',{expectedVersion:selectedRoute.version,isTest},isTest?'Ruta marcada como prueba.':'Ruta operativa.');}}>{selectedRoute.isTest===1?'Quitar marca de prueba':'Marcar ruta de prueba'}</button>}
             {canOperateRoad && selectedRoute.state === "IN_PROGRESS" && <button className="button button-secondary" disabled={busy} onClick={() => simpleRouteAction("close", "Cierre de ruta solicitado.")}>Cerrar ruta</button>}
-            {role==='ADMIN'&&data.organization.testMode&&selectedRoute.state==='IN_PROGRESS'&&<button type="button" className="text-button" disabled={busy} onClick={()=>{if(window.confirm('Solo si el camión NO salió y fue una prueba: se anulará el despacho, se conservarán los bultos cargados y se restaurará el horario previsto. ¿Confirmás que no hubo salida?'))void action('/api/routes/'+selectedRoute.id+'/correct-test-dispatch',{commandId:commandId(),expectedVersion:selectedRoute.version,didNotDepart:true,reason:'Administración confirma que fue una prueba y que el camión no salió.'},'Salida de prueba corregida. Se conservaron la carga y las reservas.');}}>Deshacer salida de prueba</button>}
+            {role==='ADMIN'&&data.organization.testMode&&selectedRoute.isTest===1&&selectedRoute.state==='IN_PROGRESS'&&<button type="button" className="text-button" disabled={busy} onClick={()=>{if(window.confirm('Solo si el camión NO salió y fue una prueba: se anulará el despacho, se conservarán los bultos cargados y se restaurará el horario previsto. ¿Confirmás que no hubo salida?'))void action('/api/routes/'+selectedRoute.id+'/correct-test-dispatch',{commandId:commandId(),expectedVersion:selectedRoute.version,didNotDepart:true,reason:'Administración confirma que fue una prueba y que el camión no salió.'},'Salida de prueba corregida. Se conservaron la carga y las reservas.');}}>Deshacer salida de prueba</button>}
           </div>
           {['DRAFT','READY'].includes(selectedRoute.state)&&<section className="route-next-step" aria-label="Próximo paso de la ruta">
             <p className="muted">Reservar pedido → Cargar vehículo → Confirmar ruta → Control de salida → Despachar ahora</p>
@@ -1110,7 +1113,7 @@ function RoutesView({ data:summaryData, action, busy:operationBusy, operationErr
           </div>}
           {routeTab === "stops" && stopId && canOperateRoad && selectedRoute.state === "IN_PROGRESS" && <form className="stack form-divider" onSubmit={submitAttempt}>
             <h3>Resultado de la entrega</h3>
-            {data.organization.testMode&&<p className="notice">Modo de prueba: la foto es opcional para repartos Nexora. Usá solo pedidos de prueba.</p>}
+            {data.organization.testMode&&selectedRoute.isTest===1&&<p className="notice">Ruta de prueba · Foto opcional</p>}
             <p className="muted">Cada artículo está en tránsito. Elegí el resultado real; los que dejes pendientes seguirán en el vehículo.</p>
             <fieldset disabled={busy}>
               <div className="parcel-picker compact">{routeParcels.filter((parcel) => {

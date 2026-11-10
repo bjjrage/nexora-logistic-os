@@ -20,7 +20,7 @@ test('live Google portal: runtime permissions, administrative grant, persisted r
       await store.run('INSERT INTO sessions VALUES(?,?,?)',hash(token),actorId,new Date(Date.now()+600000).toISOString());
       const actor={id:actorId,orgId:org,name:'QA',role:'ADMIN' as const,driverId:null},domain=new Logistics(store);
       const client=(await domain.createClient(actor,{commandId:randomUUID(),name:'Customer QA'})).id;
-      const foreignClient=randomUUID();await store.run('INSERT INTO clients VALUES(?,?,?)',foreignClient,otherOrg,'Foreign QA');
+      const foreignClient=randomUUID();await store.run('INSERT INTO clients(id,org_id,name) VALUES(?,?,?)',foreignClient,otherOrg,'Foreign QA');
       const bind=AsyncLocalStorage.snapshot();
       const contextStore=new Proxy(store,{get(target,key){const value=Reflect.get(target,key);return typeof value==='function'?(...args:unknown[])=>bind(()=>value.apply(target,args)):value;}});
       server=createApp(contextStore).listen(0,'127.0.0.1');await new Promise<void>(resolve=>server!.once('listening',resolve));

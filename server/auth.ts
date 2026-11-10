@@ -38,6 +38,7 @@ function sessionToken(req: Request, customer: boolean) {
     const token = req.headers.cookie?.split(';').map(x => x.trim()).find(x => x.startsWith(sessionCookie(customer)+'='))?.split('=')[1];
     return token && /^[a-f0-9]{64}$/.test(token) ? token : null;
 }
+export const staffSessionToken = (req: Request) => sessionToken(req, false);
 export async function actorFromRequest(store: Database, req: Request, scope?: 'STAFF' | 'CUSTOMER'): Promise<Actor | null> {
     const staffToken = scope === 'CUSTOMER' ? null : sessionToken(req, false);
     const user = staffToken && await store.one('SELECT u.id,u.org_id,u.name,u.role,u.driver_id,CASE WHEN EXISTS(SELECT 1 FROM org_owners o WHERE o.org_id=u.org_id AND o.user_id=u.id) THEN 1 ELSE 0 END AS is_super_admin FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.enabled=1', hash(staffToken), new Date().toISOString());

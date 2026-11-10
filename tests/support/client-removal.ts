@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
-import {passwordHash,type Actor} from '../../server/auth.ts';
+import {randomBytes,randomUUID} from 'node:crypto';
+import {hash,passwordHash,type Actor} from '../../server/auth.ts';
 import type {Database} from '../../server/database.ts';
-import {clientRemovalPreview,removeClient} from '../../server/client-removal.ts';
+import {archiveClient,clientRemovalPreview,removeClient} from '../../server/client-removal.ts';
 import {Logistics} from '../../server/domain.ts';
 import {Inventory} from '../../server/inventory.ts';
 import {StockReceipts} from '../../server/stock-receipts.ts';
@@ -49,36 +49,55 @@ export async function checkClientRemoval(db:Database){
  const confirmation={...command(),expectedName:preview.name,expectedTotals:preview.totals};
  await assert.rejects(removeClient(db,{...actor,role:'OPERATIONS'},client,confirmation),code('FORBIDDEN'));
  await assert.rejects(clientRemovalPreview(db,{...actor,orgId:randomUUID()},client),code('NOT_FOUND'));
- await assert.rejects(removeClient(db,actor,client,{...confirmation,expectedTotals:{...preview.totals,stockUnits:0}}),code('VERSION_CONFLICT'));
+ assert.equal(preview.hasHistory,true);
 
- // An active route blocks the removal even before a pending pickup is loaded.
+ // Custody must be cleared before archival even though the history stays.
  await db.run("UPDATE routes SET state='IN_PROGRESS' WHERE org_id=? AND id=?",orgId,route);
  assert.equal((await clientRemovalPreview(db,actor,client)).roadParcels,2);
- await assert.rejects(removeClient(db,actor,client,confirmation),code('INVALID_TRANSITION'));
+ await assert.rejects(archiveClient(db,actor,client,{...command(),archived:true}),code('INVALID_TRANSITION'));
  await db.run("UPDATE routes SET state='DRAFT' WHERE org_id=? AND id=?",orgId,route);
  await logistics.loadSelected(actor,route,{...command(),expectedVersion:2,parcelIds:[ownParcels[0].id]});
- assert.equal((await clientRemovalPreview(db,actor,client)).blocked,true);
- await assert.rejects(removeClient(db,actor,client,confirmation),code('INVALID_TRANSITION'));
+ await assert.rejects(archiveClient(db,actor,client,{...command(),archived:true}),code('INVALID_TRANSITION'));
  await logistics.unloadSelected(actor,route,{...command(),expectedVersion:3,parcelIds:[ownParcels[0].id]});
- assert.equal((await clientRemovalPreview(db,actor,client)).blocked,false);
- const version=(await db.one('SELECT version FROM routes WHERE id=?',route))!.version;
+ assert.equal((await clientRemovalPreview(db,actor,client)).inTransit,false);
+ await assert.rejects(removeClient(db,actor,client,confirmation),code('INVALID_TRANSITION'));
 
- const result=await removeClient(db,actor,client,confirmation);
- assert.equal(result.deleted,true);
- assert.deepEqual(await removeClient(db,actor,client,confirmation),result);
- for(const table of ['shipments','inventory_products','inventory_balances','inventory_orders','inventory_movements','inventory_receipt_batches']){
-  assert.equal((await db.one(`SELECT COUNT(*) AS n FROM ${table} WHERE org_id=? AND client_id=?`,orgId,client))?.n,0,table);
+ const token=randomBytes(32).toString('hex');
+ await db.run('INSERT INTO sessions VALUES(?,?,?)',hash(token),actor.id,new Date(Date.now()+60000).toISOString());
+ if(db.kind==='postgres'){
+  assert.equal((await db.one('SELECT purge_client(?,?,?,?,?) AS result',orgId,client,actor.id,preview.name,token))?.result,'CLIENT_HAS_HISTORY');
+ }else{
+  await assert.rejects(db.run('INSERT INTO client_purge_scope(org_id,client_id,actor_id) VALUES(?,?,?)',orgId,client,actor.id),/CLIENT_HAS_HISTORY/);
  }
- assert.equal(await db.one('SELECT id FROM clients WHERE id=?',client),undefined);
- assert.ok(await db.one('SELECT id FROM clients WHERE id=?',other));
+ const archive={...command(),archived:true};
+ const result=await archiveClient(db,actor,client,archive);
+ assert.ok(result.archivedAt);
+ assert.deepEqual(await archiveClient(db,actor,client,archive),result);
+ for(const table of ['shipments','inventory_products','inventory_balances','inventory_orders','inventory_movements','inventory_receipt_batches']){
+  assert.ok((await db.one('SELECT COUNT(*) AS n FROM '+table+' WHERE org_id=? AND client_id=?',orgId,client))!.n>0,table);
+ }
  assert.ok(await db.one('SELECT id FROM parcels WHERE id=?',otherParcel.id));
- assert.equal((await db.one('SELECT COUNT(*) AS n FROM route_assignments WHERE route_id=?',route))?.n,1);
- assert.equal((await db.one('SELECT COUNT(*) AS n FROM stops WHERE route_id=?',route))?.n,1);
- assert.equal((await db.one('SELECT version FROM routes WHERE id=?',route))?.version,version+1);
+ assert.equal((await db.one('SELECT COUNT(*) AS n FROM stops WHERE route_id=?',route))?.n,2);
  const [run]=(await inventory.importHistory(actor)).items;
- assert.equal(run.acceptedCount,1);
- assert.equal(run.result?.imported,1);
- assert.deepEqual(run.result?.orders.map((order:{clientId:string})=>order.clientId),[other]);
+ assert.deepEqual(run.result?.orders.map((order:{clientId:string})=>order.clientId),[client,other]);
+ await assert.rejects(inventory.receive(actor,{...command(),clientId:client,productId:ownSku,locationId:depot,quantity:1}),code('INVALID_TRANSITION'));
+ await archiveClient(db,actor,client,{...command(),archived:false});
+ assert.equal((await clientRemovalPreview(db,actor,client)).archivedAt,null);
+
+ const empty=(await logistics.createClient(actor,{...command(),name:'Cliente sin historial',deliveryProvider:'NEXORA'})).id;
+ await product(empty,'SOLO-FICHA');
+ const eligible=await clientRemovalPreview(db,actor,empty);
+ assert.equal(eligible.blocked,false);
+ const deletion={...command(),expectedName:eligible.name,expectedTotals:eligible.totals};
+ await assert.rejects(removeClient(db,actor,empty,{...deletion,expectedTotals:{...eligible.totals,products:0}},token),code('VERSION_CONFLICT'));
+ if(db.kind==='postgres'){
+  assert.equal((await db.one('SELECT purge_client(?,?,?,?) AS result',orgId,empty,actor.id,eligible.name))?.result,'FORBIDDEN');
+  assert.equal((await db.one('SELECT purge_client(?,?,?,?,?) AS result',orgId,empty,actor.id,eligible.name,randomBytes(32).toString('hex')))?.result,'FORBIDDEN');
+ }
+ const deleted=await removeClient(db,actor,empty,deletion,token);
+ assert.equal(deleted.deleted,true);
+ assert.deepEqual(await removeClient(db,actor,empty,deletion,token),deleted);
+ assert.equal(await db.one('SELECT id FROM clients WHERE id=?',empty),undefined);
 }
 
 export async function checkProductRemoval(db:Database){
@@ -100,4 +119,22 @@ export async function checkProductRemoval(db:Database){
  assert.equal((await inventory.stockPage(actor,{clientId:client,status:'ADJUSTED'})).total,1);
  assert.equal((await inventory.removeProduct(actor,unused,{...command(),expectedSku:'ART-EMPTY'})).deleted,true);
  assert.equal(await db.one('SELECT id FROM inventory_products WHERE id=?',unused),undefined);
+}
+
+export async function checkClientWithBillingIsKept(db:Database){
+ const {actor,orgId,client}=await fixture(db);
+ const date=new Date().toISOString();
+ await db.run('INSERT INTO billing_documents(id,org_id,client_id,reference,state,revision,data,total,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?,?,?)',randomUUID(),orgId,client,'FAC-QA','READY','{}',1000,date,date);
+ const preview=await clientRemovalPreview(db,actor,client);
+ assert.equal(preview.billingDocuments,1);
+ assert.equal(preview.hasHistory,true);
+ if(db.kind==='postgres'){
+  const token=randomBytes(32).toString('hex');
+  await db.run('INSERT INTO sessions VALUES(?,?,?)',hash(token),actor.id,new Date(Date.now()+60000).toISOString());
+  assert.equal((await db.one('SELECT purge_client(?,?,?,?,?) AS result',orgId,client,actor.id,preview.name,token))?.result,'CLIENT_HAS_HISTORY');
+ }else{
+  await assert.rejects(db.run('INSERT INTO client_purge_scope(org_id,client_id,actor_id) VALUES(?,?,?)',orgId,client,actor.id),/CLIENT_HAS_HISTORY/);
+ }
+ await archiveClient(db,actor,client,{...command(),archived:true});
+ assert.equal((await db.one('SELECT COUNT(*) AS n FROM billing_documents WHERE org_id=? AND client_id=?',orgId,client))?.n,1);
 }

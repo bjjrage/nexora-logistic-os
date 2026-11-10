@@ -28,7 +28,7 @@ test('ficha completa se guarda, relee y edita sin perder campos omitidos; idempo
  assert.equal((await store.one('SELECT COUNT(*) n FROM clients'))!.n,count);
  assert.equal((await store.one('SELECT COUNT(*) n FROM audit WHERE command_id=?',body.commandId))!.n,1);
  const foreignOrg=randomUUID();await store.run('INSERT INTO organizations VALUES(?,?,?)',foreignOrg,'Otra empresa','UTC');
- const foreignClient=randomUUID();await store.run('INSERT INTO clients VALUES(?,?,?)',foreignClient,foreignOrg,'Cliente de otra empresa');
+ const foreignClient=randomUUID();await store.run('INSERT INTO clients(id,org_id,name) VALUES(?,?,?)',foreignClient,foreignOrg,'Cliente de otra empresa');
  await saveClientProfile(store,foreignOrg,foreignClient,profile);
  await assert.rejects(()=>domain.updateClient({...actor,orgId:foreignOrg},created.id,{...command(),name:'Wrong'}),(e:any)=>e.code==='NOT_FOUND');
  for(const role of ['DEPOT','DRIVER','CUSTOMER'] as const)await assert.rejects(()=>domain.updateClient({...actor,role},created.id,{...command(),name:'Wrong'}),(e:any)=>e.code==='FORBIDDEN');
@@ -37,7 +37,7 @@ test('ficha completa se guarda, relee y edita sin perder campos omitidos; idempo
 });
 
 test('cliente existente sin ficha conserva identidad y puede pasar a catálogo y recepción',async t=>{
- const {store,actor,domain}=await fixture(t),id=randomUUID();await store.run('INSERT INTO clients VALUES(?,?,?)',id,actor.orgId,'Universo QA');
+ const {store,actor,domain}=await fixture(t),id=randomUUID();await store.run('INSERT INTO clients(id,org_id,name) VALUES(?,?,?)',id,actor.orgId,'Universo QA');
  assert.equal((await store.one('SELECT COUNT(*) n FROM client_profiles'))!.n,0);
  await domain.updateClient(actor,id,{...command(),...profile,name:'Universo QA'});
  await new CatalogImport(store).import(actor,{...command(),clientId:id,csv:'sku,nombre,pesoKg,volumenM3\nSKU-QA-01,Producto ficticio,1,0.001',defaultTracking:'QUANTITY'});

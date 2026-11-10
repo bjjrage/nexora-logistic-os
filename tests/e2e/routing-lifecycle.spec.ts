@@ -64,6 +64,7 @@ test('reserves six orders, approves two distinct crews, then loads, dispatches, 
  await page.getByRole('button',{name:'Empresa y equipo',exact:true}).click();
  await page.getByRole('button',{name:'Activar modo de prueba',exact:true}).click();
  await expect(page.getByText(/MODO DE PRUEBA ACTIVO/)).toBeVisible();
+ for(const route of approvedRouteDetails) await send('/api/routes/'+route.id+'/test',{expectedVersion:route.version,isTest:true});
  await page.getByRole('button',{name:'Rutas',exact:true}).click();
  await expect(page.getByRole('region',{name:'Pedidos organizados por camión'}).getByRole('article')).toHaveCount(2);
  for(let truckIndex=0;truckIndex<trucks.length;truckIndex++){

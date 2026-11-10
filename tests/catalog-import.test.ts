@@ -181,7 +181,7 @@ test('cliente/organización no pueden cruzar catálogo y preview/template se sir
   await assert.rejects(() => f.catalog.preview(customer, { clientId: f.clientId, csv: f.csv('CUST-1,No,,QUANTITY,unidad,,') }), errorCode('FORBIDDEN'));
   const foreignOrgId = randomUUID(), foreignClientId = randomUUID();
   await f.store.run('INSERT INTO organizations VALUES(?,?,?)', foreignOrgId, 'Otro tenant QA', 'UTC');
-  await f.store.run('INSERT INTO clients VALUES(?,?,?)', foreignClientId, foreignOrgId, 'Cliente externo');
+  await f.store.run('INSERT INTO clients(id,org_id,name) VALUES(?,?,?)', foreignClientId, foreignOrgId, 'Cliente externo');
   const foreignClientPreview = await f.catalog.preview(f.actor, { clientId: foreignClientId, csv: f.csv('SECRET-1,No exponer,,QUANTITY,unidad,,') });
   assert.equal(foreignClientPreview.valid, false);
   assert(foreignClientPreview.rowErrors.some(error => error.field === 'clientId'));

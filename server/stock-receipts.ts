@@ -122,7 +122,11 @@ export class StockReceipts{
  private inventory:Inventory;
  constructor(store:Database){this.store=store;this.inventory=new Inventory(store);}
  private allow(actor:InventoryActor){ensure(['ADMIN','OPERATIONS','DEPOT'].includes(actor.role),'FORBIDDEN','Tu rol no permite recibir mercadería.',403);}
- private async client(actor:InventoryActor,id:string){ensure(await this.store.one('SELECT id FROM clients WHERE org_id=? AND id=?',actor.orgId,id),'NOT_FOUND','El cliente no pertenece a esta empresa.',404);}
+ private async client(actor:InventoryActor,id:string,active=false){
+  const client=await this.store.one('SELECT archived_at FROM clients WHERE org_id=? AND id=?',actor.orgId,id);
+  ensure(client,'NOT_FOUND','El cliente no pertenece a esta empresa.',404);
+  if(active)ensure(!client.archived_at,'INVALID_TRANSITION','Reactivá el cliente antes de recibir mercadería.',409);
+ }
  read(actor:InventoryActor,input:unknown){this.allow(actor);return readReceiptFile(input);}
  template(actor:InventoryActor){
   this.allow(actor);const book=XLSX.utils.book_new(),sheet=XLSX.utils.aoa_to_sheet([['SKU','Cantidad','Ubicacion','Serie','CodigoBarrasUnidad']]);
@@ -130,7 +134,7 @@ export class StockReceipts{
   return XLSX.write(book,{type:'buffer',bookType:'xlsx',compression:true}) as Buffer;
  }
  private async plan(actor:InventoryActor,input:Input){
-  await this.client(actor,input.clientId);
+  await this.client(actor,input.clientId,true);
   const [products,locations,units,balances,received]=await Promise.all([
    this.store.all('SELECT * FROM inventory_products WHERE org_id=? AND client_id=?',actor.orgId,input.clientId),
    this.store.all('SELECT * FROM inventory_locations WHERE org_id=?',actor.orgId),
@@ -222,7 +226,7 @@ export class StockReceipts{
   this.allow(actor);const parsed=body.extend({commandId:z.uuid()}).parse(input);const {commandId,mode,expectedPlanHash,...legacyPayload}=parsed;
   // Preserve hashes of ADD commands that were stored before this option existed.
   const digest=hash(mode==='ADD'?legacyPayload:{...legacyPayload,mode,expectedPlanHash});
-  await this.client(actor,parsed.clientId);
+  await this.client(actor,parsed.clientId,true);
   const result=await this.store.transaction(async()=>{
    const prior=await this.store.one('SELECT * FROM inventory_receipt_batches WHERE org_id=? AND command_id=?',actor.orgId,commandId);
    if(prior){ensure(prior.actor_id===actor.id&&prior.body_hash===digest,'DUPLICATE_COMMAND','El identificador del lote ya se usó con otros datos o por otro usuario.');return {status:prior.status,...JSON.parse(prior.result)};}

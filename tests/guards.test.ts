@@ -112,12 +112,28 @@ test('dispatch now cannot occupy a loaded draft booking, and test-only reversal 
  assert.equal((await f.d.route(future,f.actor)).state,'READY');assert.equal((await f.store.one('SELECT state FROM parcels WHERE id=?',s.parcels[0].id))!.state,'LOADED');
  // Reproduce the previous release's false departure, then exercise the audited recovery.
  await f.store.run("UPDATE routes SET state='DRAFT' WHERE id=?",today);await f.store.run('UPDATE routes SET start_at=?,end_at=? WHERE id=?',new Date(Date.now()-7200000).toISOString(),new Date(Date.now()-3600000).toISOString(),today);
+ await f.store.run('INSERT INTO organization_test_mode VALUES(?,1)',f.actor.orgId);
+ await f.d.markRouteTest(f.actor,future,{...f.cmd(),expectedVersion:await f.version(future),isTest:true});
+ await f.store.run('UPDATE organization_test_mode SET enabled=0 WHERE org_id=?',f.actor.orgId);
  await f.d.dispatch(f.actor,future,{...f.cmd(),expectedVersion:await f.version(future),dispatchNow:true});
  const input={...f.cmd(),expectedVersion:await f.version(future),didNotDepart:true,reason:'El camión no salió; fue una prueba de despacho.'};
- await assert.rejects(correctTestDispatch(f.store,f.actor,future,input),{code:'FORBIDDEN'});await f.store.run('INSERT INTO organization_test_mode VALUES(?,1)',f.actor.orgId);
+ await assert.rejects(correctTestDispatch(f.store,f.actor,future,input),{code:'FORBIDDEN'});await f.store.run('UPDATE organization_test_mode SET enabled=1 WHERE org_id=?',f.actor.orgId);
+ await assert.rejects(f.d.markRouteTest(f.actor,future,{...f.cmd(),expectedVersion:await f.version(future),isTest:false}),{code:'INVALID_TRANSITION'});
  await assert.rejects(correctTestDispatch(f.store,{...f.actor,role:'OPERATIONS'},future,input),{code:'FORBIDDEN'});
  const corrected=await correctTestDispatch(f.store,f.actor,future,input);assert.deepEqual(await correctTestDispatch(f.store,f.actor,future,input),corrected);assert.equal(corrected.startAt,startAt);assert.equal(corrected.loadedPreserved,1);assert.equal((await f.d.route(future,f.actor)).state,'DRAFT');assert.equal((await f.store.one('SELECT state FROM parcels WHERE id=?',s.parcels[0].id))!.state,'LOADED');
  assert.equal((await f.store.one("SELECT COUNT(*) n FROM custody_events WHERE action='TEST_DISPATCH_CORRECTED'"))!.n,1);
+});
+test('una ruta normal exige foto y no puede marcarse como prueba después de salir',async t=>{
+ const f=await fixture(t),{r,s}=await f.loaded(),parcel=s.parcels[0];
+ await f.store.run("UPDATE shipments SET proof_policy='RECEIVER_PHOTO' WHERE id=?",s.id);
+ await f.store.run('INSERT INTO organization_test_mode VALUES(?,1)',f.actor.orgId);
+ await assert.rejects(f.d.markRouteTest({...f.actor,role:'OPERATIONS'},r,{...f.cmd(),expectedVersion:await f.version(r),isTest:true}),{code:'FORBIDDEN'});
+ await f.d.dispatch(f.actor,r,{...f.cmd(),expectedVersion:await f.version(r)});
+ const version=await f.version(r);
+ const stop=(await f.store.one('SELECT id FROM stops WHERE route_id=?',r))!.id;
+ await assert.rejects(f.d.attempt(f.actor,stop,{...f.cmd(),expectedVersion:version,deliveredParcelIds:[parcel.id],failedParcelIds:[],receiverName:'Receptor QA',evidenceIds:[],reasonCode:'',nextAction:''}),{code:'EVIDENCE_REQUIRED'});
+ await assert.rejects(f.store.run('INSERT INTO test_delivery_proofs VALUES(?,?,?,?)',f.actor.orgId,parcel.id,randomUUID(),new Date().toISOString()),/TEST_PROOF_REQUIRES_TEST_ROUTE/);
+ await assert.rejects(f.store.run('UPDATE routes SET is_test=1 WHERE id=?',r),/TEST_ROUTE_ALREADY_DEPARTED/);
 });
 for(const offset of [7200000,-7200000,-1800000])test(`Despachar ahora ajusta la ventana ${offset>0?'futura':offset===-1800000?'vigente':'vencida'} sin perder la carga ni omitir el checklist`,async t=>{
     const f=await fixture(t),{r,s}=await f.loaded();
