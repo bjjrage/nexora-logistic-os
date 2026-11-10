@@ -21,7 +21,10 @@ test('importa Excel de reparto completo después de validar, sin crear pedidos a
  const name='Excel QA '+randomUUID().slice(0,8),client=(await post('/api/clients',{name})).id;
  await page.goto('/');await page.getByRole('button',{name:'Clientes',exact:true}).click();
  await page.getByRole('row').filter({hasText:name}).getByRole('button',{name:'Abrir ficha'}).click();
- await page.getByRole('button',{name:'Importar catálogo',exact:true}).click();
+ await page.getByRole('button',{name:'Administrar productos',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Productos registrados',exact:true})).toBeVisible();
+ await expect(page.getByLabel('Archivo CSV o Excel (.xlsx)')).toBeHidden();
+ await page.getByText('Actualizar datos por archivo',{exact:true}).click();
  const catalogCsv=XLSX.utils.sheet_to_csv(book.Sheets[book.SheetNames[1]]);
  await page.getByLabel('Archivo CSV o Excel (.xlsx)').setInputFiles({name:'catalogo.csv',mimeType:'text/csv',buffer:Buffer.from(catalogCsv)});
  await page.getByRole('button',{name:'Validar archivo',exact:true}).click();

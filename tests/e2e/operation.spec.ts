@@ -32,13 +32,17 @@ test('browser: setup, customer profile, catalog import, warehouse receipt, persi
  await page.reload();await page.getByRole('button',{name:'Clientes',exact:true}).click();
  await page.getByRole('row').filter({hasText:'Cliente QA navegador'}).getByRole('button',{name:'Abrir ficha'}).click();
  await expect(page.getByText('Contacto editado QA',{exact:true})).toBeVisible();
- await page.getByRole('button',{name:'Importar catálogo',exact:true}).click();
+ await page.getByRole('button',{name:'Administrar productos',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Productos registrados',exact:true})).toBeVisible();
+ await expect(page.getByLabel('Archivo CSV o Excel (.xlsx)')).toBeHidden();
+ await page.getByText('Actualizar datos por archivo',{exact:true}).click();
  await page.getByLabel('Archivo CSV o Excel (.xlsx)').setInputFiles({name:'catalogo-qa.csv',mimeType:'text/csv',buffer:Buffer.from('sku,nombre,barcode,seguimiento,peso_kg,volumen_m3\nQA-BROWSER,Producto QA,1234567890123,Cantidad,1,0.001')});
  await page.getByRole('button',{name:'Validar archivo',exact:true}).click();
  await expect(page.getByRole('heading',{name:'Vista previa validada'})).toBeVisible();
  await page.getByRole('button',{name:'Confirmar importación',exact:true}).click();
  await expect(page.getByText('Catálogo actualizado desde el archivo.',{exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Inventario',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Importar catálogo',exact:true})).toHaveCount(0);
  await page.getByRole('button',{name:'Recibir mercadería',exact:true}).click();
  await page.getByRole('button',{name:'Crear depósito o sector',exact:true}).click();
  await page.getByRole('dialog').getByLabel('Código interno',{exact:true}).fill('QA-CENTRAL');
