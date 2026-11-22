@@ -36,7 +36,8 @@ export async function outreachAvailable(db:Database, actor:Actor) {
 
 export class Outreach {
   private commands:Logistics;
-  constructor(private db:Database) { this.commands=new Logistics(db); }
+  private db:Database;
+  constructor(db:Database) { this.db=db; this.commands=new Logistics(db); }
   private read<T>(actor:Actor, work:()=>Promise<T>) {
     authorize(actor,crmRoles);
     return this.db.transaction(work,{crmOrgId:actor.orgId,readOnly:true});
