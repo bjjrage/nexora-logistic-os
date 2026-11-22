@@ -62,6 +62,7 @@ test('CRM interno: prospectos, contactos, funnel, seguimiento e importación', a
     await page.getByRole('button', {name: 'Crear tarea'}).click();
     await expect(page.getByText('Vencida', {exact: true})).toBeVisible();
     await page.getByRole('button', {name: 'Completar tarea: Revisar capacidad'}).click();
+    await expect(page.getByRole('cell', {name: 'Sin tareas.', exact: true})).toBeVisible();
     await page.getByLabel('Estado de tareas').selectOption('DONE');
     await expect(page.getByRole('cell', {name: 'Revisar capacidad'})).toBeVisible();
 
