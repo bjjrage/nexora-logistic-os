@@ -40,7 +40,7 @@ export default function OutreachPanel({revision,busy,run}:{revision:number;busy:
         <Field label="Empresa prospecto"><select value={prospectId} onChange={e=>{setProspectId(e.target.value);setContactId('');}}>
           <option value="">Seleccionar</option>{prospects?.data?.rows.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
         </select></Field>
-        <Field label="Contacto"><select value={contactId} onChange={e=>setContactId(e.target.value)}>
+        <Field label="Contacto"><select aria-label="Contacto" value={contactId} onChange={e=>setContactId(e.target.value)}>
           <option value="">Seleccionar</option>{detail?.data?.contacts.map(c=><option key={c.id} value={c.id} disabled={c.noContact}>{c.name}{c.noContact?' · No contactar':''}</option>)}
         </select></Field>
         <Field label="Canal"><select value={channel} onChange={e=>setChannel(e.target.value as typeof channel)}>{channels.map(x=><option key={x} value={x}>{x}</option>)}</select></Field>
