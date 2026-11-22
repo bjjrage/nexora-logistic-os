@@ -13,7 +13,11 @@ export default defineConfig(({mode}) => {
       name: 'nexora-portal-release',
       apply: 'build',
       generateBundle() {
-        const release = process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA ?? execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+        let release = process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA ?? process.env.RAILWAY_GIT_COMMIT_SHA;
+        if (!release) {
+          try { release = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
+          catch { release = 'demo-source-unversioned'; } // Docker demo builds lack Git metadata.
+        }
         this.emitFile({ type: 'asset', fileName: 'release.json', source: JSON.stringify({ release, application: 'customer-portal' }) + '\n' });
       },
     }] : [],
