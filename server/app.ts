@@ -26,6 +26,7 @@ import {reconcileInventory} from './reconciliation.ts';
 import {PasswordRecovery} from './password-recovery.ts';
 import {latestParcelAssignment} from './driver-access.ts';
 import {installBillingRoutes} from './billing.ts';
+import {crmAvailable,installProspectingRoutes} from './crm-routes.ts';
 const customerDataPrefix = '/api/customer-data/';
 const customerRead = /^(inventory(\/(stock|locations\/stock|movements|export\.csv|movements\/export\.csv))?|orders\/(read|export\.csv)|quadminds\/shipments\/[a-f0-9-]+\/proofs|customer-evidence\/[a-f0-9-]+)$/i;
 export function createApp(store: Database, tracking = new QuadMindsTracking(store), quad = new QuadOperations(store),diagnostics=new Diagnostics()) {
@@ -123,7 +124,13 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     installQuadOperationRoutes(app,store,auth,quad);
     // Inventory/customer read routes are registered above the internal-operation boundary.
     app.use('/api',async(req,_res,next)=>{const actor=await auth(req);ensure(actor.role!=='CUSTOMER','FORBIDDEN','Este recurso es interno de operaciones.',403);next();});
-    app.get('/api/bootstrap', async (req, res) => { const actor = await auth(req); res.json({ ...await domain.bootstrap(actor), tracking: { ...tracking.status(actor.orgId), traccar: await traccar.health() } }); });
+    app.get('/api/bootstrap', async (req, res) => {
+        const actor = await auth(req);
+        res.json({
+            ...await domain.bootstrap(actor), crmAvailable: await crmAvailable(store, actor),
+            tracking: { ...tracking.status(actor.orgId), traccar: await traccar.health() },
+        });
+    });
     app.get('/api/routes/:id/detail',async(req,res)=>{
         const actor=await auth(req),id=z.uuid().parse(req.params.id);
         res.json(await store.transaction(()=>domain.bootstrap(actor,id)));
@@ -131,6 +138,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     app.get('/api/company',async(req,res)=>res.json(await new CompanyAdministration(store).read(await auth(req))));
     app.post('/api/company/test-mode',async(req,res)=>res.json(await new CompanyAdministration(store).setTestMode(await auth(req),req.body)));
     installBillingRoutes(app,store,auth);
+    installProspectingRoutes(app,store,auth);
     app.post('/api/company',async(req,res)=>res.json(await new CompanyAdministration(store).update(await auth(req),req.body)));
     app.post('/api/users/:id/delete',async(req,res)=>res.json(await new CompanyAdministration(store).remove(await auth(req),String(req.params.id),req.body)));
     app.post('/api/users/:id/access',async(req,res)=>res.json(await new CompanyAdministration(store).setAccess(await auth(req),String(req.params.id),req.body)));
