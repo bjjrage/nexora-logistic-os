@@ -30,6 +30,7 @@ test('CRM-02 + CRM-03: bandeja y storyboard en UI sin envíos ni renders',async(
     await page.getByRole('navigation',{name:'Secciones del CRM'}).getByRole('button',{name:'Bandeja'}).click();
     await expect(page.getByRole('heading',{name:'Bandeja comercial'})).toBeVisible();
     await page.getByLabel('Empresa prospecto').selectOption(leadId);
+    await expect(page.getByLabel('Contacto',{exact:true}).locator(`option[value="${contactId}"]`)).toHaveCount(1);
     await page.getByLabel('Contacto',{exact:true}).selectOption(contactId);
     await page.getByRole('button',{name:'Abrir conversación'}).click();
     await expect(page.getByRole('heading',{name:'Mensajes de trabajo'})).toBeVisible();
