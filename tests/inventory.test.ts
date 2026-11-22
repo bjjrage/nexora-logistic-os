@@ -272,7 +272,7 @@ test('preview valida fechas reales por fila, y el historial conserva errores sin
     { ...orderBody(randomUUID(), f.clientId, f.product.id, 'VALID-DATE', 1), orderDate: undefined, date: '2026-10-15' },
   ] });
   assert.equal(success.imported, 1);
-  assert.equal((await f.inventory.importHistory(f.actor)).items[0].status, 'IMPORTED');
+  assert.equal((await f.inventory.importHistory(f.actor)).items.find(row => row.commandId === successCommand)?.status, 'IMPORTED');
 });
 
 test('un fallo al guardar el historial revierte el lote y permite reintentar el mismo comando', async (t) => {
@@ -286,7 +286,7 @@ test('un fallo al guardar el historial revierte el lote y permite reintentar el 
   inventory.recordImportRun = original;
   const retry = await f.inventory.importOrders(f.actor, input);
   assert.equal(retry.imported, 1);
-  assert.equal((await f.inventory.importHistory(f.actor)).items[0].status, 'IMPORTED');
+  assert.equal((await f.inventory.importHistory(f.actor)).items.find(row => row.commandId === input.commandId)?.status, 'IMPORTED');
 });
 
 test('edición y cancelación sólo afectan pedidos DRAFT, y el motivo queda en auditoría', async (t) => {

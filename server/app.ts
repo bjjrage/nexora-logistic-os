@@ -19,6 +19,11 @@ import { installLivePortal } from './live-portal.ts';
 import { QuadOperations } from './quad-operations.ts';
 import { installQuadOperationRoutes } from './quad-operation-routes.ts';
 import { installInventoryRoutes } from './inventory-routes.ts';
+import {installCustomerOrderIntake,miniosReady} from './customer-order-intake.ts';
+import {installMerchantBot} from './minios-bot.ts';
+import {crmAvailable,installProspectingRoutes} from './crm-routes.ts';
+import {installOutreachRoutes} from './crm-outreach.ts';
+import {installCrmAgent} from './crm-agent.ts';
 import {correctTestDispatch} from './test-dispatch-correction.ts';
 import { synchronizeQuadMinds } from './quad-sync.ts';
 import {Diagnostics,requestContext,WindowLimiter} from './observability.ts';
@@ -30,6 +35,10 @@ const customerDataPrefix = '/api/customer-data/';
 const customerRead = /^(inventory(\/(stock|locations\/stock|movements|export\.csv|movements\/export\.csv))?|orders\/(read|export\.csv)|quadminds\/shipments\/[a-f0-9-]+\/proofs|customer-evidence\/[a-f0-9-]+)$/i;
 export function createApp(store: Database, tracking = new QuadMindsTracking(store), quad = new QuadOperations(store),diagnostics=new Diagnostics()) {
     const app = express(), domain = new Logistics(store);
+    const isPrivateDemo=process.env.NEXORA_DEMO_MODE==='isolated';
+    // SOLO demo aislada con datos inventados: acceso directo sin contraseñas.
+    // Producción mantiene la autenticación tradicional sin modificaciones.
+    if(isPrivateDemo) app.use((_req,res,next)=>{res.set('X-Robots-Tag','noindex, nofollow');next();});
     const traccar = new TraccarTracking(store);
     app.disable('x-powered-by');
     const proxyHops=Number(process.env.TRUST_PROXY_HOPS??0);
@@ -58,7 +67,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
             const portal = req.path.startsWith('/customer/');
             const allowed = new Set([...(production?[]:['http://127.0.0.1:5173','http://localhost:5173','http://127.0.0.1:5174','http://localhost:5174']), `${production?'https':'http'}://${req.headers.host}`, ...(process.env.ALLOWED_ORIGINS ?? '').split(',').map(s=>s.trim()).filter(Boolean)]);
             const origin = req.headers.origin;
-            const wrongSurface = origin && (production && portal ? origin !== CUSTOMER_PORTAL_ORIGIN : origin === CUSTOMER_PORTAL_ORIGIN && !portal);
+            const wrongSurface = !isPrivateDemo && origin && (production && portal ? origin !== CUSTOMER_PORTAL_ORIGIN : origin === CUSTOMER_PORTAL_ORIGIN && !portal);
             if (req.headers['x-requested-with'] !== 'logistics-os' || wrongSurface || (origin && origin !== CUSTOMER_PORTAL_ORIGIN && !allowed.has(origin)))
                 return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Origen de solicitud no autorizado.' } });
         }
@@ -88,8 +97,20 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     app.post('/api/diagnostics/events',async(req,res)=>{const actor=await auth(req);ensure(telemetryLimit.allow(actor.id),'FORBIDDEN','Demasiados eventos.',429);const body=z.object({kind:z.enum(['UI_ERROR','UNHANDLED_REJECTION','API_ERROR']),component:z.string().regex(/^[a-zA-Z0-9_.-]{1,80}$/),requestId:z.uuid().optional()}).strict().parse(req.body);diagnostics.emit('client.error',body);res.status(202).json({accepted:true});});
     app.get('/api/diagnostics',async(req,res)=>{const actor=await auth(req);ensure(actor.role==='ADMIN','FORBIDDEN','Acceso no autorizado.',403);res.json({release:process.env.RELEASE_SHA??'local',events:diagnostics.recent.filter(entry=>entry.orgId===actor.orgId)});});
     app.get('/api/inventory/reconciliation',async(req,res)=>{const actor=await auth(req);const result=await reconcileInventory(store,actor);if(!result.ok)diagnostics.emit('inventory.mismatch',{quantityIssues:result.quantityIssues.length,serialIssues:result.serialIssues.length});res.json(result);});
-    app.get('/api/session', async (req, res) => res.json({ user: await actorFromRequest(store, req, 'STAFF'), setupRequired: !await store.one('SELECT id FROM users LIMIT 1') }));
-    app.get('/api/customer/session', async (req, res) => res.json({ user: await actorFromRequest(store, req, 'CUSTOMER') }));
+    const demoSession = async (req: Request,res: Response,customer:boolean):Promise<Actor|null> => {
+      const current=await actorFromRequest(store,req,customer?'CUSTOMER':'STAFF');
+      if(!isPrivateDemo || current)return current;
+      const row=customer
+        ? await store.one("SELECT id,org_id,client_id,name FROM customer_accounts WHERE username='demo.comercio' AND enabled=1")
+        : await store.one("SELECT id,org_id,name,role,driver_id FROM users WHERE username='demo.admin' AND enabled=1");
+      ensure(row,'DEMO_NOT_READY','La demostración aún no tiene cuentas ficticias.',503);
+      await createSession(store,row.id,res,customer);
+      return customer
+        ? {id:row.id,orgId:row.org_id,name:row.name,role:'CUSTOMER',driverId:null,clientId:row.client_id}
+        : {id:row.id,orgId:row.org_id,name:row.name,role:row.role as Actor['role'],driverId:row.driver_id,clientId:null};
+    };
+    app.get('/api/session', async (req, res) => res.json({ user: await demoSession(req,res,false), setupRequired: !await store.one('SELECT id FROM users LIMIT 1') }));
+    app.get('/api/customer/session', async (req, res) => res.json({ user: await demoSession(req,res,true) }));
     app.post('/api/setup', async (req, res) => {
         loginLimit(req);
         if(process.env.NODE_ENV==='production')ensure(process.env.INITIAL_SETUP_TOKEN&&process.env.INITIAL_SETUP_TOKEN.length>=32&&typeof req.headers['x-setup-token']==='string'&&hash(req.headers['x-setup-token'])===hash(process.env.INITIAL_SETUP_TOKEN),'FORBIDDEN','El alta inicial se realiza desde la instalación privada de Nexora.',403);
@@ -120,10 +141,15 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     app.post('/api/customer/logout', logout(true));
     installCustomerAccess(app,store,auth);
     installInventoryRoutes(app,store,auth);
+    installCustomerOrderIntake(app,store,auth);
+    installMerchantBot(app,store);
+    installProspectingRoutes(app,store,auth);
+    installOutreachRoutes(app,store,auth);
+    installCrmAgent(app,store,auth);
     installQuadOperationRoutes(app,store,auth,quad);
     // Inventory/customer read routes are registered above the internal-operation boundary.
     app.use('/api',async(req,_res,next)=>{const actor=await auth(req);ensure(actor.role!=='CUSTOMER','FORBIDDEN','Este recurso es interno de operaciones.',403);next();});
-    app.get('/api/bootstrap', async (req, res) => { const actor = await auth(req); res.json({ ...await domain.bootstrap(actor), tracking: { ...tracking.status(actor.orgId), traccar: await traccar.health() } }); });
+    app.get('/api/bootstrap', async (req, res) => { const actor = await auth(req); res.json({ ...await domain.bootstrap(actor), miniosReady: await miniosReady(store), crmAvailable: await crmAvailable(store, actor), tracking: { ...tracking.status(actor.orgId), traccar: await traccar.health() } }); });
     app.get('/api/routes/:id/detail',async(req,res)=>{
         const actor=await auth(req),id=z.uuid().parse(req.params.id);
         res.json(await store.transaction(()=>domain.bootstrap(actor,id)));
@@ -216,7 +242,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     app.get(['/manual.html','/MANUAL_MAESTRO_NEXORA_OS.html'],(_req,res)=>res.sendFile(resolve('MANUAL_MAESTRO_NEXORA_OS.html'),{dotfiles:'allow'}));
     app.get('/manual-portatil.html',(_req,res)=>res.download(resolve('MANUAL_WORKFLOWS_NEXORA_PORTATIL.html'),'MANUAL_WORKFLOWS_NEXORA_PORTATIL.html',{dotfiles:'allow'}));
     const dist = resolve('dist');
-    if (process.env.NODE_ENV !== 'production') {
+    if (process.env.NODE_ENV !== 'production' || isPrivateDemo) {
         app.use('/portal', express.static(resolve('deploy/portal/dist')));
     }
     if (existsSync(resolve(dist, 'index.html'))) {

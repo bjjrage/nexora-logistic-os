@@ -1,0 +1,9 @@
+.crm-funnel { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.crm-funnel .button { display: flex; justify-content: space-between; gap: 8px; }
+.crm-funnel .button[aria-pressed="true"] { border-color: currentColor; }
+.crm-table button { text-align: left; }
+.crm-timeline { padding-left: 22px; display: grid; gap: 12px; overflow-wrap: anywhere; }
+.crm-summary { overflow-wrap: anywhere; white-space: pre-wrap; }
+.crm-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.crm-import-errors { max-height: 260px; overflow: auto; }
+.crm-filter { align-items: end; }

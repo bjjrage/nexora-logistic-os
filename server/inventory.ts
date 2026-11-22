@@ -18,6 +18,17 @@ const positive = z.number().int().positive().max(200);
 const orderDateInput = z.union([z.iso.date(), z.iso.datetime({ offset: true })]).transform(value => value.slice(0, 10));
 const quantityInput = z.object({ productId: uuid, quantity: positive, serials: z.array(nonEmpty).max(200).optional() });
 const orderLineInput = z.object({ productId: uuid, quantity: positive });
+const availableQuantity = `CASE WHEN p.tracking='SERIAL' THEN (
+  SELECT COUNT(*) FROM inventory_units u
+  JOIN inventory_locations loc ON loc.id=u.location_id AND loc.org_id=u.org_id
+  WHERE u.org_id=p.org_id AND u.client_id=p.client_id AND u.product_id=p.id AND u.status='AVAILABLE'
+  AND loc.active=1 AND loc.kind<>'QUARANTINE'
+) ELSE (
+  SELECT COALESCE(SUM(b.quantity),0) FROM inventory_balances b
+  JOIN inventory_locations loc ON loc.id=b.location_id AND loc.org_id=b.org_id
+  WHERE b.org_id=p.org_id AND b.client_id=p.client_id AND b.product_id=p.id AND b.status='AVAILABLE'
+  AND b.order_id='' AND b.quantity>0 AND loc.active=1 AND loc.kind<>'QUARANTINE'
+) END`;
 const orderInput = z.object({
   clientId: uuid, externalId: nonEmpty.max(160), orderDate: orderDateInput,
   destination: nonEmpty, recipientName: nonEmpty, recipientPhone: z.string().trim().max(80).default(''),
@@ -1102,14 +1113,24 @@ export class Inventory {
     return { products: products.map(row => ({ ...camel(row), active: Boolean(row.active) })), locations: locations.map(row => ({ ...camel(row), active: Boolean(row.active) })), balances: balances.map(camel), units: units.slice(0, 1000).map(camel), movements: movements.slice(0, 500).map(camel),
       counts: { products: Number(productCount?.count ?? 0), locations: Number(locationCount?.count ?? 0), balances: Number(balanceCount?.count ?? 0), units: Number(unitCount?.count ?? 0), movements: Number(movementCount?.count ?? 0) }, limits, hasMore, totals, clientTotals };
   }
+  async availableProducts(actor:InventoryActor, ids:string[]) {
+    const clientId=await this.readClientId(actor);
+    ensure(clientId,'FORBIDDEN','La cuenta no pertenece a un comercio.',403);
+    const productIds=z.array(uuid).min(1).max(200).parse(ids);
+    ensure(new Set(productIds).size===productIds.length,'VALIDATION_ERROR','Cada producto debe aparecer una sola vez.',400);
+    const params=productIds.map(()=>'?').join(',');
+    return this.store.all(`SELECT p.id,p.sku,${availableQuantity} AS available FROM inventory_products p
+      WHERE p.org_id=? AND p.client_id=? AND p.active=1 AND p.id IN (${params})`,actor.orgId,clientId,...productIds);
+  }
   async orders(actor: InventoryActor, clientFilter?: string,options:unknown={}) {
     this.readAccess(actor);
     let clientId: string | undefined;
     if (actor.role === 'CUSTOMER') { ensure(actor.clientId, 'FORBIDDEN', 'La sesión de cliente no tiene un cliente asociado.', 403); clientId = actor.clientId; }
     else if (clientFilter) { await this.client(actor, clientFilter); clientId = clientFilter; }
-    const page=z.object({limit:z.coerce.number().int().min(1).max(200).default(50),offset:z.coerce.number().int().min(0).max(1000000).default(0),q:z.string().trim().max(200).default(''),status:z.enum(['','DRAFT','RESERVED','PARTIALLY_LOADED','LOADED','IN_TRANSIT','PARTIAL','DELIVERED','CANCELLED','EXCEPTION']).default('')}).parse(options);
+    const page=z.object({limit:z.coerce.number().int().min(1).max(200).default(50),offset:z.coerce.number().int().min(0).max(1000000).default(0),q:z.string().trim().max(200).default(''),orderId:uuid.optional(),status:z.enum(['','DRAFT','RESERVED','PARTIALLY_LOADED','LOADED','IN_TRANSIT','PARTIAL','DELIVERED','CANCELLED','EXCEPTION']).default('')}).parse(options);
     const predicates=['o.org_id=?'],args:any[]=[actor.orgId];
     if(clientId){predicates.push('o.client_id=?');args.push(clientId);}
+    if(page.orderId){predicates.push('o.id=?');args.push(page.orderId);}
     if(page.status){predicates.push('o.status=?');args.push(page.status);}
     if(page.q){predicates.push('(lower(o.external_id) LIKE ? OR lower(o.recipient_name) LIKE ? OR lower(o.destination) LIKE ? OR lower(o.recipient_phone) LIKE ? OR lower(c.name) LIKE ?)');args.push(...Array(5).fill('%'+page.q.toLowerCase()+'%'));}
     const from=`FROM inventory_orders o JOIN clients c ON c.id=o.client_id AND c.org_id=o.org_id WHERE ${predicates.join(' AND ')}`;
@@ -1128,8 +1149,7 @@ export class Inventory {
   private async orderView(actor: InventoryActor, order: Row) {
     const [lines, parcels] = await Promise.all([
       this.store.all(`SELECT l.*,p.sku,p.name,p.unit,p.tracking,
-        CASE WHEN p.tracking='SERIAL' THEN (SELECT COUNT(*) FROM inventory_units u JOIN inventory_locations loc ON loc.id=u.location_id AND loc.org_id=u.org_id WHERE u.org_id=l.org_id AND u.client_id=p.client_id AND u.product_id=l.product_id AND u.status='AVAILABLE' AND loc.active=1 AND loc.kind<>'QUARANTINE')
-        ELSE (SELECT COALESCE(SUM(b.quantity),0) FROM inventory_balances b JOIN inventory_locations loc ON loc.id=b.location_id AND loc.org_id=b.org_id WHERE b.org_id=l.org_id AND b.client_id=p.client_id AND b.product_id=l.product_id AND b.status='AVAILABLE' AND b.order_id='' AND b.quantity>0 AND loc.active=1 AND loc.kind<>'QUARANTINE') END AS available_quantity
+        ${availableQuantity} AS available_quantity
         FROM inventory_order_lines l JOIN inventory_products p ON p.id=l.product_id AND p.org_id=l.org_id WHERE l.order_id=? AND l.org_id=? ORDER BY l.id`, order.id, actor.orgId),
       this.store.all(`SELECT p.id,p.code,op.product_id,op.serial_id,op.state,q.provider_result,q.evidence_state,qp.kind,e.sha256,EXISTS(SELECT 1 FROM test_delivery_proofs t WHERE t.org_id=op.org_id AND t.parcel_id=op.parcel_id) AS test_without_photo
         FROM inventory_order_parcels op JOIN parcels p ON p.id=op.parcel_id AND p.org_id=op.org_id
