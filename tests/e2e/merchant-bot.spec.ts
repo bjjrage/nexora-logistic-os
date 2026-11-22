@@ -31,7 +31,7 @@ test('Simulador autenticado del bot: stock, solicitud compartida y canales desco
     await customer.getByLabel('Usuario',{exact:true}).fill('bot-customer');
     await customer.getByLabel('Contraseña',{exact:true}).fill('Bot-QA-Cliente-2026!');
     await customer.getByRole('button',{name:'Ingresar',exact:true}).click();
-    const nav=customer.getByRole('navigation',{name:'Navegación del cliente'});
+    const nav=customer.getByRole('navigation',{name:'Navegación móvil'});
     await nav.getByRole('button',{name:'Pedidos',exact:true}).click();
     await customer.getByRole('checkbox',{name:'Simular conversación del bot'}).check();
     await expect(customer.getByText(/NOT_CONNECTED/)).toBeVisible();
