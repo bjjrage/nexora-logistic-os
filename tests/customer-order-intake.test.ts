@@ -69,6 +69,18 @@ test('Mini OS: cliente instruye, Operaciones registra, audit e aislamiento sin r
     assert.equal(queued.body.total,1);
     assert.equal(queued.body.rows[0].order.externalId,'COM-A-101');
     assert.equal((await call('/api/minios/order-requests/'+first.body.id+'/accept',customerA,command())).status,403);
+    const editPayload={...command(),expectedVersion:1,kind:'EDIT',reason:'Corregir dirección',
+      order:{orderDate:payload.orderDate,destination:'Nueva dirección',recipientName:payload.recipientName,lines:payload.lines}};
+    const path='/api/customer/order-requests/'+first.body.id+'/change';
+    assert.equal((await call(path,customerB,editPayload)).status,404);
+    const invalidSku={...editPayload,commandId:id(),order:{...editPayload.order,lines:[{productId:bProduct,quantity:1}]}};
+    assert.equal((await call(path,customerA,invalidSku)).status,403);
+    const responses=await Promise.all([call(path,customerA,editPayload),call(path,customerA,editPayload)]);
+    assert.equal(responses[0].status,200);
+    assert.deepEqual(responses[0].body,responses[1].body);
+    assert.equal(responses[0].body.version,2);
+    assert.equal((await call(path,customerA,{...editPayload,commandId:id()})).status,409);
+    assert.equal((await call('/api/minios/order-requests/'+first.body.id+'/accept',adminCookie,{...command(),expectedVersion:1})).status,409);
     const accepted=await call('/api/minios/order-requests/'+first.body.id+'/accept',adminCookie,command());
     assert.equal(accepted.status,200,JSON.stringify(accepted.body));
     assert.equal(accepted.body.status,'ACCEPTED');
@@ -81,6 +93,35 @@ test('Mini OS: cliente instruye, Operaciones registra, audit e aislamiento sin r
     assert.equal((await db.one('SELECT COUNT(*) AS total FROM inventory_order_parcels'))?.total,0);
     assert.equal((await call('/api/customer/order-requests',customerA)).body.rows[0].status,'ACCEPTED');
 
+    assert.equal(order.body.destination,'Nueva dirección');
+    const read=await call('/api/orders/read?orderId='+accepted.body.orderId,customerA);
+    assert.equal(read.body.items[0].status,'DRAFT');
+    assert.equal((await call('/api/orders/read?orderId='+accepted.body.orderId,customerB)).body.total,0);
+    const editAccepted=await call(path,customerA,{...editPayload,commandId:id(),expectedVersion:3,order:{...editPayload.order,destination:'Propuesta comercial'}});
+    assert.equal(editAccepted.status,200);
+    assert.ok(editAccepted.body.changeId);
+    const changes=await call('/api/minios/order-requests?status=CHANGE_PENDING',adminCookie);
+    assert.equal(changes.body.total,1);
+    assert.equal(changes.body.rows[0].change.proposed.destination,'Propuesta comercial');
+    const review='/api/minios/order-requests/'+first.body.id+'/review';
+    const reviewBody={...command(),expectedVersion:4,changeId:editAccepted.body.changeId,outcome:'ACKNOWLEDGED',reason:'Recibido por operaciones'};
+    assert.equal((await call(review,customerA,reviewBody)).status,403);
+    const reviewed=await call(review,adminCookie,reviewBody);
+    assert.equal(reviewed.status,200);
+    assert.deepEqual((await call(review,adminCookie,reviewBody)).body,reviewed.body);
+    const cancel={...command(),kind:'CANCEL',expectedVersion:5,reason:'Cancelación comercial solicitada'};
+    assert.ok((await call(path,customerA,cancel)).body.changeId);
+    assert.equal((await call('/api/orders/'+accepted.body.orderId,adminCookie)).body.destination,'Nueva dirección');
+    const history=await call('/api/customer/order-requests/'+first.body.id+'/history',customerA);
+    assert.deepEqual(history.body.rows.map((r:{kind:string})=>r.kind),
+      ['CHANGE_REQUESTED','CHANGE_REVIEWED','CHANGE_REQUESTED','ACCEPTED','EDITED','SUBMITTED']);
+    assert.equal((await call(path,customerA,editPayload)).body.version,2);
+    const draft=await call('/api/customer/order-requests',customerA,{...payload,...command(),externalId:'COM-A-CANCEL'});
+    const draftPath='/api/customer/order-requests/'+draft.body.id+'/change';
+    const cancelled=await call(draftPath,customerA,{...cancel,...command(),expectedVersion:1});
+    assert.equal(cancelled.body.status,'CANCELLED');
+    assert.equal((await call('/api/minios/order-requests/'+draft.body.id+'/accept',adminCookie,command())).status,409);
+    assert.equal((await call('/api/minios/order-requests?status=CANCELLED',adminCookie)).body.total,1);
     const another=await call('/api/customer/order-requests',customerA,{...command(),externalId:'COM-A-102',orderDate:'2026-11-22',
       destination:'Central',recipientName:'Receptor',lines:[{productId:aProduct,quantity:1}]});
     assert.equal(another.status,201);
@@ -99,7 +140,7 @@ test('Mini OS: cliente instruye, Operaciones registra, audit e aislamiento sin r
     assert.equal((await call('/api/minios/order-requests/'+first.body.id+'/accept',otherCookie,command())).status,404);
     assert.equal((await call('/api/minios/order-requests?status=ACCEPTED',otherCookie)).body.total,0);
 
-    await db.run('DELETE FROM schema_migrations WHERE version=27');
+    await db.run('DELETE FROM schema_migrations WHERE version=28');
     assert.equal((await call('/api/customer/order-requests',customerA)).status,503);
     assert.equal((await call('/api/orders/read',customerA)).status,200);
   } finally{

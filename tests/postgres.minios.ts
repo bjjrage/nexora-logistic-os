@@ -47,6 +47,16 @@ test('Mini OS PostgreSQL: RLS, aislamiento y conversión mediante núcleo de ped
       assert.equal(accepted.status,'ACCEPTED');
       assert.equal((await db.one('SELECT status FROM inventory_orders WHERE org_id=? AND id=?',org,accepted.orderId))?.status,'DRAFT');
       assert.equal((await db.one('SELECT COUNT(*) AS total FROM inventory_order_parcels WHERE org_id=?',org))?.total,0);
+      const proposal=await service.change(customer,request.id,{commandId:id(),expectedVersion:2,kind:'CANCEL',reason:'Cliente pidió cancelar'});
+      assert.ok(proposal.changeId);
+      assert.equal((await service.queue(admin,{status:'CHANGE_PENDING',limit:25,offset:0})).total,1);
+      await assert.rejects(service.timeline(other,request.id,{limit:25,offset:0}),/Solicitud no encontrada/);
+      await service.review(admin,request.id,{commandId:id(),expectedVersion:3,changeId:proposal.changeId,outcome:'ACKNOWLEDGED',reason:'Revisado'});
+      assert.deepEqual((await service.timeline(customer,request.id,{limit:25,offset:0})).rows.map(row=>row.kind),
+        ['CHANGE_REVIEWED','CHANGE_REQUESTED','ACCEPTED','SUBMITTED']);
+      assert.equal((await db.one("SELECT has_table_privilege('nexora.customer_order_request_events','UPDATE') AS can_edit"))?.can_edit,false);
+      await db.one("SELECT set_config('nexora.minios_org_id',?,true) AS tenant",id());
+      assert.deepEqual(await db.all('SELECT id FROM customer_order_request_changes'),[]);
       throw rollback;
     }),/MINIOS_TEST_ROLLBACK/);
   }finally{await db.close();}
