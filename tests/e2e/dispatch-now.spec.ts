@@ -17,7 +17,8 @@ test('loaded route must be confirmed before it can dispatch now, with checklist 
  await send('/api/orders/'+order+'/reserve',{});
  const detail=async()=> (await(await page.request.get('/api/orders/'+order)).json());
  const parcel=(await detail()).parcels[0];
- const scheduledStart=new Date(Date.now()+86400000).toISOString(),scheduledEnd=new Date(Date.now()+93600000).toISOString();
+ const scheduleBase=Date.now();
+ const scheduledStart=new Date(scheduleBase+86400000).toISOString(),scheduledEnd=new Date(scheduleBase+93600000).toISOString();
  const route=(await send('/api/routes',{name:routeName,driverId:driver,vehicleId:vehicle,trackingProvider:'TRACCAR',startAt:scheduledStart,endAt:scheduledEnd})).id;
  const bootstrap=async()=> (await(await page.request.get('/api/bootstrap')).json());
  const routeDetail=async()=> (await bootstrap()).routes.find((item:any)=>item.id===route);

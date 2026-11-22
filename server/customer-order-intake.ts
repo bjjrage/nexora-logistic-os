@@ -16,7 +16,7 @@ const orderFields = z.object({
   restrictions: z.string().trim().max(1000).default(''),
   lines: z.array(z.object({productId: uuid, quantity: z.number().int().positive().max(200)}).strict()).min(1).max(200),
 }).strict();
-const submitSchema = orderFields.extend({commandId: uuid, externalId: address.max(160)}).strict();
+export const customerOrderSubmitSchema = orderFields.extend({commandId: uuid, externalId: address.max(160)}).strict();
 const version = z.number().int().positive();
 const decision = z.object({commandId: uuid, expectedVersion: version.optional()}).strict();
 const reject = decision.extend({reason});
@@ -123,7 +123,7 @@ export class CustomerOrderIntake {
     ensure(expected === undefined || row.version === expected, 'VERSION_CONFLICT', 'La solicitud cambió. Actualizá la lista.', 409);
   }
 
-  private async orderPayload(actor: Actor, clientId: string, input: z.output<typeof submitSchema>) {
+  private async orderPayload(actor: Actor, clientId: string, input: z.output<typeof customerOrderSubmitSchema>) {
     const {clientId: _client, commandId: _command, ...order} =
       inventorySchemas.order.parse({...input, clientId, proofPolicy: 'RECEIVER_PHOTO'});
     for (const line of order.lines) {
@@ -134,7 +134,7 @@ export class CustomerOrderIntake {
     return order;
   }
 
-  async submit(actor: Actor, input: z.output<typeof submitSchema>) {
+  async submit(actor: Actor, input: z.output<typeof customerOrderSubmitSchema>) {
     const clientId = this.client(actor);
     return this.scoped(actor, async () => {
       await this.verifyMerchant(actor, clientId);
@@ -311,7 +311,7 @@ export function installCustomerOrderIntake(app: Express, db: Database, auth: (re
   const actor = (res: {locals: Record<string, unknown>}) => res.locals.actor as Actor;
   const id = (req: Request) => uuid.parse(req.params.id);
   customer.get('/', async (req, res) => res.json(await service.mine(actor(res), page.parse(req.query))));
-  customer.post('/', async (req, res) => res.status(201).json(await service.submit(actor(res), submitSchema.parse(req.body))));
+  customer.post('/', async (req, res) => res.status(201).json(await service.submit(actor(res), customerOrderSubmitSchema.parse(req.body))));
   customer.post('/:id/change', async (req, res) => res.json(await service.change(actor(res), id(req), merchantChange.parse(req.body))));
   customer.get('/:id/history', async (req, res) => res.json(await service.timeline(actor(res), id(req), page.parse(req.query))));
   ops.get('/', async (req, res) => res.json(await service.queue(actor(res), opsPage.parse(req.query))));

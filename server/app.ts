@@ -20,6 +20,7 @@ import { QuadOperations } from './quad-operations.ts';
 import { installQuadOperationRoutes } from './quad-operation-routes.ts';
 import { installInventoryRoutes } from './inventory-routes.ts';
 import {installCustomerOrderIntake,miniosReady} from './customer-order-intake.ts';
+import {installMerchantBot} from './minios-bot.ts';
 import {correctTestDispatch} from './test-dispatch-correction.ts';
 import { synchronizeQuadMinds } from './quad-sync.ts';
 import {Diagnostics,requestContext,WindowLimiter} from './observability.ts';
@@ -122,6 +123,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     installCustomerAccess(app,store,auth);
     installInventoryRoutes(app,store,auth);
     installCustomerOrderIntake(app,store,auth);
+    installMerchantBot(app,store);
     installQuadOperationRoutes(app,store,auth,quad);
     // Inventory/customer read routes are registered above the internal-operation boundary.
     app.use('/api',async(req,_res,next)=>{const actor=await auth(req);ensure(actor.role!=='CUSTOMER','FORBIDDEN','Este recurso es interno de operaciones.',403);next();});
