@@ -9,9 +9,10 @@ import {
   type Dashboard, type Filters, type Options, type Page, type Prospect, type RunAction, type Stage,
 } from './model';
 import './crm.css';
+import CreativeStudioPanel from './CreativeStudioPanel';
 
-type View = 'prospects' | 'funnel' | 'tasks' | 'dashboard';
-const views = {prospects: 'Prospectos', funnel: 'Funnel', tasks: 'Tareas', dashboard: 'Dashboard'} as const;
+type View = 'prospects' | 'funnel' | 'tasks' | 'dashboard' | 'creative';
+const views = {prospects: 'Prospectos', funnel: 'Funnel', tasks: 'Tareas', dashboard: 'Dashboard', creative: 'Studio creativo'} as const;
 const emptyOptions: Options = {owners: [], campaigns: [], sources: []};
 
 type ImportIssue = {row: number; field: string; message: string};
@@ -210,7 +211,7 @@ export default function CrmPanel() {
         {Object.entries(views).map(([key,label]) => <button type="button" key={key} aria-pressed={view === key}
           onClick={() => chooseView(key as View)}>{label}</button>)}
       </nav>
-      {view !== 'tasks' && <FiltersForm filters={filters} options={available} onChange={apply}/>}
+      {view !== 'tasks' && view !== 'creative' && <FiltersForm filters={filters} options={available} onChange={apply}/>}
       {view === 'funnel' && (dashboard?.data ? <Funnel data={dashboard.data} stage={filters.stage}
         select={stage => apply({...filters, stage: stage === filters.stage ? '' : stage})}/> : <LoadStatus error={dashboard?.error}/>)}
       {view === 'dashboard' && (dashboard?.data ? <section className="stat-grid" aria-label="Indicadores comerciales">
@@ -220,7 +221,8 @@ export default function CrmPanel() {
         <StatCard label="Llegaron a activado" value={dashboard.data.reached.ACTIVATED ?? 0} caption="Ver funnel" onClick={() => chooseView('funnel')}/>
         <StatCard label="Tareas vencidas" value={dashboard.data.overdue} caption="Ver tareas vencidas" onClick={() => chooseView('tasks', true)}/>
       </section> : <LoadStatus error={dashboard?.error}/>)}
-      {view === 'tasks' && <TaskList key={String(overdueOnly)} initialState={overdueOnly ? 'OVERDUE' : 'OPEN'}
+      {view === 'creative' && <CreativeStudioPanel revision={revision} busy={busy} run={run}/>}
+       {view === 'tasks' && <TaskList key={String(overdueOnly)} initialState={overdueOnly ? 'OVERDUE' : 'OPEN'}
         revision={revision} options={available} busy={busy} run={run} openProspect={open}/>}
       {shouldList && (list?.data ? <ProspectTable data={list.data} open={open} onPage={setOffset}/> : <LoadStatus error={list?.error}/>)}
     </>}
