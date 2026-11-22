@@ -26,7 +26,7 @@ import {reconcileInventory} from './reconciliation.ts';
 import {PasswordRecovery} from './password-recovery.ts';
 import {latestParcelAssignment} from './driver-access.ts';
 import {installBillingRoutes} from './billing.ts';
-import {installProspectingRoutes} from './crm-routes.ts';
+import {crmAvailable,installProspectingRoutes} from './crm-routes.ts';
 const customerDataPrefix = '/api/customer-data/';
 const customerRead = /^(inventory(\/(stock|locations\/stock|movements|export\.csv|movements\/export\.csv))?|orders\/(read|export\.csv)|quadminds\/shipments\/[a-f0-9-]+\/proofs|customer-evidence\/[a-f0-9-]+)$/i;
 export function createApp(store: Database, tracking = new QuadMindsTracking(store), quad = new QuadOperations(store),diagnostics=new Diagnostics()) {
@@ -124,7 +124,13 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     installQuadOperationRoutes(app,store,auth,quad);
     // Inventory/customer read routes are registered above the internal-operation boundary.
     app.use('/api',async(req,_res,next)=>{const actor=await auth(req);ensure(actor.role!=='CUSTOMER','FORBIDDEN','Este recurso es interno de operaciones.',403);next();});
-    app.get('/api/bootstrap', async (req, res) => { const actor = await auth(req); res.json({ ...await domain.bootstrap(actor), tracking: { ...tracking.status(actor.orgId), traccar: await traccar.health() } }); });
+    app.get('/api/bootstrap', async (req, res) => {
+        const actor = await auth(req);
+        res.json({
+            ...await domain.bootstrap(actor), crmAvailable: await crmAvailable(store, actor),
+            tracking: { ...tracking.status(actor.orgId), traccar: await traccar.health() },
+        });
+    });
     app.get('/api/routes/:id/detail',async(req,res)=>{
         const actor=await auth(req),id=z.uuid().parse(req.params.id);
         res.json(await store.transaction(()=>domain.bootstrap(actor,id)));

@@ -20,6 +20,14 @@ Project Brain identifica NEXORA OS4. El catálogo devuelve cero documentos canó
 
 - SQLite usa `024_crm_prospecting.sql` y Supabase usa `20261122011028_crm_prospecting.sql`. Ambas crean las tablas e índices del CRM. La versión PostgreSQL se rastrea mediante el historial de Supabase y conserva la comprobación de versiones del núcleo logístico. En una entrega futura, aplicar la migración aprobada antes de habilitar el código del CRM.
 - Railway producción sigue asignado a `main`. Los dos proyectos Vercel excluyen despliegues automáticos de la rama `feat/internal-crm-prospecting` mediante una regla específica en sus archivos de configuración.
+- El bootstrap del OS muestra el CRM solo al personal autorizado y con el esquema verificado. En PostgreSQL se comprueban las tablas, la política RLS y los permisos del runtime. En SQLite se comprueban las tablas y la versión 24. Mientras falte el esquema, la API del CRM devuelve `503 CRM_NOT_READY` y el resto del OS sigue disponible. Al completar la migración, una nueva consulta puede habilitar el CRM.
+
+## Regresiones de la revisión del PR #12
+
+- La coincidencia por nombre y ubicación se conserva al agregar el primer correo u otro canal. Si ambas fichas carecen de ubicación, la coincidencia aparece como duplicado para revisión. La importación conserva la ficha original.
+- El CSV del CRM informa comillas mal formadas por fila. Las filas válidas del mismo lote se pueden confirmar y conservan sus comillas escapadas y saltos de línea.
+- Los perfiles sociales incompletos se rechazan. Un perfil válido se puede volver a guardar con su URL normalizada.
+- La prueba del navegador comprueba que el menú oculta el CRM y que la API responde `503 CRM_NOT_READY` antes de registrar la migración. Luego recorre el módulo con el esquema listo. Las suites SQLite y PostgreSQL ejercitan las regresiones de datos.
 
 ## Validación local
 

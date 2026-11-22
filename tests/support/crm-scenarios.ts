@@ -62,6 +62,13 @@ export async function exerciseCrm(store: Database, volume: number) {
   }
 
   try {
+    const bootstrap = await request('/api/bootstrap', admin.token);
+    assert.equal(bootstrap.status, 200);
+    assert.equal(bootstrap.body.crmAvailable, true);
+    const driverBootstrap = await request('/api/bootstrap', driver.token);
+    assert.equal(driverBootstrap.status, 200);
+    assert.equal(driverBootstrap.body.crmAvailable, false);
+
     const create = {...command(), name: 'Ñandutí QA', sector: 'Moda', city: 'Luque', department: 'Central',
       campaign: 'Piloto A', source: 'Feria', instagram: 'https://www.instagram.com/nanduti_qa/?refer=1',
       phone: '0981 555 333', email: 'INFO@example.test', ownerId: ops.id, tags: ['Pyme']};
@@ -74,6 +81,7 @@ export async function exerciseCrm(store: Database, volume: number) {
     assert.equal(concurrent[1].id, first);
     const second = await send('/prospects', {...command(), name: 'Segundo QA', city: 'Luque', sector: 'Moda'}, 201, ops.token);
     assert.notEqual(second.id, first);
+    await send('/prospects', {...command(), name: 'Perfil inválido QA', facebook: '@'}, 400);
     const duplicate = await send('/prospects', {...command(), name: 'Otro nombre', instagram: '@nanduti_qa'}, 409);
     assert.equal(duplicate.error.code, 'CRM_DUPLICATE');
     await send('/prospects', {...command(), name: create.name, city: create.city}, 201, foreign.token);
@@ -95,11 +103,16 @@ export async function exerciseCrm(store: Database, volume: number) {
       ...command(), stage: 'VALIDATED', reason: 'Intrusión', expectedVersion: 1,
     })).status, 404);
 
-    const contactA = await send(path + '/contacts', {...command(), name: 'Ana QA', email: 'ANA@example.test', preferredChannel: 'EMAIL'});
+    await send(path + '/contacts', {...command(), name: 'Perfil inválido QA', instagram: '@'}, 400);
+    const contactA = await send(path + '/contacts', {
+      ...command(), name: 'Ana QA', email: 'ANA@example.test', facebook: '@Ana.Comercio', preferredChannel: 'EMAIL',
+    });
     const contactB = await send(path + '/contacts', {...command(), name: 'Bruno QA', phone: '0981 001 223'});
     await send(path + '/contacts', {...command(), name: 'Ana duplicada', email: 'ana@example.test'}, 409);
+    const ana = (await get(path)).contacts.find((contact: {id:string}) => contact.id === contactA.id);
+    assert.equal(ana.facebook, 'https://facebook.com/ana.comercio');
     await send(path + '/contacts/' + contactA.id, {
-      ...command(), name: 'Ana QA', email: 'ana@example.test', noContact: true, expectedVersion: 1,
+      ...command(), name: 'Ana QA', email: 'ana@example.test', facebook: ana.facebook, noContact: true, expectedVersion: 1,
     }, 200, ops.token, 'PUT');
     const detail = await get(path);
     assert.equal(detail.contacts.length, 2);
@@ -137,6 +150,37 @@ export async function exerciseCrm(store: Database, volume: number) {
     assert.equal(summary.reached.PILOT, 1);
     assert.equal(summary.reached.ACTIVATED, 1);
     assert.equal((await get('/options')).campaigns[0], 'Piloto A');
+
+    const sparse = await send('/prospects', {...command(), name: 'Taller Norte'});
+    const richer = await send('/prospects', {...command(), name: 'TÁLLER NORTE', email: 'norte@example.test'}, 409);
+    assert.equal(richer.error.code, 'CRM_DUPLICATE');
+    const regressionCsv = [
+      'nombre;correo;notas',
+      'TÁLLER NORTE;norte@example.test;',
+      '"Taller"resto;;',
+      '"Tienda Sol";;"Dijo ""hola""',
+      'y siguió"',
+      'Tienda" sin abrir;;',
+      'Otra tienda válida;;',
+    ].join('\r\n');
+    const regressionPreview = await send('/import/preview', {csv: regressionCsv}, 200);
+    assert.equal(regressionPreview.total, 5);
+    assert.equal(regressionPreview.valid, 2);
+    assert.deepEqual(regressionPreview.duplicates.map((issue: {row:number}) => issue.row), [2]);
+    assert.deepEqual(regressionPreview.errors.map((issue: {row:number}) => issue.row), [3,6]);
+    assert.deepEqual(regressionPreview.sample.map((item: {name:string}) => item.name), ['Tienda Sol','Otra tienda válida']);
+    const regressionImport = {...command(), csv: regressionCsv, previewId: regressionPreview.previewId};
+    assert.deepEqual(await send('/import', regressionImport), {imported: 2, errors: 2, duplicates: 1});
+    assert.deepEqual(await send('/import', regressionImport), {imported: 2, errors: 2, duplicates: 1});
+    assert.equal((await get('/prospects?q=Taller+Norte')).total, 1);
+    assert.equal((await get('/prospects/' + sparse.id)).prospect.email, '');
+    const sol = (await get('/prospects?q=Tienda+Sol')).rows[0];
+    assert.equal(sol.notes, 'Dijo "hola"\r\ny siguió');
+    await send('/prospects', {...command(), name: 'Puesto Sur', email: 'sur@example.test'});
+    const reverse = await send('/import/preview', {csv: 'nombre\nPuesto Sur'}, 200);
+    assert.equal(reverse.valid, 0);
+    assert.equal(reverse.duplicates[0].row, 2);
+    await send('/prospects', {...command(), name: 'Taller Norte', city: 'Luque', email: 'otro-norte@example.test'});
 
     const csv = '\uFEFFnombre;rubro;ciudad;campaña;instagram;correo;notas\r\n' +
       'Duplicado;Moda;Asunción;Piloto B;@nanduti_qa;;Ya existe\r\n' +

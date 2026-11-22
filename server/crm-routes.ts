@@ -4,6 +4,32 @@ import { authorize, type Actor } from './auth.ts';
 import type { Database } from './database.ts';
 import { crmSchemas } from './crm-contract.ts';
 import { crmRoles, Prospecting } from './crm.ts';
+import { ensure } from './errors.ts';
+
+const crmTables = ['crm_prospects', 'crm_identifiers', 'crm_contacts', 'crm_transitions', 'crm_tasks', 'crm_activities'];
+const tableParams = crmTables.map(() => '?').join(',');
+
+export async function crmAvailable(db: Database, actor: Actor): Promise<boolean> {
+  if (!crmRoles.includes(actor.role)) return false;
+  try {
+    const result = db.kind === 'sqlite'
+      ? await db.one(`SELECT COUNT(*) AS total FROM sqlite_schema
+          WHERE type='table' AND name IN (${tableParams})
+            AND EXISTS (SELECT 1 FROM schema_migrations WHERE version=24)`, ...crmTables)
+      : await db.one(`SELECT COUNT(*) AS total
+          FROM pg_class t JOIN pg_namespace s ON s.oid=t.relnamespace
+          WHERE s.nspname=current_schema() AND t.relkind='r' AND t.relname IN (${tableParams})
+            AND row_security_active(t.oid)
+            AND EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid=t.oid AND p.polname='crm_organization')
+            AND has_table_privilege(t.oid, 'SELECT') AND has_table_privilege(t.oid, 'INSERT')
+            AND (t.relname NOT IN ('crm_prospects','crm_contacts','crm_tasks') OR has_table_privilege(t.oid, 'UPDATE'))
+            AND (t.relname<>'crm_identifiers' OR has_table_privilege(t.oid, 'DELETE'))`, ...crmTables);
+    return Number(result?.total) === crmTables.length;
+  } catch {
+    // CRM schema checks fail closed without blocking the operating system.
+    return false;
+  }
+}
 
 export function installProspectingRoutes(app: Express, db: Database, auth: (request: Request) => Promise<Actor>) {
   const router = Router();
@@ -14,6 +40,7 @@ export function installProspectingRoutes(app: Express, db: Database, auth: (requ
   router.use(async (request, response, next) => {
     const user = await auth(request);
     authorize(user, crmRoles);
+    ensure(await crmAvailable(db, user), 'CRM_NOT_READY', 'El CRM estará disponible cuando se verifique su migración.', 503);
     response.locals.crmActor = user;
     next();
   });

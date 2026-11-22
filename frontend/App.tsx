@@ -116,6 +116,7 @@ type Maintenance = Entity & {
 type EvidenceRecord = Entity & { parcelId: string | null; filename: string; mimeType: string; createdAt: string };
 type AuditItem = Entity & { action: string; entityId: string; createdAt: string };
 type Bootstrap = {
+  crmAvailable?: boolean;
   clientProfilesEnabled?:boolean;
   limits?: {perCollection:number;hasMore:boolean;message:string};
   organization: { name: string; timezone: string; testMode?:boolean; supportContacts?:{name:string;role:string}[] };
@@ -569,6 +570,7 @@ function AppContent() {
 
   const isDriver = session.user.role === "DRIVER";
   const role = session.user.role;
+  const canUseCrm = isOpsRole(role) && bootstrap.crmAvailable === true;
   const nav: { id: Page; label: string; icon: ReactNode }[] = isDriver
     ? [{ id: "routes", label: "Mis rutas", icon: <RouteIcon /> }, { id: "tracking", label: "Tracking", icon: <Radio /> }]
     : role === "DEPOT" ? [
@@ -585,7 +587,7 @@ function AppContent() {
       { id: "shipments", label: "Envíos", icon: <Package /> },
       { id: "routes", label: "Rutas", icon: <RouteIcon /> },
       { id: "tracking", label: "Tracking", icon: <Radio /> },
-      ...(isOpsRole(role) ? [{id: "crm" as const, label: "CRM comercial", icon: <Users />}] : []),
+      ...(canUseCrm ? [{id: "crm" as const, label: "CRM comercial", icon: <Users />}] : []),
       ...(role === "ADMIN" ? [{ id: "billing" as Page, label: "Facturación", icon: <ClipboardList /> }] : []),
       ...(role === "ADMIN" ? [{ id: "company" as Page, label: "Empresa y equipo", icon: <Users /> }] : []),
       { id: "clients", label: "Clientes", icon: <Users /> },
@@ -634,7 +636,9 @@ function AppContent() {
           {page === "clients" && isOpsRole(role) && <ClientsPanel profileEnabled={bootstrap.clientProfilesEnabled===true} initialClientId={preferredClientId} clients={bootstrap.clients} shipments={bootstrap.shipments} canManage={true} canManageAccess={role==='ADMIN'} action={mutate} busy={pending} actionError={error} onInventory={(clientId,view)=>{changePage('inventory');setInventoryEntry({clientId,view});}}/>}
           {page === "company" && role === "ADMIN" && <CompanyPanel onDepots={()=>{changePage("inventory");setInventoryEntry({clientId:"",view:"settings"});}} organization={bootstrap.organization} currentUserId={session.user.id} action={mutate} busy={pending} actionError={error} onFleet={()=>changePage('fleet')}/>}
           {page === "billing" && role === "ADMIN" && <Suspense fallback={<p role="status">Cargando facturación…</p>}><BillingPanel clients={bootstrap.clients}/></Suspense>}
-          {page === "crm" && isOpsRole(role) && <Suspense fallback={<p role="status">Cargando CRM…</p>}><CrmPanel/></Suspense>}
+          {page === "crm" && (canUseCrm
+            ? <Suspense fallback={<p role="status">Cargando CRM…</p>}><CrmPanel/></Suspense>
+            : <p className="notice" role="status">CRM comercial no disponible.</p>)}
           {page === "inventory" && !isDriver && <InventoryPanel key={inventoryEntry?inventoryEntry.clientId+':'+inventoryEntry.view:'inventory'} initialClientId={inventoryEntry?.clientId} initialView={inventoryEntry?.view} initialReceiptSeed={inventoryEntry?.seed} onReturnToOrder={inventoryEntry?.seed?.order?()=>{const order=inventoryEntry.seed!.order!;changePage('orders');setOrderEntry({id:order.orderId,reference:order.orderReference,clientId:order.clientId});}:undefined} onReturnToClient={inventoryEntry&&!inventoryEntry.seed?.order?(clientId)=>changePage('clients',clientId):undefined} section="inventory" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
           {page === "orders" && !isDriver && <InventoryPanel key={orderEntry?.id??'orders'} initialOrder={orderEntry??undefined} initialClientId={orderEntry?.clientId} section="orders" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} onOpenRoutes={(routeId)=>changePage('routes',routeId)} onReceiveStock={(order)=>{changePage('inventory');setInventoryEntry({clientId:order.clientId,view:'receive',seed:{token:crypto.randomUUID(),order}});}} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
           {page === "customerAccess" && role === "ADMIN" && <InventoryPanel section="customerAccess" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}

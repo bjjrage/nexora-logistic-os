@@ -46,11 +46,10 @@ const website = optionalText(300).transform((value, ctx) => {
 function social(platform: 'facebook' | 'instagram') {
   return optionalText(300).transform((value, ctx) => {
     if (!value) return '';
-    const handle = /^[\w@.-]+$/.test(value) && !value.toLowerCase().endsWith('.com');
+    const handle = /^@?[\w.-]+$/.test(value) && !value.toLowerCase().endsWith('.com');
     const canonical = 'https://' + platform + '.com/';
-    if (handle) return canonical + value.replace(/^@/, '').toLowerCase();
     try {
-      const url = webUrl(value);
+      const url = webUrl(handle ? canonical + value.replace(/^@/, '') : value);
       const host = url.hostname.toLowerCase();
       const allowed = platform === 'facebook' ? ['facebook.com', 'fb.com'] : ['instagram.com'];
       if (!allowed.some(domain => host === domain || host.endsWith('.' + domain))) throw new Error();
@@ -143,16 +142,19 @@ export type CrmImportRow = { row: number; data: ProspectFields };
 
 export function parseCrmCsv(csv: string) {
   ensure(Buffer.byteLength(csv, 'utf8') <= 2_000_000, 'VALIDATION_ERROR', 'El CSV supera los 2 MB.', 413);
-  const parsed = parseCsv(csv, 'empresas');
+  const parsed = parseCsv(csv, 'empresas', true);
   const errors: CrmImportIssue[] = parsed.errors.map(error => ({...error, field: error.field ?? 'csv'}));
   const rows: CrmImportRow[] = [];
-  if (errors.length) return { rows, errors, total: 0 };
+  if (!parsed.rows.length) return { rows, errors, total: 0 };
   const [header, ...body] = parsed.rows;
+  const invalidRows = new Set(errors.map(error => error.row));
+  if (invalidRows.has(header.row)) return { rows, errors, total: body.length };
   const keys = header.cells.map(cell => headerMap[normalize(String(cell.raw)) as keyof typeof headerMap]);
   if (!keys.includes('name') || new Set(keys).size !== keys.length || keys.some(key => !key)) {
     return { rows, errors: [{row: header.row, field: 'encabezados', message: 'Incluí nombre. Usá encabezados reconocidos y sin repetir.'}], total: body.length };
   }
   for (const record of body) {
+    if (invalidRows.has(record.row)) continue;
     if (record.cells.length > keys.length) {
       errors.push({row: record.row, field: 'columnas', message: 'La fila tiene más columnas que los encabezados.'});
       continue;
@@ -171,8 +173,6 @@ export function companyKeys(company: ProspectFields) {
     .filter(kind => company[kind]).map(kind => ({ kind: kind as string, value: company[kind] }));
   const folded = normalize(company.name);
   const name = folded.replace(/[^\p{L}\p{N}]+/gu, '') || folded;
-  if (name && (company.city || company.department || !keys.length)) {
-    keys.push({ kind: 'business', value: [name, normalize(company.city), normalize(company.department)].join('|') });
-  }
+  keys.push({ kind: 'business', value: [name, normalize(company.city), normalize(company.department)].join('|') });
   return keys;
 }

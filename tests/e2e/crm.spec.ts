@@ -15,8 +15,22 @@ test('CRM interno: prospectos, contactos, funnel, seguimiento e importación', a
       data: {organizationName: 'CRM fixture', timezone: 'America/Asuncion', username: 'crm-qa', password: 'Crm-QA-Local-2026!'},
     });
     expect(setup.status()).toBe(201);
+    const migration = await db.one('SELECT applied_at FROM schema_migrations WHERE version=24');
+    await db.run('DELETE FROM schema_migrations WHERE version=24');
     await page.goto(origin);
-    await page.getByRole('navigation', {name: 'Navegación principal'}).getByRole('button', {name: 'CRM comercial'}).click();
+    const navigation = page.getByRole('navigation', {name: 'Navegación principal'});
+    await expect(navigation.getByRole('button', {name: 'Inicio', exact: true})).toBeVisible();
+    const crmLink = navigation.getByRole('button', {name: 'CRM comercial'});
+    await expect(crmLink).toHaveCount(0);
+    const disabled = await page.request.get(origin + '/api/crm/prospects');
+    expect(disabled.status()).toBe(503);
+    expect((await disabled.json()).error.code).toBe('CRM_NOT_READY');
+    const bootstrap = await page.request.get(origin + '/api/bootstrap');
+    expect(bootstrap.ok()).toBeTruthy();
+    expect((await bootstrap.json()).crmAvailable).toBe(false);
+    await db.run('INSERT INTO schema_migrations VALUES(24,?)', migration?.applied_at);
+    await page.reload();
+    await crmLink.click();
     await expect(page.getByRole('heading', {name: 'CRM comercial'})).toBeVisible();
     await page.getByRole('button', {name: 'Nuevo prospecto'}).click();
     const form = page.locator('section').filter({has: page.getByRole('heading', {name: 'Nuevo prospecto'})});

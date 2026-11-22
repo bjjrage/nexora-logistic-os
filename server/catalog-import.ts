@@ -98,15 +98,19 @@ function firstCsvRecord(source: string): string {
   return source;
 }
 
-export function parseCsv(source: string, entity = 'productos'): FileContent {
+export function parseCsv(source: string, entity = 'productos', strictQuotes = false): FileContent {
   const text = source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;
   const delimiter = chooseDelimiter(firstCsvRecord(text));
   const records: SourceRow[] = [];
+  const errors: RowError[] = [];
   let cells: Cell[] = [], field = '', quoted = false, line = 1, startLine = 1;
-  const pushField = () => { cells.push({ raw: field }); field = ''; };
+  let closedQuote = false, malformedQuotes = false;
+  const pushField = () => { cells.push({ raw: field }); field = ''; closedQuote = false; };
   const pushRecord = () => {
     pushField();
-    if (cells.some(cell => normalizeText(cell.raw))) records.push({ row: startLine, cells });
+    if (malformedQuotes) errors.push({ row: startLine, field: 'csv', message: 'La fila contiene comillas mal formadas.' });
+    if (malformedQuotes || cells.some(cell => normalizeText(cell.raw))) records.push({ row: startLine, cells });
+    malformedQuotes = false;
     cells = [];
     startLine = line + 1;
   };
@@ -114,15 +118,18 @@ export function parseCsv(source: string, entity = 'productos'): FileContent {
     const char = text[index];
     if (quoted) {
       if (char === '"' && text[index + 1] === '"') { field += '"'; index++; }
-      else if (char === '"') quoted = false;
-      else { field += char; if (char === '\n') line++; }
-    } else if (char === '"' && field.length === 0) quoted = true;
+      else if (char === '"') { quoted = false; closedQuote = strictQuotes; }
+      else { field += char; if (char === '\n' || (strictQuotes && char === '\r' && text[index + 1] !== '\n')) line++; }
+    } else if (char === '"' && !closedQuote && field.length === 0) quoted = true;
     else if (char === delimiter) pushField();
     else if (char === '\n') { pushRecord(); line++; if (records.length > MAX_ROWS + 1) return { rows: [], errors: [{ row: MAX_ROWS + 2, field: 'csv', message: `El archivo supera el máximo de ${MAX_ROWS} ${entity}.` }] }; }
     else if (char === '\r') {
       if (text[index + 1] === '\n') continue;
       pushRecord(); line++; if (records.length > MAX_ROWS + 1) return { rows: [], errors: [{ row: MAX_ROWS + 2, field: 'csv', message: `El archivo supera el máximo de ${MAX_ROWS} ${entity}.` }] };
-    } else field += char;
+    } else {
+      if (strictQuotes && (closedQuote || char === '"')) malformedQuotes = true;
+      field += char;
+    }
     if (cells.length > MAX_COLUMNS) return { rows: [], errors: [{ row: startLine, field: 'header', message: `El CSV supera el máximo de ${MAX_COLUMNS} columnas.` }] };
   }
   if (quoted) return { rows: [], errors: [{ row: startLine, field: 'csv', message: 'Hay una comilla sin cerrar en el CSV.' }] };
@@ -130,7 +137,7 @@ export function parseCsv(source: string, entity = 'productos'): FileContent {
   if (records.length > MAX_ROWS + 1) return { rows: [], errors: [{ row: MAX_ROWS + 2, field: 'csv', message: `El archivo supera el máximo de ${MAX_ROWS} ${entity}.` }] };
   if (records.length < 2) return { rows: [], errors: [{ row: 1, field: 'csv', message: entity === 'productos' ? 'El CSV debe incluir encabezados y al menos un producto.' : 'El CSV debe incluir encabezados y al menos una empresa.' }] };
   if (records.length - 1 > MAX_ROWS) return { rows: [], errors: [{ row: MAX_ROWS + 2, field: 'csv', message: `El archivo supera el máximo de ${MAX_ROWS} ${entity}.` }] };
-  return { rows: records, errors: [] };
+  return { rows: records, errors };
 }
 
 export function preflightZip(buffer: Buffer): string | null {
