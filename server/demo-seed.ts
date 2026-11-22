@@ -1,4 +1,4 @@
-import {randomUUID} from 'node:crypto';
+import {randomUUID,randomBytes} from 'node:crypto';
 import type {Database} from './database.ts';
 import {setup,passwordHash,type Actor} from './auth.ts';
 import {Inventory} from './inventory.ts';
@@ -8,8 +8,7 @@ export async function seedPrivateDemo(db:Database) {
   if(db.kind!=='sqlite')throw new Error('La demo sólo usa SQLite aislado.');
   if(await db.one('SELECT id FROM users LIMIT 1'))return;
   await db.transaction(async()=>{
-    const adminPass=process.env.DEMO_ADMIN_PASSWORD??'',merchantPass=process.env.DEMO_CUSTOMER_PASSWORD??'';
-    if(adminPass.length<14||merchantPass.length<14)throw new Error('Faltan contraseñas de demo.');
+    const adminPass=randomBytes(32).toString('base64url'),merchantPass=randomBytes(32).toString('base64url');
     const {userId,orgId}=await setup(db,{organizationName:'DEMO · NEXORA OS4 · FICTICIA',timezone:'America/Asuncion',username:'demo.admin',password:adminPass});
     const actor:Actor={id:userId,orgId,name:'Administración DEMO',role:'ADMIN',driverId:null};
     const command=()=>({commandId:randomUUID()});

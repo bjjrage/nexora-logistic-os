@@ -6,11 +6,9 @@ import {Store} from '../server/db.ts';
 import {seedPrivateDemo} from '../server/demo-seed.ts';
 import {createApp} from '../server/app.ts';
 
-test('DEMO privada: semilla ficticia, módulos combinados y autenticación previa',async()=>{
-  const envKeys=['DEMO_ADMIN_PASSWORD','DEMO_CUSTOMER_PASSWORD','NEXORA_DEMO_MODE','NEXORA_DEMO_BASIC_USER','NEXORA_DEMO_BASIC_PASSWORD'];
-  const original=Object.fromEntries(envKeys.map(key=>[key,process.env[key]]));
-  Object.assign(process.env,{DEMO_ADMIN_PASSWORD:'Demo-Admin-Test-2026!',DEMO_CUSTOMER_PASSWORD:'Demo-Merchant-Test-2026!',
-    NEXORA_DEMO_MODE:'isolated',NEXORA_DEMO_BASIC_USER:'demo-review',NEXORA_DEMO_BASIC_PASSWORD:'Demo-Private-Basic-Long-2026-Test!'});
+test('DEMO sin contraseñas: sesiones por perfil, base ficticia y CRM + Mini OS',async()=>{
+  const previous=process.env.NEXORA_DEMO_MODE;
+  process.env.NEXORA_DEMO_MODE='isolated';
   const db=new Store(':memory:');
   let server:ReturnType<ReturnType<typeof createApp>['listen']>|undefined;
   try{
@@ -21,19 +19,36 @@ test('DEMO privada: semilla ficticia, módulos combinados y autenticación previ
     assert.equal((await db.one('SELECT COUNT(*) AS n FROM inventory_products'))?.n,2);
     assert.equal((await db.one('SELECT COUNT(*) AS n FROM crm_prospects'))?.n,3);
     for(const version of [24,25,27,28,29,30])assert.ok(await db.one('SELECT version FROM schema_migrations WHERE version=?',version));
-    server=createApp(db).listen(0,'127.0.0.1');await once(server,'listening');
+
+    server=createApp(db).listen(0,'127.0.0.1');
+    await once(server,'listening');
     const base='http://127.0.0.1:'+(server.address() as AddressInfo).port;
-    const blocked=await fetch(base+'/api/health');
-    assert.equal(blocked.status,401);
-    const headers={Authorization:'Basic '+Buffer.from('demo-review:Demo-Private-Basic-Long-2026-Test!').toString('base64')};
-    assert.equal((await fetch(base+'/api/health',{headers})).status,200);
-    assert.equal((await fetch(base+'/api/session',{headers})).status,200);
-    assert.equal((await fetch(base+'/api/customer/session',{headers})).status,200);
-    // La página /portal/ se compila después de npm test; validar la UI en el E2E de build, no en este test unitario.
-    assert.equal((await fetch(base+'/api/customer/session',{headers})).status,200);
+    assert.equal((await fetch(base+'/api/health')).status,200);
+    const staff=await fetch(base+'/api/session');
+    assert.equal(staff.status,200);
+    assert.equal((await staff.json()).user.role,'ADMIN');
+    const staffCookie=staff.headers.get('set-cookie')?.split(';')[0];
+    assert.ok(staffCookie?.startsWith('logistics_session='));
+    const bootstrap=await fetch(base+'/api/bootstrap',{headers:{Cookie:staffCookie}});
+    assert.equal(bootstrap.status,200);
+    const state=await bootstrap.json();
+    assert.equal(state.crmAvailable,true);
+    assert.equal(state.miniosReady,true);
+
+    const merchant=await fetch(base+'/api/customer/session');
+    assert.equal(merchant.status,200);
+    assert.equal((await merchant.json()).user.role,'CUSTOMER');
+    const merchantCookie=merchant.headers.get('set-cookie')?.split(';')[0];
+    assert.ok(merchantCookie?.startsWith('nexora_customer_session='));
+    const requests=await fetch(base+'/api/customer/order-requests',{headers:{Cookie:merchantCookie}});
+    assert.equal(requests.status,200);
+    // Identidades separadas: la cookie del cliente no da acceso al CRM del staff.
+    const cross=await fetch(base+'/api/crm/prospects',{headers:{Cookie:merchantCookie}});
+    assert.notEqual(cross.status,200);
+    assert.equal((await fetch(base+'/api/health')).headers.get('x-robots-tag'),'noindex, nofollow');
   }finally{
     if(server){server.closeAllConnections();await new Promise<void>((resolve,reject)=>server!.close(e=>e?reject(e):resolve()));}
     await db.close();
-    for(const key of envKeys){const value=original[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}
+    if(previous===undefined)delete process.env.NEXORA_DEMO_MODE;else process.env.NEXORA_DEMO_MODE=previous;
   }
 });

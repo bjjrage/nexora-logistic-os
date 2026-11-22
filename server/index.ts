@@ -17,7 +17,7 @@ const provider=process.env.DATABASE_PROVIDER??'sqlite';
 const demo=process.env.NEXORA_DEMO_MODE==='isolated';
 if(process.env.NODE_ENV==='production'&&provider!=='postgres'&&!demo)throw new Error('Producción requiere PostgreSQL; no se permite una base SQLite temporal.');
 if(demo&&(provider!=='sqlite'||Boolean(process.env.DATABASE_URL)))throw new Error('Demo aislada exige SQLite y ausencia de DATABASE_URL.');
-if(demo&&(!process.env.NEXORA_DEMO_BASIC_USER||!process.env.NEXORA_DEMO_BASIC_PASSWORD||!process.env.DEMO_ADMIN_PASSWORD||!process.env.DEMO_CUSTOMER_PASSWORD))throw new Error('Credenciales de demo faltantes.');
+// Las contraseñas de las cuentas demo se generan al sembrar los datos; el usuario no debe ingresarlas.
 if(!['sqlite','postgres'].includes(provider)) throw new Error('DATABASE_PROVIDER inválido.');
 const store:Database=provider==='postgres'?new PostgresStore(process.env.DATABASE_URL??'',process.env.DATABASE_SCHEMA??'nexora'):new Store(databasePath);
 if(store instanceof PostgresStore) await store.verify();
