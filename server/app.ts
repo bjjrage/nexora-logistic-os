@@ -28,6 +28,7 @@ import {latestParcelAssignment} from './driver-access.ts';
 import {installBillingRoutes} from './billing.ts';
 import {crmAvailable,installProspectingRoutes} from './crm-routes.ts';
 import {installOutreachRoutes} from './crm-outreach.ts';
+import {installCrmAgent} from './crm-agent.ts';
 const customerDataPrefix = '/api/customer-data/';
 const customerRead = /^(inventory(\/(stock|locations\/stock|movements|export\.csv|movements\/export\.csv))?|orders\/(read|export\.csv)|quadminds\/shipments\/[a-f0-9-]+\/proofs|customer-evidence\/[a-f0-9-]+)$/i;
 export function createApp(store: Database, tracking = new QuadMindsTracking(store), quad = new QuadOperations(store),diagnostics=new Diagnostics()) {
@@ -141,6 +142,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     installBillingRoutes(app,store,auth);
     installProspectingRoutes(app,store,auth);
     installOutreachRoutes(app,store,auth);
+    installCrmAgent(app,store,auth);
     app.post('/api/company',async(req,res)=>res.json(await new CompanyAdministration(store).update(await auth(req),req.body)));
     app.post('/api/users/:id/delete',async(req,res)=>res.json(await new CompanyAdministration(store).remove(await auth(req),String(req.params.id),req.body)));
     app.post('/api/users/:id/access',async(req,res)=>res.json(await new CompanyAdministration(store).setAccess(await auth(req),String(req.params.id),req.body)));

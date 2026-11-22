@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "git": {"deploymentEnabled": {"feat/internal-crm-prospecting": false}},
+  "git": {"deploymentEnabled": {"feat/internal-crm-prospecting": false, "feat/crm-02-outreach-agent": false, "feat/crm-agent-01-prospecting": false}},
   "framework": null,
   "installCommand": "npm --prefix ../.. ci --include=dev",
   "buildCommand": "npm --prefix ../.. run build && node ../../scripts/package-vercel-site.ts",

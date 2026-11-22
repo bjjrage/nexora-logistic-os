@@ -56,7 +56,7 @@ function describe(row: Row) {
     { field: 'source', points: 20, present: Boolean(row.source || row.campaign) },
   ];
   return {
-    ...camel(row), tags: JSON.parse(row.tags) as string[],
+    ...camel(row), id: String(row.id), tags: JSON.parse(row.tags) as string[],
     score: signals.reduce((total, signal) => total + (signal.present ? signal.points : 0), 0),
     signals, recordType: 'PROSPECT',
   };
@@ -338,15 +338,20 @@ export class Prospecting {
     });
   }
 
-  createTask(actor: Actor, id: string, body: z.output<typeof crmSchemas.task>) {
-    return this.write(actor, 'task.create.' + id, body, async () => {
+  createTask(actor: Actor, id: string, body: z.output<typeof crmSchemas.task>, followUp?: {contactId:string; runId:string}) {
+    return this.write(actor, 'task.create.' + id, {...body, ...followUp}, async () => {
       await this.prospect(actor, id);
+      if (followUp) {
+        const contact = await this.db.one('SELECT no_contact FROM crm_contacts WHERE org_id=? AND prospect_id=? AND id=?',
+          actor.orgId, id, followUp.contactId);
+        ensure(contact && !contact.no_contact, 'CRM_DO_NOT_CONTACT', 'El contacto está marcado como no contactar.');
+      }
       const taskId = randomUUID();
       await this.db.run(
         'INSERT INTO crm_tasks (org_id,prospect_id,id,owner_id,title,due_at) VALUES (?,?,?,?,?,?)',
         actor.orgId, id, taskId, await this.owner(actor, body.ownerId), body.title, new Date(body.dueAt).toISOString(),
       );
-      await this.appendActivity(actor, id, 'TASK_CREATED', body.title, null, taskId);
+      await this.appendActivity(actor, id, 'TASK_CREATED', body.title, followUp?.contactId ?? null, taskId);
       return {id: taskId};
     });
   }
@@ -400,14 +405,22 @@ export class Prospecting {
     });
   }
 
-  import(actor: Actor, body: z.output<typeof crmSchemas.import>) {
-    return this.write(actor, 'import', {commandId: body.commandId, digest: hash(body.csv), previewId: body.previewId}, async () => {
+  import(actor: Actor, body: z.output<typeof crmSchemas.import>, source?: {reference: string; authorization: string}) {
+    const digest = hash(body.csv);
+    return this.write(actor, source ? 'research.import' : 'import', {commandId: body.commandId, digest, previewId: body.previewId, ...source}, async () => {
       const {accepted, errors, duplicates, previewId} = await this.inspectImport(actor, body.csv);
       ensure(previewId === body.previewId, 'VERSION_CONFLICT', 'La importación cambió. Volvé a revisar la vista previa.');
       ensure(accepted.length > 0, 'VALIDATION_ERROR', 'No hay filas válidas para importar.', 400);
-      await this.insertProspects(actor, accepted.map(row => ({
+      const prospects = accepted.map(row => ({
         id: randomUUID(), data: row.data, ownerId: row.data.ownerId ?? actor.id,
-      })), 'Importación CSV');
+      }));
+      await this.insertProspects(actor, prospects, source ? 'Investigación CSV autorizada' : 'Importación CSV');
+      if (source) {
+        const date = now();
+        await this.insert('crm_research_sources',
+          ['org_id','prospect_id','batch_id','source_row','source_ref','authorization_basis','csv_sha256','captured_by','captured_at'],
+          prospects.map((p, i) => [actor.orgId,p.id,body.commandId,accepted[i].row,source.reference,source.authorization,digest,actor.id,date]));
+      }
       return {imported: accepted.length, errors: new Set(errors.map(error => error.row)).size, duplicates: duplicates.length};
     });
   }

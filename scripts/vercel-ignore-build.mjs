@@ -1,3 +1,4 @@
+if(process.env.VERCEL_GIT_COMMIT_REF==='feat/crm-agent-01-prospecting')process.exit(0);
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 

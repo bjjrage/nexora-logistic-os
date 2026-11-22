@@ -74,9 +74,16 @@ test('CRM interno: prospectos, contactos, funnel, seguimiento e importación', a
     });
     await page.getByRole('button', {name: 'Ver vista previa'}).click();
     await expect(page.getByText('1 duplicadas')).toBeVisible();
+    await page.getByRole('checkbox',{name:'Lote de investigación con fuente autorizada'}).check();
+    await page.getByLabel('Referencia de la fuente').fill('Catálogo comercial de prueba');
+    await page.getByLabel('Base de autorización').fill('Fuente autorizada para esta prueba');
     await page.getByRole('button', {name: 'Importar 1 válidas'}).click();
     await expect(page.getByText('1 prospectos importados.')).toBeVisible();
     await page.getByRole('button', {name: 'Cerrar importación'}).click();
+    await page.getByRole('button', {name:'Tienda Flor',exact:true}).click();
+    await page.getByText('Relevancia comercial',{exact:true}).click();
+    await expect(page.getByText(/Catálogo comercial de prueba · fila 2/)).toBeVisible();
+    await page.getByRole('button',{name:'Volver al CRM'}).click();
     await page.getByRole('button', {name: 'Funnel', exact: true}).click();
     await page.getByRole('region', {name: 'Tablero de etapas'}).getByRole('button', {name: 'Validado 1'}).click();
     await expect(page.getByRole('button', {name: 'Taller Ñandutí'})).toBeVisible();
