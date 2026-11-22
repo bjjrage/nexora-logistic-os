@@ -32,6 +32,24 @@ const customerDataPrefix = '/api/customer-data/';
 const customerRead = /^(inventory(\/(stock|locations\/stock|movements|export\.csv|movements\/export\.csv))?|orders\/(read|export\.csv)|quadminds\/shipments\/[a-f0-9-]+\/proofs|customer-evidence\/[a-f0-9-]+)$/i;
 export function createApp(store: Database, tracking = new QuadMindsTracking(store), quad = new QuadOperations(store),diagnostics=new Diagnostics()) {
     const app = express(), domain = new Logistics(store);
+    const isPrivateDemo=process.env.NEXORA_DEMO_MODE==='isolated';
+    if(isPrivateDemo) {
+      const user=process.env.NEXORA_DEMO_BASIC_USER??'',pass=process.env.NEXORA_DEMO_BASIC_PASSWORD??'';
+      if(user.length<3||pass.length<24)throw new Error('Protección de demo no configurada.');
+      const expected=hash(user+':'+pass);
+      app.use((req,res,next)=>{
+        const header=req.headers.authorization??'';
+        let credential='';
+        if(header.startsWith('Basic ')) {
+          try {credential=Buffer.from(header.slice(6),'base64').toString('utf8');}catch{}
+        }
+        if(hash(credential)!==expected) {
+          res.set('WWW-Authenticate','Basic realm="NEXORA DEMO PRIVADA", charset="UTF-8"');
+          return res.status(401).send('Acceso restringido a NEXORA DEMO.');
+        }
+        next();
+      });
+    }
     const traccar = new TraccarTracking(store);
     app.disable('x-powered-by');
     const proxyHops=Number(process.env.TRUST_PROXY_HOPS??0);
@@ -60,7 +78,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
             const portal = req.path.startsWith('/customer/');
             const allowed = new Set([...(production?[]:['http://127.0.0.1:5173','http://localhost:5173','http://127.0.0.1:5174','http://localhost:5174']), `${production?'https':'http'}://${req.headers.host}`, ...(process.env.ALLOWED_ORIGINS ?? '').split(',').map(s=>s.trim()).filter(Boolean)]);
             const origin = req.headers.origin;
-            const wrongSurface = origin && (production && portal ? origin !== CUSTOMER_PORTAL_ORIGIN : origin === CUSTOMER_PORTAL_ORIGIN && !portal);
+            const wrongSurface = !isPrivateDemo && origin && (production && portal ? origin !== CUSTOMER_PORTAL_ORIGIN : origin === CUSTOMER_PORTAL_ORIGIN && !portal);
             if (req.headers['x-requested-with'] !== 'logistics-os' || wrongSurface || (origin && origin !== CUSTOMER_PORTAL_ORIGIN && !allowed.has(origin)))
                 return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Origen de solicitud no autorizado.' } });
         }

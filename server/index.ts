@@ -7,16 +7,21 @@ import { PostgresStore } from './postgres.ts';
 import type { Database } from './database.ts';
 import {Diagnostics} from './observability.ts';
 import {alertingSink} from './alerts.ts';
+import {seedPrivateDemo} from './demo-seed.ts';
 
 if (existsSync('.env')) loadEnvFile('.env');
 if(!process.env.RELEASE_SHA&&process.env.RAILWAY_GIT_COMMIT_SHA)process.env.RELEASE_SHA=process.env.RAILWAY_GIT_COMMIT_SHA;
 
 const databasePath=process.env.DATABASE_PATH??resolve('.local/logistics.sqlite');
 const provider=process.env.DATABASE_PROVIDER??'sqlite';
-if(process.env.NODE_ENV==='production'&&provider!=='postgres')throw new Error('Producción requiere PostgreSQL; no se permite una base SQLite temporal.');
+const demo=process.env.NEXORA_DEMO_MODE==='isolated';
+if(process.env.NODE_ENV==='production'&&provider!=='postgres'&&!demo)throw new Error('Producción requiere PostgreSQL; no se permite una base SQLite temporal.');
+if(demo&&(provider!=='sqlite'||Boolean(process.env.DATABASE_URL)))throw new Error('Demo aislada exige SQLite y ausencia de DATABASE_URL.');
+if(demo&&(!process.env.NEXORA_DEMO_BASIC_USER||!process.env.NEXORA_DEMO_BASIC_PASSWORD||!process.env.DEMO_ADMIN_PASSWORD||!process.env.DEMO_CUSTOMER_PASSWORD))throw new Error('Credenciales de demo faltantes.');
 if(!['sqlite','postgres'].includes(provider)) throw new Error('DATABASE_PROVIDER inválido.');
 const store:Database=provider==='postgres'?new PostgresStore(process.env.DATABASE_URL??'',process.env.DATABASE_SCHEMA??'nexora'):new Store(databasePath);
 if(store instanceof PostgresStore) await store.verify();
+if(demo) await seedPrivateDemo(store);
 const port=Number(process.env.PORT??3001);
 const host=process.env.HOST??'127.0.0.1';
 if(!Number.isInteger(port)||port<1||port>65535) throw new Error('PORT debe ser un puerto TCP válido.');
