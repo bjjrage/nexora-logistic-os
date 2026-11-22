@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
-import type { Database, Row, SqlValue } from './database.ts';
+import type { Database, Row, SqlValue, TransactionScope } from './database.ts';
 import { DomainError } from './errors.ts';
 
 // Shared domain SQL uses positional '?' parameters. Preserve literals and quoted identifiers.
@@ -69,9 +69,10 @@ export class PostgresStore implements Database {
   }
   async one(sql: string, ...params: SqlValue[]) { return (await this.all(sql, ...params))[0]; }
   async run(sql: string, ...params: SqlValue[]) { return { changes: (await this.query(sql, params)).rowCount ?? 0 }; }
-  async transaction<T>(work: () => T | Promise<T>): Promise<T> {
+  async transaction<T>(work: () => T | Promise<T>, scope?: TransactionScope): Promise<T> {
     const active = this.context.getStore();
     if (active) {
+      if (scope) throw new Error('El alcance del CRM se establece en la transacción exterior.');
       const name = `nexora_savepoint_${++active.savepoint}`;
       await active.client.query(`SAVEPOINT ${name}`);
       try { const value = await work(); await active.client.query(`RELEASE SAVEPOINT ${name}`); return value; }
@@ -79,10 +80,12 @@ export class PostgresStore implements Database {
     }
     const client = await this.pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query(scope?.readOnly ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : 'BEGIN');
       await client.query(`SET LOCAL search_path TO "${this.schema}", pg_catalog`);
       // Preserve the serialized command semantics of the previous SQLite core, across servers.
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`nexora-commands:${this.schema}`]);
+      if (!scope) await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`nexora-commands:${this.schema}`]);
+      else if (!scope.readOnly) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`nexora-crm:${this.schema}:${scope.crmOrgId}`]);
+      if (scope) await client.query("SELECT set_config('nexora.crm_org_id', $1, true)", [scope.crmOrgId]);
       const result = await this.context.run({ client, savepoint: 0 }, work);
       await client.query('COMMIT');
       return result;
