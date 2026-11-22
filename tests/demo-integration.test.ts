@@ -27,7 +27,7 @@ test('DEMO sin contraseñas: sesiones por perfil, base ficticia y CRM + Mini OS'
     const staff=await fetch(base+'/api/session');
     assert.equal(staff.status,200);
     assert.equal((await staff.json()).user.role,'ADMIN');
-    const staffCookie=staff.headers.get('set-cookie')?.split(';')[0];
+    const staffCookie=staff.headers.get('set-cookie')?.split(';')[0] ?? '';
     assert.ok(staffCookie?.startsWith('logistics_session='));
     const bootstrap=await fetch(base+'/api/bootstrap',{headers:{Cookie:staffCookie}});
     assert.equal(bootstrap.status,200);
@@ -38,7 +38,7 @@ test('DEMO sin contraseñas: sesiones por perfil, base ficticia y CRM + Mini OS'
     const merchant=await fetch(base+'/api/customer/session');
     assert.equal(merchant.status,200);
     assert.equal((await merchant.json()).user.role,'CUSTOMER');
-    const merchantCookie=merchant.headers.get('set-cookie')?.split(';')[0];
+    const merchantCookie=merchant.headers.get('set-cookie')?.split(';')[0] ?? '';
     assert.ok(merchantCookie?.startsWith('nexora_customer_session='));
     const requests=await fetch(base+'/api/customer/order-requests',{headers:{Cookie:merchantCookie}});
     assert.equal(requests.status,200);
