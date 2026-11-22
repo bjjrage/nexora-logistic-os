@@ -1,0 +1,75 @@
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import type {Actor,Role} from '../../server/auth.ts';
+import type {Database} from '../../server/database.ts';
+import {CrmAgent} from '../../server/crm-agent.ts';
+import {Prospecting} from '../../server/crm.ts';
+import {Outreach} from '../../server/crm-outreach.ts';
+import {crmSchemas} from '../../server/crm-contract.ts';
+
+export async function exerciseAgent(db:Database) {
+  const id=()=>randomUUID();
+  const actor=async(role:Role,orgId:string=id()):Promise<Actor>=>{
+    const user=id();
+    await db.run('INSERT INTO organizations(id,name,timezone) VALUES(?,?,?) ON CONFLICT DO NOTHING',orgId,'Investigación QA','America/Asuncion');
+    await db.run('INSERT INTO users(id,org_id,username,name,password_hash,role) VALUES(?,?,?,?,?,?)',
+      user,orgId,user,'QA','unused',role);
+    return {id:user,name:'QA',role,orgId,driverId:null};
+  };
+  const admin=await actor('ADMIN'),foreign=await actor('ADMIN');
+  const crm=new Prospecting(db),outreach=new Outreach(db);
+  const csv='nombre,rubro,ciudad,web\nTienda Uno,Ropa tienda online,Luque,ejemplo.test\nDuplicado,Ropa,Luque,https://www.ejemplo.test';
+  const preview=await crm.preview(admin,csv);
+  assert.equal(preview.valid,1);
+  assert.equal(preview.duplicates.length,1);
+  const input={csv,previewId:preview.previewId,commandId:id()};
+  const provenance={reference:'Padrón comercial QA',authorization:'Autorización de carga QA'};
+  const imported=await crm.import(admin,input,provenance);
+  assert.equal(imported.imported,1);
+  assert.deepEqual(await crm.import(admin,input,provenance),imported);
+  const list=await crm.list(admin,crmSchemas.list.parse({}));
+  const prospect=list.rows[0].id;
+  const contactData={name:'Representante',email:'qa@ejemplo.test',preferredChannel:'EMAIL'};
+  const contact=await crm.saveContact(admin,prospect,crmSchemas.contact.parse({...contactData,commandId:id()}));
+  const thread=await outreach.open(admin,{commandId:id(),prospectId:prospect,contactId:contact.id,channel:'EMAIL'});
+  const disabled=new CrmAgent(db);
+  const generate={commandId:id(),replyTopic:'PIDE_PRECIOS' as const};
+  await assert.rejects(disabled.generate(admin,thread.id,generate),/Proveedor de IA sin configurar/);
+  let calls=0;
+  const service=new CrmAgent(db,{model:'fixture/local',dailyCallLimit:1,async suggest(facts) {
+    assert.equal(facts.name,'Tienda Uno');
+    assert.ok(!JSON.stringify(facts).includes('qa@'));
+    calls++;
+    return {topic:'DESPACHOS',nextInDays:'5'};
+  }});
+  await assert.rejects(service.research(foreign,prospect),/Prospecto no encontrado/);
+  const depot=await actor('DEPOT',admin.orgId);
+  assert.throws(()=>service.history(depot,thread.id,{limit:25,offset:0}),/rol no permite/i);
+  assert.throws(()=>service.history({...admin,role:'DRIVER'},thread.id,{limit:25,offset:0}),/rol no permite/i);
+  assert.throws(()=>service.history({...admin,role:'CUSTOMER'},thread.id,{limit:25,offset:0}),/rol no permite/i);
+  const scored=await service.research(admin,prospect);
+  assert.equal(scored.score,100);
+  assert.equal(scored.sources[0].sourceRef,provenance.reference);
+  const [first,second]=await Promise.all([service.generate(admin,thread.id,generate),service.generate(admin,thread.id,generate)]);
+  assert.equal(calls,1);
+  assert.equal(first.id,second.id);
+  const history=await service.history(admin,thread.id,{limit:25,offset:0});
+  assert.equal(history.total,1);
+  const run=history.rows[0];
+  assert.equal(run.state,'READY');
+  assert.match(run.result.replyDraft,/propuesta/);
+  assert.match(run.result.hypotheses[0],/Podría/);
+  await assert.rejects(service.generate(admin,thread.id,{...generate,commandId:id()}),/Presupuesto diario/);
+  await assert.rejects(service.generate(foreign,thread.id,generate),/Conversación no encontrada/);
+  const save={commandId:id(),kind:'OUTREACH' as const};
+  const draft=await service.draft(admin,run.id,save);
+  assert.equal(draft.state,'DRAFT');
+  assert.deepEqual(await service.draft(admin,run.id,save),draft);
+  await service.followUp(admin,run.id,{commandId:id()});
+  assert.equal((await crm.tasks(admin,crmSchemas.taskList.parse({}))).total,1);
+  await crm.saveContact(admin,prospect,crmSchemas.contact.parse({...contactData,commandId:id(),expectedVersion:1,noContact:true}),contact.id);
+  await assert.rejects(service.draft(admin,run.id,{...save,commandId:id()}),/no ser contactado/);
+  await assert.rejects(service.followUp(admin,run.id,{commandId:id()}),/no ser contactado/);
+  await assert.rejects(service.generate(admin,thread.id,{...generate,commandId:id()}),/no ser contactado/);
+  return {orgId:admin.orgId,other:foreign.orgId};
+}

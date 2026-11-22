@@ -86,8 +86,8 @@ export class Outreach {
       return {id,state:'OPEN'};
     });
   }
-  draft(actor:Actor,id:string,body:z.output<typeof draftSchema>) {
-    return this.write(actor,'draft.'+id,body,async()=>{
+  draft(actor:Actor,id:string,body:z.output<typeof draftSchema>,agentRunId?:string) {
+    return this.write(actor,'draft.'+id,{...body,agentRunId},async()=>{
       const thread=await this.thread(actor,id);
       ensure(thread.state==='OPEN','INVALID_TRANSITION','La conversación está cerrada.',409);
       await this.contactAllowed(actor,thread);

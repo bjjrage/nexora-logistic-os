@@ -1,3 +1,4 @@
+import {ResearchCard} from './AgentPanel';
 import { useRef, useState, type FormEvent } from 'react';
 import { api } from '../api';
 import HelpTip from '../HelpTip';
@@ -27,6 +28,9 @@ function ImportCsv({busy, run, close}: {busy: boolean; run: RunAction; close: ()
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState('');
   const [imported, setImported] = useState<number>();
+  const [sourceRef,setSourceRef]=useState("");
+  const [authorization,setAuthorization]=useState("");
+  const [authorized,setAuthorized]=useState(false);
   const sequence = useRef(0);
 
   async function inspect(event: FormEvent<HTMLFormElement>) {
@@ -53,7 +57,8 @@ function ImportCsv({busy, run, close}: {busy: boolean; run: RunAction; close: ()
 
   async function confirm() {
     if (!preview) return;
-    const result = await run('/import', {csv: preview.csv, previewId: preview.plan.previewId}, 'POST', preview.commandId);
+    const source=authorized?{sourceRef,authorization,authorized}:{};
+    const result = await run(authorized?'/agent/import':'/import', {csv: preview.csv, previewId: preview.plan.previewId,...source}, 'POST', preview.commandId);
     if (result?.imported !== undefined) {
       setImported(result.imported);
       setPreview(undefined);
@@ -92,7 +97,12 @@ function ImportCsv({busy, run, close}: {busy: boolean; run: RunAction; close: ()
           {issues.map((issue, index) => <li key={index}>Fila {issue.row} · {issue.field} · {issue.message}</li>)}
         </ol>
       </details>}
-      <div><button type="button" className="button button-primary" disabled={busy || !preview.plan.valid}
+      <label><input type="checkbox" checked={authorized} onChange={event=>setAuthorized(event.target.checked)}/> Lote de investigación con fuente autorizada</label>
+      {authorized&&<div className="form-grid">
+        <Field label="Referencia de la fuente"><input value={sourceRef} maxLength={500} onChange={event=>setSourceRef(event.target.value)}/></Field>
+        <Field label="Base de autorización"><input value={authorization} maxLength={500} onChange={event=>setAuthorization(event.target.value)}/></Field>
+      </div>}
+      <div><button type="button" className="button button-primary" disabled={busy || !preview.plan.valid || (authorized&&(sourceRef.trim().length<5||authorization.trim().length<8))}
         onClick={() => void confirm()}>Importar {preview.plan.valid} válidas</button></div>
     </div>}
   </section>;
@@ -192,6 +202,7 @@ export default function CrmPanel() {
   return <div className="stack">
     {error && <p className="notice error" role="alert">{error}</p>}
     {options?.error && <LoadStatus error={options.error}/>}
+    {id&&<ResearchCard id={id} revision={revision}/>}
     {id ? <ProspectDetail key={id} id={id} revision={revision} options={available} busy={busy} run={run}
       back={() => {setId(undefined); clearError();}} openProspect={open}/> : <>
       <div className="page-heading">

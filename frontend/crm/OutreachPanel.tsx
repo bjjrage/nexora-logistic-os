@@ -3,6 +3,7 @@ import {crmPath, useCrmQuery, type Contact, type Detail, type Page, type Prospec
 import {LoadStatus, Pager} from './detail';
 import {Field} from './forms';
 import HelpTip from '../HelpTip';
+import {AgentPanel} from './AgentPanel';
 
 type Thread={id:string;prospectId:string;prospectName:string;contactName:string;contactId:string;channel:string;state:string;noContact:boolean;updatedAt:string};
 type Message={id:string;body:string;state:'DRAFT'|'PENDING_APPROVAL'|'APPROVED';createdAt:string;reviewedAt:string|null};
@@ -57,6 +58,7 @@ export default function OutreachPanel({revision,busy,run}:{revision:number;busy:
           {!threads.data.rows.length&&<tr><td colSpan={4}>Todavía no hay conversaciones.</td></tr>}</tbody></table></div>
       <Pager data={threads.data} label="Páginas de conversaciones" onChange={setOffset}/>
     </section>:<LoadStatus error={threads?.error}/>}
+    {threadId&&<AgentPanel key={threadId} threadId={threadId} revision={revision} busy={busy} run={run}/>}
     {threadId&&<section className="card stack">
       <div className="card-header"><h2>Mensajes de trabajo</h2><button className="text-button" onClick={()=>setThreadId('')}>Cerrar vista</button></div>
       <form className="stack" onSubmit={event=>void draft(event)}>
