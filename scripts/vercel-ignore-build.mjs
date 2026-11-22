@@ -1,6 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+// No automatic Vercel preview from the isolated Mini OS work branch.
+if(process.env.VERCEL_GIT_COMMIT_REF==='feat/minios-01-order-intake')process.exit(0);
+
 const portalFiles = new Set([
   'frontend/CustomerPortal.tsx',
   'frontend/CustomerStock.tsx',

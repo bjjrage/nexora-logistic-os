@@ -9,6 +9,7 @@ import DriverDocumentsPanel from './DriverDocumentsPanel';
 import Brand from './Brand';
 import QuadMindsPanel from './QuadMindsPanel';
 import ClientDeliveryPanel from './ClientDeliveryPanel';
+import CustomerRequestQueue from './CustomerRequestQueue';
 import RouteSetup from './RouteSetup';
 import RouteLoadPanel from './RouteLoadPanel';
 import RouteParcelActions from './RouteParcelActions';
@@ -115,6 +116,7 @@ type Maintenance = Entity & {
 type EvidenceRecord = Entity & { parcelId: string | null; filename: string; mimeType: string; createdAt: string };
 type AuditItem = Entity & { action: string; entityId: string; createdAt: string };
 type Bootstrap = {
+  miniosReady?: boolean;
   clientProfilesEnabled?:boolean;
   limits?: {perCollection:number;hasMore:boolean;message:string};
   organization: { name: string; timezone: string; testMode?:boolean; supportContacts?:{name:string;role:string}[] };
@@ -141,7 +143,7 @@ type Bootstrap = {
   tracking: { status: string; message: string };
 };
 
-type Page = "home" | "shipments" | "routes" | "fleet" | "clients" | "tracking" | "inventory" | "orders" | "customerAccess" | "company" | "billing";
+type Page = "home" | "shipments" | "routes" | "fleet" | "clients" | "tracking" | "inventory" | "orders" | "customerRequests" | "customerAccess" | "company" | "billing";
 type Action = (path: string, payload: Record<string, unknown>, successMessage: string,onResult?:(result:Record<string,unknown>)=>void) => Promise<boolean>;
 type EvidenceUpload = (parcelId: string | null, file: File) => Promise<string | null>;
 
@@ -581,6 +583,7 @@ function AppContent() {
       { id: "home", label: "Inicio", icon: <LayoutDashboard /> },
       { id: "inventory", label: "Inventario", icon: <Boxes /> },
       { id: "orders", label: "Pedidos", icon: <ClipboardList /> },
+       ...(bootstrap.miniosReady ? [{ id: "customerRequests" as Page, label: "Solicitudes clientes", icon: <ClipboardList /> }] : []),
       { id: "shipments", label: "Envíos", icon: <Package /> },
       { id: "routes", label: "Rutas", icon: <RouteIcon /> },
       { id: "tracking", label: "Tracking", icon: <Radio /> },
@@ -634,7 +637,8 @@ function AppContent() {
           {page === "billing" && role === "ADMIN" && <Suspense fallback={<p role="status">Cargando facturación…</p>}><BillingPanel clients={bootstrap.clients}/></Suspense>}
           {page === "inventory" && !isDriver && <InventoryPanel key={inventoryEntry?inventoryEntry.clientId+':'+inventoryEntry.view:'inventory'} initialClientId={inventoryEntry?.clientId} initialView={inventoryEntry?.view} initialReceiptSeed={inventoryEntry?.seed} onReturnToOrder={inventoryEntry?.seed?.order?()=>{const order=inventoryEntry.seed!.order!;changePage('orders');setOrderEntry({id:order.orderId,reference:order.orderReference,clientId:order.clientId});}:undefined} onReturnToClient={inventoryEntry&&!inventoryEntry.seed?.order?(clientId)=>changePage('clients',clientId):undefined} section="inventory" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
           {page === "orders" && !isDriver && <InventoryPanel key={orderEntry?.id??'orders'} initialOrder={orderEntry??undefined} initialClientId={orderEntry?.clientId} section="orders" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} onOpenRoutes={(routeId)=>changePage('routes',routeId)} onReceiveStock={(order)=>{changePage('inventory');setInventoryEntry({clientId:order.clientId,view:'receive',seed:{token:crypto.randomUUID(),order}});}} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
-          {page === "customerAccess" && role === "ADMIN" && <InventoryPanel section="customerAccess" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
+          {page === "customerRequests" && isOpsRole(role) && <CustomerRequestQueue/>}
+           {page === "customerAccess" && role === "ADMIN" && <InventoryPanel section="customerAccess" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
           {page === "tracking" && <TrackingView data={bootstrap} action={mutate} busy={pending} onRefresh={refreshBootstrap} onPrepareRoute={()=>changePage('routes','new')} />}
         </div>
       </main>
@@ -1390,7 +1394,7 @@ function canSendReturnToSender(state: string): boolean {
 
 function pageLabel(page: Page): string {
   const labels: Record<string, string> = { home: "Inicio", shipments: "Envíos", routes: "Rutas", fleet: "Flota", clients: "Clientes", company: "Empresa y equipo", tracking: "Tracking" };
-  return labels[page] ?? ({ inventory: "Inventario", orders: "Pedidos", customerAccess: "Accesos cliente", billing: "Facturación" } as Partial<Record<Page, string>>)[page] ?? page;
+  return labels[page] ?? ({ inventory: "Inventario", orders: "Pedidos", customerRequests: "Solicitudes clientes", customerAccess: "Accesos cliente", billing: "Facturación" } as Partial<Record<Page, string>>)[page] ?? page;
 }
 
 function errorMessage(value: unknown): string {

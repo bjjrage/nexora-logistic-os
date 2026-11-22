@@ -22,6 +22,8 @@
     {"source": "/api/customer/login", "destination": "https://nexora-logistic-production.up.railway.app/api/customer/login"},
     {"source": "/api/customer/session", "destination": "https://nexora-logistic-production.up.railway.app/api/customer/session"},
     {"source": "/api/customer/logout", "destination": "https://nexora-logistic-production.up.railway.app/api/customer/logout"},
+    {"source": "/api/customer/order-requests", "destination": "https://nexora-logistic-production.up.railway.app/api/customer/order-requests"},
+    {"source": "/api/customer/order-requests/:path*", "destination": "https://nexora-logistic-production.up.railway.app/api/customer/order-requests/:path*"},
     {"source": "/api/customer/password-recovery/redeem", "destination": "https://nexora-logistic-production.up.railway.app/api/customer/password-recovery/redeem"},
     {"source": "/api/inventory", "destination": "https://nexora-logistic-production.up.railway.app/api/customer-data/inventory"},
     {"source": "/api/inventory/stock", "destination": "https://nexora-logistic-production.up.railway.app/api/customer-data/inventory/stock"},

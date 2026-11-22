@@ -27,7 +27,7 @@ const canonical=(value:unknown):string=>JSON.stringify(value,(_key,item)=>
     ?Object.fromEntries(Object.entries(item).sort(([a],[b])=>a.localeCompare(b))):item);
 const bodyHash=(value:unknown)=>createHash('sha256').update(canonical(value)).digest('hex');
 
-async function miniosReady(db:Database):Promise<boolean> {
+export async function miniosReady(db:Database):Promise<boolean> {
   try {
     if(db.kind==='sqlite') {
       const row=await db.one("SELECT COUNT(*) AS total FROM sqlite_schema WHERE type='table' AND name='customer_order_requests' AND EXISTS(SELECT 1 FROM schema_migrations WHERE version=27)");

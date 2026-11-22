@@ -19,7 +19,7 @@ import { installLivePortal } from './live-portal.ts';
 import { QuadOperations } from './quad-operations.ts';
 import { installQuadOperationRoutes } from './quad-operation-routes.ts';
 import { installInventoryRoutes } from './inventory-routes.ts';
-import {installCustomerOrderIntake} from './customer-order-intake.ts';
+import {installCustomerOrderIntake,miniosReady} from './customer-order-intake.ts';
 import {correctTestDispatch} from './test-dispatch-correction.ts';
 import { synchronizeQuadMinds } from './quad-sync.ts';
 import {Diagnostics,requestContext,WindowLimiter} from './observability.ts';
@@ -125,7 +125,7 @@ export function createApp(store: Database, tracking = new QuadMindsTracking(stor
     installQuadOperationRoutes(app,store,auth,quad);
     // Inventory/customer read routes are registered above the internal-operation boundary.
     app.use('/api',async(req,_res,next)=>{const actor=await auth(req);ensure(actor.role!=='CUSTOMER','FORBIDDEN','Este recurso es interno de operaciones.',403);next();});
-    app.get('/api/bootstrap', async (req, res) => { const actor = await auth(req); res.json({ ...await domain.bootstrap(actor), tracking: { ...tracking.status(actor.orgId), traccar: await traccar.health() } }); });
+    app.get('/api/bootstrap', async (req, res) => { const actor = await auth(req); res.json({ ...await domain.bootstrap(actor), miniosReady: await miniosReady(store), tracking: { ...tracking.status(actor.orgId), traccar: await traccar.health() } }); });
     app.get('/api/routes/:id/detail',async(req,res)=>{
         const actor=await auth(req),id=z.uuid().parse(req.params.id);
         res.json(await store.transaction(()=>domain.bootstrap(actor,id)));
