@@ -38,7 +38,7 @@ test('Mini OS: cliente solicita pedido por SKU y Operaciones lo registra sin res
     await expect(requests.getByRole('heading',{name:'Solicitar nuevo pedido'})).toBeVisible();
     await requests.getByLabel('Número de pedido').fill('PED-CLIENTE-100');
     await requests.getByLabel('Fecha').fill('2026-11-22');
-    await requests.getByLabel('Destinatario').fill('Persona compradora');
+    await requests.getByLabel('Destinatario',{exact:true}).fill('Persona compradora');
     await requests.getByLabel('Dirección de entrega').fill('Barrio San Pablo, Asunción');
     await requests.getByLabel('Producto 1').selectOption(productId);
     await requests.getByLabel('Cantidad').fill('2');
