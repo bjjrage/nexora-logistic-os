@@ -51,7 +51,7 @@ export class Outreach {
     ensure(row,'NOT_FOUND','Conversación no encontrada.',404);
     return row;
   }
-  private async contactAllowed(actor:Actor,thread:{prospect_id:string;contact_id:string}) {
+  private async contactAllowed(actor:Actor,thread:Record<string,any>) {
     const contact=await this.db.one('SELECT no_contact,email,phone,facebook,instagram FROM crm_contacts WHERE org_id=? AND prospect_id=? AND id=?',actor.orgId,thread.prospect_id,thread.contact_id);
     ensure(contact,'NOT_FOUND','Contacto no encontrado.',404);
     ensure(!contact.no_contact,'CRM_DO_NOT_CONTACT','El contacto pidió no ser contactado.',409);
