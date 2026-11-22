@@ -9,6 +9,11 @@ type OrderInput={orderDate:string;destination:string;recipientName:string;recipi
 type CustomerRequest={id:string;externalId:string;status:'PENDING'|'ACCEPTED'|'REJECTED'|'CANCELLED';createdAt:string;orderId:string|null;rejectionReason:string;version:number;order:OrderInput;change?:{state:string;kind:string;reason:string;reviewReason?:string}};
 const changeStatus:Record<string,string>={PENDING:'Cambio pendiente de revisión', ACKNOWLEDGED:'Cambio revisado', REJECTED:'Cambio rechazado'};
 const base='/api/customer/order-requests';
+const botBase='/api/customer/merchant-bot';
+type BotReview={id:string;requestId:string|null;version:number;status:'REVIEW'|'SUBMITTED'|'EXPIRED';
+  order:{externalId:string;recipientName:string;destination:string};
+  observedAt:string;stock:{productId:string;sku:string;quantity:number;available:number}[]};
+const post=(data:object)=>({method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'logistics-os'},body:JSON.stringify(data)});
 const stateLabels={PENDING:'Pendiente de revisión',ACCEPTED:'Registrado en NEXORA',REJECTED:'Observado por NEXORA',CANCELLED:'Cancelada'};
 
 export default function CustomerOrderRequests({products,onCreated,onOrder}:{products:Product[];onCreated:()=>void;onOrder:(id:string)=>void}) {
@@ -22,8 +27,14 @@ export default function CustomerOrderRequests({products,onCreated,onOrder}:{prod
   const retry=useRef<{key:string;commandId:string}|null>(null);
   const [editing,setEditing]=useState<{request:CustomerRequest;kind:'EDIT'|'CANCEL'}|null>(null);
   const [reason,setReason]=useState('');
+  const [bot,setBot]=useState(false);
+  const [simulation,setSimulation]=useState<BotReview|null>(null);
+  const [botError,setBotError]=useState('');
+  const confirmId=useRef<string>(null);
+
   const eligible=products.filter(p=>p.active!==false);
   const begin=(request:CustomerRequest,kind:'EDIT'|'CANCEL')=>{
+    setBot(false);setSimulation(null);setBotError('');
     setEditing({request,kind});setReason('');setError('');setStatus('');
     setExternalId(request.externalId);setOrderDate(request.order.orderDate);setDestination(request.order.destination);
     setRecipientName(request.order.recipientName);setRecipientPhone(request.order.recipientPhone);
@@ -53,9 +64,14 @@ export default function CustomerOrderRequests({products,onCreated,onOrder}:{prod
     const body=editing
       ? {expectedVersion:editing.request.version,kind:editing.kind,reason:reason.trim(),...(editing.kind==='EDIT'?{order}:{})}
       : {externalId:externalId.trim(),...order};
-    const key=JSON.stringify([path,body]),commandId=retry.current?.key===key?retry.current.commandId:crypto.randomUUID();
+    const key=JSON.stringify([bot?botBase:path,body]),commandId=retry.current?.key===key?retry.current.commandId:crypto.randomUUID();
     retry.current={key,commandId};setBusy(true);setError('');setStatus('');
     try{
+      if(bot&&!editing) {
+        setSimulation(await api<BotReview>(botBase+'/simulations',post({commandId,order:body})));
+        confirmId.current=null;setBotError('');
+        return;
+      }
       const result=await api<{id:string;status:string;changeId?:string}>(path,{method:'POST',
         headers:{'Content-Type':'application/json','X-Requested-With':'logistics-os'},
         body:JSON.stringify({...body,commandId})});
@@ -63,12 +79,52 @@ export default function CustomerOrderRequests({products,onCreated,onOrder}:{prod
       retry.current=null;clear();await refresh();onCreated();
     }catch(e){setError((e as Error).message);}finally{setBusy(false);}
   }
+  async function confirmSimulation() {
+    if(!simulation||busy)return;
+    setBusy(true);setBotError('');
+    confirmId.current??=crypto.randomUUID();
+    try {
+      const result=await api<BotReview>(botBase+'/simulations/'+simulation.id+'/confirm',post({
+        commandId:confirmId.current,expectedVersion:simulation.version,
+      }));
+      setSimulation(result);
+      retry.current=null;
+      await refresh();onCreated();
+    } catch(error) {
+      setBotError((error as Error).message);
+    } finally {setBusy(false);}
+  }
+  function restartBot() {
+    setSimulation(null);setBotError('');retry.current=null;confirmId.current=null;
+  }
   const changeLine=(index:number,patch:Partial<RequestLine>)=>setLines(current=>current.map((line,i)=>i===index?{...line,...patch}:line));
   if(loading)return <p role="status">Consultando solicitudes comerciales…</p>;
   if(!available)return <p className="notice" role="status">La carga de solicitudes estará disponible cuando NEXORA habilite este módulo. La consulta de stock y pedidos sigue operativa.</p>;
   return <section className="card stack" aria-label="Solicitudes de pedidos del comerciante">
     <div className="card-header"><h2>{editing?editing.kind==='EDIT'?'Editar '+editing.request.externalId:'Cancelar '+editing.request.externalId:'Solicitar nuevo pedido'}</h2><HelpTip label="Cómo funcionan las solicitudes">Una solicitud expresa qué querés entregar. No reserva stock, no confirma una venta ni despacha mercadería. NEXORA revisa y registra el pedido en el sistema operativo.</HelpTip></div>
-    <form className="stack" onSubmit={e=>void submit(e)}>
+    {!editing&&<label>
+      <input type="checkbox" checked={bot} disabled={busy}
+        onChange={event=>{setBot(event.target.checked);restartBot();setError('');setStatus('');}}/> Simular conversación del bot
+    </label>}
+    {bot&&<div className="stack" aria-label="Simulador del bot">
+      <span className="badge badge-neutral">Facebook · Instagram · WhatsApp · NOT_CONNECTED</span>
+      {!simulation&&<span><strong>Bot:</strong> ¿Qué productos querés pedir y a dónde los enviamos?</span>}
+      {simulation&&<>
+        <span><strong>Comerciante:</strong> {simulation.order.externalId} · {simulation.order.recipientName} · {simulation.order.destination}</span>
+        <span><strong>Bot:</strong> {simulation.status==='SUBMITTED'?'Solicitud registrada para revisión de Operaciones.':'Disponibilidad al consultar · sin reserva'}</span>
+        <ul>{simulation.stock.map(line=><li key={line.productId}>{line.sku} · pedido {line.quantity} · disponible {line.available}</li>)}</ul>
+        {botError&&<p className="notice error" role="alert">{botError}</p>}
+        <div className="crm-actions">
+          {simulation.status==='REVIEW'&&<button type="button" className="button button-primary"
+            disabled={busy||simulation.stock.some(line=>line.quantity>line.available)}
+            onClick={()=>void confirmSimulation()}>Confirmar solicitud del simulador</button>}
+          <button type="button" className="button button-secondary" disabled={busy} onClick={restartBot}>
+            {simulation.status==='SUBMITTED'?'Nueva simulación':'Revisar datos y stock'}
+          </button>
+        </div>
+      </>}
+    </div>}
+    {(!bot||!simulation)&&<form className="stack" onSubmit={e=>void submit(e)}>
       {editing?.kind!=='CANCEL'&&<><div className="form-grid">
         <label className="field"><span>Número de pedido</span><input required maxLength={160} readOnly={!!editing} value={externalId} onChange={e=>setExternalId(e.target.value)}/></label>
         <label className="field"><span>Fecha</span><input required type="date" value={orderDate} onChange={e=>setOrderDate(e.target.value)}/></label>
@@ -95,11 +151,11 @@ export default function CustomerOrderRequests({products,onCreated,onOrder}:{prod
       {status&&<p role="status" className="notice">{status}</p>}
       <div className="crm-actions">
         <button className="button button-primary" disabled={busy||(editing?.kind!=='CANCEL'&&eligible.length===0)}>
-          {busy?'Guardando…':editing?.request.status==='ACCEPTED'?'Solicitar cambio':editing?.kind==='CANCEL'?'Confirmar cancelación':editing?'Guardar cambios':'Enviar solicitud'}
+          {busy?'Guardando…':editing?.request.status==='ACCEPTED'?'Solicitar cambio':editing?.kind==='CANCEL'?'Confirmar cancelación':editing?'Guardar cambios':bot?'Consultar disponibilidad':'Enviar solicitud'}
         </button>
         {editing&&<button type="button" className="button button-secondary" onClick={clear}>Volver</button>}
       </div>
-    </form>
+    </form>}
     <div className="card-header"><h2>Mis solicitudes</h2><button type="button" className="button button-secondary" onClick={()=>void refresh()} disabled={busy}>Actualizar</button></div>
     {requests.length?<div className="table-wrap"><table className="table">
       <thead><tr><th>Pedido</th><th>Estado</th><th>Acciones</th></tr></thead>
