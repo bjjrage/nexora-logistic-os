@@ -10,9 +10,10 @@ import {
 } from './model';
 import './crm.css';
 import OutreachPanel from './OutreachPanel';
+import CreativeStudioPanel from './CreativeStudioPanel';
 
-type View = 'prospects' | 'funnel' | 'tasks' | 'dashboard' | 'outreach';
-const views = {prospects: 'Prospectos', funnel: 'Funnel', tasks: 'Tareas', dashboard: 'Dashboard', outreach: 'Bandeja'} as const;
+type View = 'prospects' | 'funnel' | 'tasks' | 'dashboard' | 'outreach' | 'creative';
+const views = {prospects: 'Prospectos', funnel: 'Funnel', tasks: 'Tareas', dashboard: 'Dashboard', outreach: 'Bandeja', creative: 'Studio creativo'} as const;
 const emptyOptions: Options = {owners: [], campaigns: [], sources: []};
 
 type ImportIssue = {row: number; field: string; message: string};
@@ -211,7 +212,7 @@ export default function CrmPanel() {
         {Object.entries(views).map(([key,label]) => <button type="button" key={key} aria-pressed={view === key}
           onClick={() => chooseView(key as View)}>{label}</button>)}
       </nav>
-      {view !== 'tasks' && view !== 'outreach' && <FiltersForm filters={filters} options={available} onChange={apply}/>}
+      {view !== 'tasks' && view !== 'outreach' && view !== 'creative' && <FiltersForm filters={filters} options={available} onChange={apply}/>}
       {view === 'funnel' && (dashboard?.data ? <Funnel data={dashboard.data} stage={filters.stage}
         select={stage => apply({...filters, stage: stage === filters.stage ? '' : stage})}/> : <LoadStatus error={dashboard?.error}/>)}
       {view === 'dashboard' && (dashboard?.data ? <section className="stat-grid" aria-label="Indicadores comerciales">
@@ -222,6 +223,7 @@ export default function CrmPanel() {
         <StatCard label="Tareas vencidas" value={dashboard.data.overdue} caption="Ver tareas vencidas" onClick={() => chooseView('tasks', true)}/>
       </section> : <LoadStatus error={dashboard?.error}/>)}
       {view === 'outreach' && <OutreachPanel revision={revision} busy={busy} run={run}/>}
+       {view === 'creative' && <CreativeStudioPanel revision={revision} busy={busy} run={run}/>}
        {view === 'tasks' && <TaskList key={String(overdueOnly)} initialState={overdueOnly ? 'OVERDUE' : 'OPEN'}
         revision={revision} options={available} busy={busy} run={run} openProspect={open}/>}
       {shouldList && (list?.data ? <ProspectTable data={list.data} open={open} onPage={setOffset}/> : <LoadStatus error={list?.error}/>)}
