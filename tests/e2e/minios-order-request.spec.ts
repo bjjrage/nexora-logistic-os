@@ -46,6 +46,11 @@ test('Mini OS: cliente solicita pedido por SKU y Operaciones lo registra sin res
     await expect(requests.getByText('Pendiente de revisión')).toBeVisible();
     expect((await db.one('SELECT COUNT(*) AS total FROM inventory_orders'))?.total).toBe(0);
 
+    await requests.getByRole('button',{name:'Editar',exact:true}).click();
+    await requests.getByLabel('Dirección de entrega').fill('Destino actualizado');
+    await requests.getByLabel('Motivo del cambio').fill('Corregir destino');
+    await requests.getByRole('button',{name:'Guardar cambios'}).click();
+    await expect(requests.getByRole('heading',{name:'Solicitar nuevo pedido'})).toBeVisible();
     await page.goto(origin);
     await page.getByRole('navigation',{name:'Navegación principal'}).getByRole('button',{name:'Solicitudes clientes'}).click();
     await expect(page.getByRole('heading',{name:'Solicitudes de comerciantes'})).toBeVisible();
@@ -58,6 +63,21 @@ test('Mini OS: cliente solicita pedido por SKU y Operaciones lo registra sin res
 
     await requests.getByRole('button',{name:'Actualizar'}).click();
     await expect(requests.getByText('Registrado en NEXORA')).toBeVisible();
+    await requests.getByRole('button',{name:'Ver pedido',exact:true}).click();
+    await expect(customer.locator('#portal-orders')).toContainText('Destino actualizado');
+    await requests.getByRole('button',{name:'Cancelar',exact:true}).click();
+    await requests.getByLabel('Motivo del cambio').fill('Cliente pidió cancelar');
+    await requests.getByRole('button',{name:'Solicitar cambio'}).click();
+    await expect(requests.getByText('Cambio pendiente de revisión')).toBeVisible();
+    await customer.reload();
+    await customerNavigation.getByRole('button',{name:'Pedidos',exact:true}).click();
+    await expect(requests.getByText('Cambio pendiente de revisión')).toBeVisible();
+    await page.getByLabel('Estado de solicitudes').selectOption('CHANGE_PENDING');
+    await expect(page.getByText('Cancelación solicitada · Cliente pidió cancelar')).toBeVisible();
+    await page.getByLabel('Motivo de revisión').fill('Solicitud revisada');
+    await page.getByRole('button',{name:'Registrar revisión'}).click();
+    await expect(page.getByText('No hay solicitudes en este estado.')).toBeVisible();
+    expect((await db.one('SELECT status FROM inventory_orders WHERE id=?',persisted?.id))?.status).toBe('DRAFT');
     await customer.setViewportSize({width:390,height:844});
     await expect(requests.getByRole('button',{name:'Enviar solicitud'})).toBeVisible();
   }finally{

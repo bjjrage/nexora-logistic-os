@@ -1107,9 +1107,10 @@ export class Inventory {
     let clientId: string | undefined;
     if (actor.role === 'CUSTOMER') { ensure(actor.clientId, 'FORBIDDEN', 'La sesión de cliente no tiene un cliente asociado.', 403); clientId = actor.clientId; }
     else if (clientFilter) { await this.client(actor, clientFilter); clientId = clientFilter; }
-    const page=z.object({limit:z.coerce.number().int().min(1).max(200).default(50),offset:z.coerce.number().int().min(0).max(1000000).default(0),q:z.string().trim().max(200).default(''),status:z.enum(['','DRAFT','RESERVED','PARTIALLY_LOADED','LOADED','IN_TRANSIT','PARTIAL','DELIVERED','CANCELLED','EXCEPTION']).default('')}).parse(options);
+    const page=z.object({limit:z.coerce.number().int().min(1).max(200).default(50),offset:z.coerce.number().int().min(0).max(1000000).default(0),q:z.string().trim().max(200).default(''),orderId:uuid.optional(),status:z.enum(['','DRAFT','RESERVED','PARTIALLY_LOADED','LOADED','IN_TRANSIT','PARTIAL','DELIVERED','CANCELLED','EXCEPTION']).default('')}).parse(options);
     const predicates=['o.org_id=?'],args:any[]=[actor.orgId];
     if(clientId){predicates.push('o.client_id=?');args.push(clientId);}
+    if(page.orderId){predicates.push('o.id=?');args.push(page.orderId);}
     if(page.status){predicates.push('o.status=?');args.push(page.status);}
     if(page.q){predicates.push('(lower(o.external_id) LIKE ? OR lower(o.recipient_name) LIKE ? OR lower(o.destination) LIKE ? OR lower(o.recipient_phone) LIKE ? OR lower(c.name) LIKE ?)');args.push(...Array(5).fill('%'+page.q.toLowerCase()+'%'));}
     const from=`FROM inventory_orders o JOIN clients c ON c.id=o.client_id AND c.org_id=o.org_id WHERE ${predicates.join(' AND ')}`;
