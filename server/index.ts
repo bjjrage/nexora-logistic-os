@@ -7,9 +7,11 @@ import { PostgresStore } from './postgres.ts';
 import type { Database } from './database.ts';
 import {Diagnostics} from './observability.ts';
 import {alertingSink} from './alerts.ts';
+import { closeSentry, initializeSentry, reportServerError } from './sentry.ts';
 
 if (existsSync('.env')) loadEnvFile('.env');
 if(!process.env.RELEASE_SHA&&process.env.RAILWAY_GIT_COMMIT_SHA)process.env.RELEASE_SHA=process.env.RAILWAY_GIT_COMMIT_SHA;
+initializeSentry();
 
 const databasePath=process.env.DATABASE_PATH??resolve('.local/logistics.sqlite');
 const provider=process.env.DATABASE_PROVIDER??'sqlite';
@@ -22,7 +24,34 @@ const host=process.env.HOST??'127.0.0.1';
 if(!Number.isInteger(port)||port<1||port>65535) throw new Error('PORT debe ser un puerto TCP válido.');
 const diagnostics=new Diagnostics(alertingSink());
 const server=createApp(store,undefined,undefined,diagnostics).listen(port,host,()=>diagnostics.emit('server.started',{host,port,database:store.kind}));
-const shutdown=()=>{setTimeout(()=>process.exit(1),10000).unref();server.close(async()=>{await store.close();process.exit(0);});server.closeIdleConnections();};
+let stopping = false;
+let handlingFatal = false;
+const shutdown = () => {
+    if (stopping || handlingFatal) return;
+    stopping = true;
+    setTimeout(() => process.exit(1), 10000).unref();
+    server.close(async () => {
+        await store.close();
+        if (handlingFatal) return;
+        try {
+            await closeSentry();
+        } finally {
+            if (!handlingFatal) process.exit(0);
+        }
+    });
+    server.closeIdleConnections();
+};
 process.on('SIGINT',shutdown);process.on('SIGTERM',shutdown);
-const fatal=(error:unknown)=>{diagnostics.emit('server.fatal',{errorType:error instanceof Error?error.name:'UnknownError'});server.close();setTimeout(()=>process.exit(1),1000).unref();};
+const fatal = (error: unknown) => {
+    if (handlingFatal) return;
+    handlingFatal = true;
+    diagnostics.emit('server.fatal', { errorType: error instanceof Error ? error.name : 'UnknownError' });
+    reportServerError(error, 'fatal');
+    server.close();
+    const exit = () => process.exit(1);
+    const deadline = setTimeout(exit, 1000);
+    const closing = closeSentry(750);
+    if (closing) void closing.then(exit, exit);
+    else deadline.unref();
+};
 process.on('uncaughtException',fatal);process.on('unhandledRejection',fatal);
