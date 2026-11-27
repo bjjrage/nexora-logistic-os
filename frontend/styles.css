@@ -53,6 +53,8 @@ small { font-size:11px; line-height:1.4; }
 .nav-list { display:grid; gap:5px; }
 .nav-group + .nav-group { margin-top:8px; }
 .sidebar .nav-link { gap:8px; padding-inline:10px; white-space:nowrap; }
+.sidebar .nav-link[data-page="procurement"] { gap:4px; font-size:11px; }
+.sidebar .nav-link[data-page="procurement"] .nav-icon { flex:0 0 17px; }
 .nav-link { width:100%; display:flex; align-items:center; justify-content:flex-start; gap:11px; min-height:36px; padding:8px 12px; border:0; border-radius:999px; background:transparent; color:#4c596d; font-size:12px; font-weight:500; transition:color .18s,background .18s,box-shadow .18s; }
 .nav-link svg { width:17px; height:17px; }
 .nav-link:hover { color:var(--navy); background:#f0f1f4; }
@@ -429,6 +431,7 @@ tbody tr:hover { background:#f0f1f4; }
 @media(max-width:760px) {
   .mobile-nav { justify-content:flex-start; overflow-x:auto; scrollbar-width:thin; }
   .mobile-nav .nav-link { flex:0 0 70px; }
+  .mobile-nav .nav-link[data-page="procurement"] { flex-basis:124px; }
 }
 
 /* Task-based workspaces: readable lists first, secondary forms on demand. */
