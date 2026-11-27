@@ -21,13 +21,14 @@ import ClientsPanel, {type ClientRecord} from './ClientsPanel';
 import CompanyPanel from './CompanyPanel';
 import AccountRecovery from './AccountRecovery';
 const BillingPanel=lazy(()=>import('./BillingPanel'));
+const ProcurementPanel=lazy(()=>import('./ProcurementPanel'));
 import {api,type ApiProblem} from './api';
 import {reportClientError,sourcePosition} from './diagnostics';
 import PasswordReset from './PasswordReset';
 import Reauthentication from './Reauthentication';
 import PublicTrackingLinks from './PublicTrackingLinks';
 import QuadOperationsPanel from './QuadOperationsPanel';
-import { LayoutDashboard, Package, Route as RouteIcon, Truck, Users, Radio, Plus, ArrowUpRight, ArrowRight, LogOut, ChevronRight, CircleAlert, Boxes, ClipboardList, Shield } from 'lucide-react';
+import { LayoutDashboard, Package, Route as RouteIcon, Truck, Users, Radio, Plus, ArrowUpRight, ArrowRight, LogOut, ChevronRight, CircleAlert, Boxes, ClipboardList, Shield, ReceiptText } from 'lucide-react';
 
 type Role = "ADMIN" | "OPERATIONS" | "DEPOT" | "DRIVER" | "CUSTOMER" | string;
 type User = { id: string; name: string; role: Role; driverId?: string | null; clientId?: string | null; isSuperAdmin?: boolean };
@@ -141,7 +142,12 @@ type Bootstrap = {
   tracking: { status: string; message: string };
 };
 
-type Page = "home" | "shipments" | "routes" | "fleet" | "clients" | "tracking" | "inventory" | "orders" | "customerAccess" | "company" | "billing";
+type Page = "home" | "shipments" | "routes" | "fleet" | "clients" | "tracking" | "inventory" | "orders" | "customerAccess" | "company" | "billing" | "procurement";
+const procurementModule = "proveedores-gastos";
+function initialPage(role: Role): Page {
+  if (role === "DRIVER") return "routes";
+  return role === "ADMIN" && new URLSearchParams(location.search).get("modulo") === procurementModule ? "procurement" : "home";
+}
 type Action = (path: string, payload: Record<string, unknown>, successMessage: string,onResult?:(result:Record<string,unknown>)=>void) => Promise<boolean>;
 type EvidenceUpload = (parcelId: string | null, file: File) => Promise<string | null>;
 
@@ -388,8 +394,21 @@ function AppContent() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const mobileNavRef = useRef<HTMLElement>(null);
   const inFlight = useRef(false);
   const idempotencyKeys = useRef(new Map<string, string>());
+
+  useEffect(()=>{
+    if(page!=="procurement")return;
+    const narrow=matchMedia("(max-width:760px)");
+    const reveal=()=>{
+      if(narrow.matches)mobileNavRef.current?.querySelector('[data-page="procurement"]')
+        ?.scrollIntoView({block:"nearest",inline:"nearest"});
+    };
+    reveal();
+    narrow.addEventListener("change",reveal);
+    return ()=>narrow.removeEventListener("change",reveal);
+  },[page]);
 
   useEffect(()=>{
     if(!session?.user)return;
@@ -415,7 +434,7 @@ function AppContent() {
     setSession(value);
     if (value.user && value.user.role !== "CUSTOMER") {
       await refreshBootstrap();
-      setPage(value.user.role === "DRIVER" ? "routes" : "home");
+      setPage(initialPage(value.user.role));
     } else {
       setBootstrap(null);
     }
@@ -432,7 +451,7 @@ function AppContent() {
           const data = await api<Bootstrap>("/api/bootstrap");
           if (!active) return;
           setBootstrap(emptyBootstrap(data));
-          setPage(value.user.role === "DRIVER" ? "routes" : "home");
+          setPage(initialPage(value.user.role));
         }
       } catch (caught) {
         if (active) setError(errorMessage(caught));
@@ -584,14 +603,20 @@ function AppContent() {
       { id: "shipments", label: "Envíos", icon: <Package /> },
       { id: "routes", label: "Rutas", icon: <RouteIcon /> },
       { id: "tracking", label: "Tracking", icon: <Radio /> },
-      ...(role === "ADMIN" ? [{ id: "billing" as Page, label: "Facturación", icon: <ClipboardList /> }] : []),
+      ...(role === "ADMIN" ? [{ id: "billing" as Page, label: "Facturación", icon: <ClipboardList /> },
+        { id: "procurement" as Page, label: "Proveedores y Gastos", icon: <ReceiptText /> }] : []),
       ...(role === "ADMIN" ? [{ id: "company" as Page, label: "Empresa y equipo", icon: <Users /> }] : []),
       { id: "clients", label: "Clientes", icon: <Users /> },
       { id: "fleet", label: "Flota", icon: <Truck /> },
       ...(role === "ADMIN" ? [{ id: "customerAccess" as Page, label: "Accesos cliente", icon: <Shield /> }] : []),
     ];
 
-  const changePage = (next: Page, recordId = "") => { setPreferredRouteId(next==='routes'?recordId:''); setPreferredShipmentId(next==='shipments'?recordId:''); setPreferredClientId(next==='clients'?recordId:''); setInventoryEntry(null); setOrderEntry(null); setPage(next); setError(""); setSuccess(""); };
+  const changePage = (next: Page, recordId = "") => {
+    const url = new URL(location.href);
+    if (next === "procurement") url.searchParams.set("modulo", procurementModule);
+    else if (url.searchParams.get("modulo") === procurementModule) url.searchParams.delete("modulo");
+    if (url.href !== location.href) history.replaceState(history.state, "", url);
+    setPreferredRouteId(next==='routes'?recordId:''); setPreferredShipmentId(next==='shipments'?recordId:''); setPreferredClientId(next==='clients'?recordId:''); setInventoryEntry(null); setOrderEntry(null); setPage(next); setError(""); setSuccess(""); };
 
   return (
     <div className="app-shell">
@@ -604,7 +629,7 @@ function AppContent() {
         <div className="organization-switch" aria-label={'Empresa operadora: '+bootstrap.organization.name}><span className="organization-dot" /><span>{bootstrap.organization.name}<small className="operator-caption">Empresa operadora</small></span></div>
         <div><nav className="nav-list" aria-label="Navegación principal">
           {[{label:isDriver?'Mi trabajo':role==='DEPOT'?'Trabajo de depósito':'Operación diaria',items:nav.filter(item=>!['clients','fleet','company','customerAccess'].includes(item.id))},{label:'Configuración',items:nav.filter(item=>['clients','fleet','company','customerAccess'].includes(item.id))}].filter(group=>group.items.length).map(group=><div className="nav-group" key={group.label}><p className="rail-label">{group.label}</p>{group.items.map((item) => (
-            <button key={item.id} aria-current={page===item.id?'page':undefined} className={"nav-link " + (page === item.id ? "active" : "")} onClick={() => changePage(item.id)}>
+            <button key={item.id} data-page={item.id} aria-current={page===item.id?'page':undefined} className={"nav-link " + (page === item.id ? "active" : "")} onClick={() => changePage(item.id)}>
               <span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}
             </button>
           ))}</div>)}
@@ -632,14 +657,15 @@ function AppContent() {
           {page === "clients" && isOpsRole(role) && <ClientsPanel profileEnabled={bootstrap.clientProfilesEnabled===true} initialClientId={preferredClientId} clients={bootstrap.clients} shipments={bootstrap.shipments} canManage={true} canManageAccess={role==='ADMIN'} action={mutate} busy={pending} actionError={error} onInventory={(clientId,view)=>{changePage('inventory');setInventoryEntry({clientId,view});}}/>}
           {page === "company" && role === "ADMIN" && <CompanyPanel onDepots={()=>{changePage("inventory");setInventoryEntry({clientId:"",view:"settings"});}} organization={bootstrap.organization} currentUserId={session.user.id} action={mutate} busy={pending} actionError={error} onFleet={()=>changePage('fleet')}/>}
           {page === "billing" && role === "ADMIN" && <Suspense fallback={<p role="status">Cargando facturación…</p>}><BillingPanel clients={bootstrap.clients}/></Suspense>}
+          {page === "procurement" && role === "ADMIN" && <Suspense fallback={<p role="status">Cargando Proveedores y Gastos…</p>}><ProcurementPanel/></Suspense>}
           {page === "inventory" && !isDriver && <InventoryPanel key={inventoryEntry?inventoryEntry.clientId+':'+inventoryEntry.view:'inventory'} initialClientId={inventoryEntry?.clientId} initialView={inventoryEntry?.view} initialReceiptSeed={inventoryEntry?.seed} onReturnToOrder={inventoryEntry?.seed?.order?()=>{const order=inventoryEntry.seed!.order!;changePage('orders');setOrderEntry({id:order.orderId,reference:order.orderReference,clientId:order.clientId});}:undefined} onReturnToClient={inventoryEntry&&!inventoryEntry.seed?.order?(clientId)=>changePage('clients',clientId):undefined} section="inventory" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
           {page === "orders" && !isDriver && <InventoryPanel key={orderEntry?.id??'orders'} initialOrder={orderEntry??undefined} initialClientId={orderEntry?.clientId} section="orders" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} onOpenRoutes={(routeId)=>changePage('routes',routeId)} onReceiveStock={(order)=>{changePage('inventory');setInventoryEntry({clientId:order.clientId,view:'receive',seed:{token:crypto.randomUUID(),order}});}} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
           {page === "customerAccess" && role === "ADMIN" && <InventoryPanel section="customerAccess" role={role} clients={bootstrap.clients} companyName={bootstrap.organization.name} supportContacts={bootstrap.organization.supportContacts} onManageClients={()=>changePage('clients')} vehicles={bootstrap.vehicles} routes={bootstrap.routes} assignments={bootstrap.assignments} parcels={bootstrap.parcels} returns={bootstrap.returns} uploadEvidence={uploadEvidence} onRefresh={refreshBootstrap} />}
           {page === "tracking" && <TrackingView data={bootstrap} action={mutate} busy={pending} onRefresh={refreshBootstrap} onPrepareRoute={()=>changePage('routes','new')} />}
         </div>
       </main>
-      <nav className="mobile-nav" aria-label="Navegación móvil" inert={reauthentication} aria-hidden={reauthentication||undefined}>
-        {nav.map((item) => <button key={item.id} aria-current={page===item.id?'page':undefined} className={"nav-link " +(page === item.id ? "active" : "")} onClick={() => changePage(item.id)}><span>{item.icon}</span>{item.label}</button>)}
+      <nav ref={mobileNavRef} className="mobile-nav" aria-label="Navegación móvil" inert={reauthentication} aria-hidden={reauthentication||undefined}>
+        {nav.map((item) => <button key={item.id} data-page={item.id} aria-current={page===item.id?'page':undefined} className={"nav-link " +(page === item.id ? "active" : "")} onClick={() => changePage(item.id)}><span>{item.icon}</span>{item.label}</button>)}
       </nav>
     </div>
   );
@@ -1390,7 +1416,7 @@ function canSendReturnToSender(state: string): boolean {
 
 function pageLabel(page: Page): string {
   const labels: Record<string, string> = { home: "Inicio", shipments: "Envíos", routes: "Rutas", fleet: "Flota", clients: "Clientes", company: "Empresa y equipo", tracking: "Tracking" };
-  return labels[page] ?? ({ inventory: "Inventario", orders: "Pedidos", customerAccess: "Accesos cliente", billing: "Facturación" } as Partial<Record<Page, string>>)[page] ?? page;
+  return labels[page] ?? ({ inventory: "Inventario", orders: "Pedidos", customerAccess: "Accesos cliente", billing: "Facturación", procurement: "Proveedores y Gastos" } as Partial<Record<Page, string>>)[page] ?? page;
 }
 
 function errorMessage(value: unknown): string {

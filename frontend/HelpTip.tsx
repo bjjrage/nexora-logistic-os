@@ -25,7 +25,7 @@ export default function HelpTip({label,children,id}:{label:string;children:React
 
   useEffect(()=>{
     if(!open)return;
-    const dismiss=(event:KeyboardEvent)=>{if(event.key==='Escape')close();};
+    const dismiss=(event:KeyboardEvent)=>{if(event.key==='Escape'){event.preventDefault();close();}};
     const outside=(event:PointerEvent)=>{if(event.target instanceof Node&&!trigger.current?.contains(event.target)&&!popup.current?.contains(event.target))close();};
     document.addEventListener('keydown',dismiss);
     document.addEventListener('pointerdown',outside);
@@ -37,6 +37,6 @@ export default function HelpTip({label,children,id}:{label:string;children:React
 
   return <span className="help-tip" onMouseEnter={show} onMouseLeave={leave}>
     <button ref={trigger} className="help-tip-trigger" type="button" aria-label={'Ayuda: '+label} aria-describedby={tipId} onFocus={show} onBlur={close} onClick={toggle} onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close();}}}><CircleHelp aria-hidden="true"/></button>
-    {createPortal(<span ref={popup} id={tipId} className="help-tip-popup" role="tooltip" hidden={!open} style={position} onMouseEnter={show} onMouseLeave={leave}>{children}</span>,document.body)}
+    {createPortal(<span ref={popup} id={tipId} className="help-tip-popup" role="tooltip" hidden={!open} style={position} onMouseEnter={show} onMouseLeave={leave}>{children}</span>,open?trigger.current?.closest('dialog')??document.body:document.body)}
   </span>;
 }
